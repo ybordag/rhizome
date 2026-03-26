@@ -2,7 +2,7 @@
 
 The agentic backend for a hobby gardening assistant. Rhizome manages garden profiles, project planning, seed scheduling, and task prioritization through a LangGraph-based multi-workflow agent with persistent memory — acting as an advisor, co-worker, and coach for the hobby gardener.
 
-> **Status:** Early design phase — architecture and data model are being defined. No runnable code yet.
+**Status:** Early design phase — architecture and data model are being defined. No runnable code yet.
 
 ---
 
