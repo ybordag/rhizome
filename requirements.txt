@@ -1,0 +1,14 @@
+# Core agent framework
+langgraph
+langchain
+langchain-google-genai
+
+# Environment
+python-dotenv
+
+# Database
+psycopg2-binary
+pgvector
+
+# Dev / visualization
+ipython
