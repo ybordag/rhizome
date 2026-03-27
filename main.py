@@ -1,12 +1,34 @@
-from agent import agent
+# main.py
+from agent.graph import agent
 from langchain.messages import HumanMessage
 
-# Save graph visualization
-with open("graph.png", "wb") as f:
-    f.write(agent.get_graph(xray=True).draw_mermaid_png())
+def get_response_text(message) -> str:
+    """Extract plain text from a message, handling both string and block formats."""
+    if isinstance(message.content, str):
+        return message.content
+    # Gemini 3 returns a list of blocks
+    if isinstance(message.content, list):
+        return " ".join(
+            block["text"]
+            for block in message.content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(message.content)
 
-# Run the agent
-messages = [HumanMessage(content="Add 3 and 4.")]
-result = agent.invoke({"messages": messages})
-for m in result["messages"]:
-    m.pretty_print()
+def chat():
+    print("Rhizome — your garden assistant. Type 'quit' to exit.\n")
+    history = []
+    while True:
+        user_input = input("You: ").strip()
+        if not user_input:
+            continue
+        if user_input.lower() == "quit":
+            break
+        history.append(HumanMessage(content=user_input))
+        result = agent.invoke({"messages": history})
+        response = result["messages"][-1]
+        history.append(response)
+        print(f"\nRhizome: {get_response_text(response)}\n")
+
+if __name__ == "__main__":
+    chat()
