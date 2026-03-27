@@ -23,7 +23,7 @@ Each step is written as a self-contained assignment. Before starting a step, rea
 
 | Step | Name | Status | Core loop complete? |
 |------|------|--------|-------------------|
-| 1 | Grounded chat | 🔲 not started | No |
+| 1 | Grounded chat | ✅ complete | No |
 | 2 | Persistent garden profile | 🔲 not started | No |
 | 3 | Simple project tracking | 🔲 not started | No |
 | 4 | Rough task timing | 🔲 not started | No |
@@ -35,85 +35,6 @@ Each step is written as a self-contained assignment. Before starting a step, rea
 | 10 | RAG knowledge base | 🔲 not started | Refinement |
 
 Steps 1–5 build the core loop. Steps 6–10 make it smarter and richer.
-
----
-
-## Step 1 — Grounded chat
-
-### What you should understand after this step
-
-LangGraph's most basic pattern: a single node that calls an LLM, receives a response, and loops back to wait for the next user message. You should understand how `MessagesState` works, why the system prompt is the first and most fundamental form of context management, and what it means for an LLM to be "grounded" in specific information versus answering from general knowledge.
-
-You should also start developing an intuition for what the LLM is good at without any tools — and where it falls short.
-
-### What to build
-
-A CLI chat loop. The user types a message, the agent responds, the conversation continues until the user types `quit`. No database, no tools, no projects. Just a conversation grounded in a hardcoded description of your garden.
-
-**File structure:**
-```
-rhizome/
-├── main.py
-├── agent/
-│   ├── __init__.py
-│   ├── model.py        ← model initialization (from your calculator agent)
-│   ├── state.py        ← MessagesState for now
-│   ├── nodes.py        ← llm_call node
-│   └── graph.py        ← graph assembly
-├── .env
-└── .env.example
-```
-
-**The garden profile** goes in `nodes.py` as a constant string for now. Write it as a detailed description of your actual garden — zone, frost dates, soil type, beds and their sunlight, container setup, tray capacity, dog/child constraints, aesthetic goals. The more specific and accurate this is, the more useful the agent will be.
-
-**The system prompt** should:
-- Tell the agent who it is (Rhizome, a gardening advisor)
-- Include the full garden profile
-- Instruct it to always ground advice in the specific garden conditions
-- Instruct it to prefer organic solutions
-- Instruct it to always flag anything harmful to dogs or children
-
-### What the code should do at the end of this step
-
-You should be able to open a terminal and have a real, useful conversation about your garden. For example:
-
-```
-You: What could I plant in the shady bed on the slope?
-
-Rhizome: Given your zone 9b climate and the heavy shade from your three
-large trees, you have good options for shade-tolerant plants that also
-fit a cottage garden aesthetic. Ferns like sword fern or wood fern are
-excellent — they're non-toxic to dogs, need minimal water once established,
-and thrive in the dry shade that's common under large trees in the Bay Area...
-```
-
-The responses should feel specific to your garden, not generic. If the agent gives advice that ignores your clay soil, your shade situation, or your dog constraint, the system prompt needs work.
-
-### Context management at this step
-
-The system prompt is your entire context management system at this stage. It is a single static string injected before every conversation turn. Simple, but this is genuinely the foundation — every more sophisticated context management technique you add later is just a more dynamic way of deciding what goes into this string.
-
-Pay attention to what you put in the system prompt. Every field you include here will eventually need to come from the database instead of being hardcoded. Keep that in mind as you write it.
-
-### Maps to architecture
-
-- First instantiation of the `llm_call` node that will exist in every workflow
-- The hardcoded `GARDEN_PROFILE` string is the prototype of `GardenProfile` — you are discovering what fields matter before formalizing the schema
-- The system prompt structure you settle on here will be the foundation of the prompt assembly system built in later steps
-
-### Play around with this before moving on
-
-These are not optional. Each one teaches you something you will need later.
-
-1. **Ask about something your garden profile doesn't cover.** For example, if your profile doesn't mention which beds have irrigation, ask "which of my beds have drip irrigation?" Notice how the agent handles missing information — does it say it doesn't know, or does it make something up? This tells you what information is critical to include in the profile.
-
-2. **Try to get the agent to recommend a toxic plant.** Ask "I want to plant foxglove for my cottage garden look." Foxglove is toxic to dogs. Does the agent flag this? If not, your system prompt constraint needs to be stronger.
-
-3. **Ask a question that requires current information.** For example, "what pests should I be watching out for right now?" Notice that the agent can only answer from its training data. This is where the need for web search (Step 7) will come from.
-
-4. **Have a long conversation and then ask a question that references something said many turns ago.** Notice whether the agent remembers it. This is where the need for conversation persistence (Step 2) will come from.
-
-5. **Edit the garden profile and see how dramatically the advice changes.** Add a new constraint or change the sunlight on a bed. This builds intuition for why the garden profile is the most important piece of context.
 
 ---
 
