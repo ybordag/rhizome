@@ -1,8 +1,6 @@
-from langchain.messages import AnyMessage
-from typing_extensions import TypedDict, Annotated
-import operator
+# state.py
+from langgraph.graph import MessagesState
+from typing_extensions import TypedDict
 
-
-class MessagesState(TypedDict):
-    messages: Annotated[list[AnyMessage], operator.add]
-    llm_calls: int
+class GardenState(MessagesState):
+    pass

@@ -24,8 +24,8 @@ Each step is written as a self-contained assignment. Before starting a step, rea
 | Step | Name | Status | Core loop complete? |
 |------|------|--------|-------------------|
 | 1 | Grounded chat | ✅ complete | No |
-| 2 | Persistent garden profile | 🔲 not started | No |
-| 3 | Simple project tracking | 🔲 not started | No |
+| 2 | Persistent garden profile | ✅ complete | No |
+| 3 | Simple project tracking | 🚧 in progress | No |
 | 4 | Rough task timing | 🔲 not started | No |
 | 5 | Daily triage | 🔲 not started | **Yes — core loop done** |
 | 6 | Negotiation loop | 🔲 not started | Refinement |
@@ -35,86 +35,6 @@ Each step is written as a self-contained assignment. Before starting a step, rea
 | 10 | RAG knowledge base | 🔲 not started | Refinement |
 
 Steps 1–5 build the core loop. Steps 6–10 make it smarter and richer.
-
----
-
-## Step 2 — Persistent garden profile
-
-### What you should understand after this step
-
-Why persistence matters and what "state" means across sessions versus within a session. You should understand the difference between LangGraph's built-in checkpointing (which handles in-session state) and your own database (which handles long-term state that survives across sessions). You should also understand SQLAlchemy's basic model definition pattern and why we're using SQLite now even though the production plan is Postgres.
-
-### What to build
-
-A SQLite database with two tables: one for the garden profile, one for conversation history. The garden profile is loaded at session start instead of being hardcoded. Conversation history is saved after each turn and reloaded when the session restarts.
-
-Use LangGraph's `SqliteSaver` checkpointer to handle in-session conversation state automatically. Write your own garden profile loading separately.
-
-**File structure additions:**
-```
-rhizome/
-└── db/
-    ├── __init__.py
-    ├── models.py       ← SQLAlchemy models for GardenProfile and Conversation
-    ├── database.py     ← connection setup, session factory
-    └── seed.py         ← populate your garden profile into the DB
-```
-
-**`db/models.py`** should define:
-- `GardenProfile` — one row per garden. Fields matching what you hardcoded in Step 1: climate_zone, frost_dates, soil_type, tray_capacity, tray_indoor_capacity, hard_constraints (store as JSON string for now), soft_preferences (JSON string), and a free-text `notes` field for anything that doesn't fit a structured field.
-- `Conversation` — one row per session. Fields: session_id, started_at, summary (null for now, used in Step 7).
-
-**`agent/state.py`** should be updated to add a `garden_profile` field to the state:
-```python
-class GardenState(TypedDict):
-    messages: Annotated[list[AnyMessage], operator.add]
-    garden_profile: dict        # loaded from DB at session start
-```
-
-**`agent/graph.py`** should add a `load_profile` node that runs once at the start of each session, reads the garden profile from the database, and writes it into state. This node runs before `llm_call`.
-
-### What the code should do at the end of this step
-
-You should be able to:
-1. Close the terminal mid-conversation
-2. Reopen it
-3. Have the agent remember your garden profile without you re-describing it
-4. Edit the garden profile in the database and have the change reflected immediately in the next session
-
-### Context management at this step
-
-Context management now has two layers:
-- **Static system prompt** — instructions, persona, behavioral rules (still hardcoded)
-- **Dynamic garden profile** — loaded from DB and injected into the prompt at session start
-
-The prompt structure is now assembled rather than hardcoded:
-```
-[static instructions]
-
-Your garden:
-[garden_profile loaded from database]
-
-[conversation history]
-```
-
-This is the beginning of the separation between things that never change (instructions) and things that are specific to this user and session (garden data).
-
-### Maps to architecture
-
-- Implements the first part of O2 (persistence architecture) from the design doc
-- Establishes the SQLAlchemy pattern that all future models will follow
-- `GardenState` gets its first real field beyond `messages`
-- SQLite here is intentional — Postgres with pgvector comes in Step 10. SQLAlchemy makes this a one-line config change when the time comes
-
-### Play around with this before moving on
-
-1. **Update a field in the garden profile and verify the agent's advice changes.** Change the frost date, add a new bed, change the soil type. This tests that the dynamic loading is actually working.
-
-2. **Break the database intentionally.** Delete the database file and restart the app. What happens? The app should handle a missing profile gracefully — either by running a simple onboarding flow or giving a clear error. If it crashes with an unhandled exception, add error handling.
-
-3. **Look at what LangGraph's checkpointer is saving.** After a conversation, open the SQLite database with a tool like TablePlus or DB Browser for SQLite and look at the checkpointer tables LangGraph created. Understanding what LangGraph persists automatically versus what you need to persist yourself is important for the steps ahead.
-
-4. **Have a conversation across two sessions and see what the agent remembers.** In session one, tell the agent something specific: "I planted a Cecile Brunner rose in the courtyard bed last week." Close the terminal. Open a new session and ask "do you remember what I planted last week?" What happens? This surfaces the need for proper conversation memory, which you will address in Step 7.
 
 ---
 

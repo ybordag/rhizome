@@ -275,7 +275,7 @@ scheduled → time_sensitive (window_end is ~3 days away)
 time_sensitive → blocker   (window_end is tomorrow, OR external event triggered)
 ```
 
-Reactive monitoring can **override** urgency directly — a frost warning upgrades all `type="emergency"` tasks for vulnerable plants to `blocker` immediately.
+Reactive monitoring can **override** urgency directly — a frost warning upgrades all `task_type="emergency"` tasks for vulnerable plants to `blocker` immediately.
 
 ### 5.6 Session Context
 
