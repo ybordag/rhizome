@@ -8,6 +8,23 @@ from db.database import SessionLocal
 from db.models import GardenProfile, Plant, Bed, Container, ProjectBed, ProjectContainer
 from typing import Optional
 
+VALID_CONTAINER_TYPES = {"growbag", "pot", "paper_bag", "raised_bed"}
+
+
+def _validate_positive_float(field_name: str, value: Optional[float]) -> Optional[str]:
+    if value is not None and value <= 0:
+        return f"{field_name} must be greater than 0."
+    return None
+
+
+def _validate_container_type(container_type: str) -> Optional[str]:
+    if container_type not in VALID_CONTAINER_TYPES:
+        return (
+            f"Invalid container_type '{container_type}'. Must be one of: "
+            f"{', '.join(sorted(VALID_CONTAINER_TYPES))}."
+        )
+    return None
+
 
 # ─── Bed tools ────────────────────────────────────────────────────────────
 
@@ -38,6 +55,9 @@ def update_bed(
         if sunlight is not None:
             bed.sunlight = sunlight
         if dimensions_sqft is not None:
+            error = _validate_positive_float("dimensions_sqft", dimensions_sqft)
+            if error:
+                return error
             bed.dimensions_sqft = dimensions_sqft
         if location is not None:
             bed.location = location
@@ -97,6 +117,13 @@ def add_container(
     """
     session = SessionLocal()
     try:
+        error = _validate_container_type(container_type)
+        if error:
+            return error
+        error = _validate_positive_float("size_gallons", size_gallons)
+        if error:
+            return error
+
         profile = session.query(GardenProfile).filter(
             GardenProfile.user_id == 1
         ).first()

@@ -13,6 +13,29 @@ from db.models import (
 from typing import Optional
 from datetime import datetime
 
+VALID_PROJECT_STATUSES = {"planning", "active", "maintaining", "paused", "complete"}
+
+
+def _validate_project_status(status: str) -> Optional[str]:
+    if status not in VALID_PROJECT_STATUSES:
+        return (
+            f"Invalid status '{status}'. Must be one of: "
+            f"{', '.join(sorted(VALID_PROJECT_STATUSES))}."
+        )
+    return None
+
+
+def _validate_non_negative_int(field_name: str, value: Optional[int]) -> Optional[str]:
+    if value is not None and value < 0:
+        return f"{field_name} must be 0 or greater."
+    return None
+
+
+def _validate_non_negative_float(field_name: str, value: Optional[float]) -> Optional[str]:
+    if value is not None and value < 0:
+        return f"{field_name} must be 0 or greater."
+    return None
+
 # ─── Project tools ────────────────────────────────────────────────────────────
 
 @tool
@@ -31,6 +54,13 @@ def create_project(
     """
     session = SessionLocal()
     try:
+        error = _validate_non_negative_int("tray_slots", tray_slots)
+        if error:
+            return error
+        error = _validate_non_negative_float("budget_ceiling", budget_ceiling)
+        if error:
+            return error
+
         # look up the garden profile for this user
         profile = session.query(GardenProfile).filter(
             GardenProfile.user_id == 1
@@ -94,13 +124,19 @@ def update_project(
         if goal is not None:
             project.goal = goal
         if status is not None:
-            valid_statuses = {"planning", "active", "maintaining", "paused", "complete"}
-            if status not in valid_statuses:
-                return f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}"
+            error = _validate_project_status(status)
+            if error:
+                return error
             project.status = status
         if tray_slots is not None:
+            error = _validate_non_negative_int("tray_slots", tray_slots)
+            if error:
+                return error
             project.tray_slots = tray_slots
         if budget_ceiling is not None:
+            error = _validate_non_negative_float("budget_ceiling", budget_ceiling)
+            if error:
+                return error
             project.budget_ceiling = budget_ceiling
         if notes is not None:
             project.notes = notes
@@ -230,6 +266,11 @@ def list_projects(status: Optional[str] = None) -> str:
     """
     session = SessionLocal()
     try:
+        if status:
+            error = _validate_project_status(status)
+            if error:
+                return error
+
         query = session.query(GardeningProject).filter(
             GardeningProject.user_id == 1
         )

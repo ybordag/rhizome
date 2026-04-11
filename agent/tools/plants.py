@@ -8,6 +8,52 @@ from datetime import datetime
 from db.database import SessionLocal
 from db.models import GardenProfile, GardeningProject, Bed, Container, Plant, PlantBatch, ProjectPlant
 
+VALID_PLANT_STATUSES = {
+    "planned",
+    "germinating",
+    "seedling",
+    "established",
+    "producing",
+    "dormant",
+    "removed",
+}
+
+
+def _parse_optional_datetime(value: Optional[str], field_name: str) -> Optional[datetime]:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid {field_name} '{value}'. Use ISO format YYYY-MM-DD."
+        ) from exc
+
+
+def _validate_plant_status(status: Optional[str], field_name: str = "status") -> Optional[str]:
+    if status is not None and status not in VALID_PLANT_STATUSES:
+        return (
+            f"Invalid {field_name} '{status}'. Must be one of: "
+            f"{', '.join(sorted(VALID_PLANT_STATUSES))}."
+        )
+    return None
+
+
+def _validate_positive_quantity(quantity: Optional[int], field_name: str = "quantity") -> Optional[str]:
+    if quantity is not None and quantity < 1:
+        return f"{field_name} must be at least 1."
+    return None
+
+
+def _validate_location_assignment(
+    container_id: Optional[str],
+    bed_id: Optional[str],
+) -> Optional[str]:
+    if container_id and bed_id:
+        return "A plant cannot be assigned to both a bed and a container in the same tool call."
+    return None
+
+
 # ─── Plant tools ──────────────────────────────────────────────────────────────
 
 @tool
@@ -67,6 +113,16 @@ def add_plant(
     """
     session = SessionLocal()
     try:
+        error = _validate_positive_quantity(quantity)
+        if error:
+            return error
+        error = _validate_location_assignment(container_id, bed_id)
+        if error:
+            return error
+        error = _validate_plant_status(status)
+        if error:
+            return error
+
         profile = session.query(GardenProfile).filter(
             GardenProfile.user_id == 1
         ).first()
@@ -76,10 +132,10 @@ def add_plant(
         now = datetime.utcnow()
 
         # parse explicit dates
-        parsed_sow = datetime.fromisoformat(sow_date) if sow_date else None
-        parsed_red_cup = datetime.fromisoformat(red_cup_date) if red_cup_date else None
-        parsed_transplant = datetime.fromisoformat(transplant_date) if transplant_date else None
-        parsed_last_fertilized = datetime.fromisoformat(last_fertilized_at) if last_fertilized_at else None
+        parsed_sow = _parse_optional_datetime(sow_date, "sow_date")
+        parsed_red_cup = _parse_optional_datetime(red_cup_date, "red_cup_date")
+        parsed_transplant = _parse_optional_datetime(transplant_date, "transplant_date")
+        parsed_last_fertilized = _parse_optional_datetime(last_fertilized_at, "last_fertilized_at")
 
         # infer status from available data if not explicitly provided
         inferred_status = status
@@ -126,6 +182,9 @@ def add_plant(
             f"Added {quantity}x {name} {variety or ''} to your garden "
             f"with id {plant.id} (status: {inferred_status})."
         )
+    except ValueError as e:
+        session.rollback()
+        return str(e)
     except Exception as e:
         session.rollback()
         print(f"[DEBUG] Failed to add plant: {e}")
@@ -159,13 +218,16 @@ def update_plant(
             return f"No plant found with id {plant_id}."
 
         if status is not None:
+            error = _validate_plant_status(status)
+            if error:
+                return error
             plant.status = status
         if is_flowering is not None:
             plant.is_flowering = is_flowering
         if is_fruiting is not None:
             plant.is_fruiting = is_fruiting
         if last_fertilized_at is not None:
-            plant.last_fertilized_at = datetime.fromisoformat(last_fertilized_at)
+            plant.last_fertilized_at = _parse_optional_datetime(last_fertilized_at, "last_fertilized_at")
         if fertilizing_schedule is not None:
             plant.fertilizing_schedule = fertilizing_schedule
         if special_instructions is not None:
@@ -175,6 +237,9 @@ def update_plant(
 
         session.commit()
         return f"Plant '{plant.name}' updated successfully."
+    except ValueError as e:
+        session.rollback()
+        return str(e)
     except Exception as e:
         session.rollback()
         print(f"[DEBUG] Failed to update plant: {str(e)}")
@@ -265,6 +330,10 @@ def list_plants(
     """
     session = SessionLocal()
     try:
+        error = _validate_plant_status(status)
+        if error:
+            return error
+
         query = session.query(Plant).filter(Plant.user_id == 1)
 
         if project_id:
@@ -360,6 +429,16 @@ def batch_add_plant_type(
     """
     session = SessionLocal()
     try:
+        error = _validate_positive_quantity(quantity)
+        if error:
+            return error
+        error = _validate_location_assignment(container_id, bed_id)
+        if error:
+            return error
+        error = _validate_plant_status(status)
+        if error:
+            return error
+
         profile = session.query(GardenProfile).filter(
             GardenProfile.user_id == 1
         ).first()
@@ -375,10 +454,10 @@ def batch_add_plant_type(
 
         now = datetime.utcnow()
 
-        parsed_sow = datetime.fromisoformat(sow_date) if sow_date else None
-        parsed_red_cup = datetime.fromisoformat(red_cup_date) if red_cup_date else None
-        parsed_transplant = datetime.fromisoformat(transplant_date) if transplant_date else None
-        parsed_last_fertilized = datetime.fromisoformat(last_fertilized_at) if last_fertilized_at else None
+        parsed_sow = _parse_optional_datetime(sow_date, "sow_date")
+        parsed_red_cup = _parse_optional_datetime(red_cup_date, "red_cup_date")
+        parsed_transplant = _parse_optional_datetime(transplant_date, "transplant_date")
+        parsed_last_fertilized = _parse_optional_datetime(last_fertilized_at, "last_fertilized_at")
 
         inferred_status = status
         if inferred_status is None:
@@ -460,6 +539,9 @@ def batch_add_plant_type(
             f"(status: {inferred_status}, {action} today)."
             + (f" Linked to project." if project_id else "")
         )
+    except ValueError as e:
+        session.rollback()
+        return str(e)
     except Exception as e:
         session.rollback()
         print(f"[DEBUG] Failed to batch add plant type: {e}")
@@ -505,6 +587,17 @@ def batch_update_plants(
     """
     session = SessionLocal()
     try:
+        error = _validate_plant_status(current_status, "current_status")
+        if error:
+            return error
+        error = _validate_plant_status(new_status, "new_status")
+        if error:
+            return error
+        if quantity is not None:
+            error = _validate_positive_quantity(quantity)
+            if error:
+                return error
+
         query = session.query(Plant).filter(
             Plant.user_id == 1,
             Plant.name.ilike(f"%{name}%"),
@@ -541,9 +634,9 @@ def batch_update_plants(
                 )
             plants = plants[:quantity]
 
-        parsed_red_cup = datetime.fromisoformat(red_cup_date) if red_cup_date else None
-        parsed_transplant = datetime.fromisoformat(transplant_date) if transplant_date else None
-        parsed_last_fertilized = datetime.fromisoformat(last_fertilized_at) if last_fertilized_at else None
+        parsed_red_cup = _parse_optional_datetime(red_cup_date, "red_cup_date")
+        parsed_transplant = _parse_optional_datetime(transplant_date, "transplant_date")
+        parsed_last_fertilized = _parse_optional_datetime(last_fertilized_at, "last_fertilized_at")
 
         now = datetime.utcnow()
         timestamp = now.strftime("%B %d, %Y")
@@ -609,6 +702,9 @@ def batch_update_plants(
             + (f" — {update_reason}" if update_reason else "")
             + "."
         )
+    except ValueError as e:
+        session.rollback()
+        return str(e)
     except Exception as e:
         session.rollback()
         print(f"[DEBUG] Failed to batch update plants: {e}")
@@ -649,6 +745,14 @@ def batch_remove_plants(
     """
     session = SessionLocal()
     try:
+        error = _validate_plant_status(current_status, "current_status")
+        if error:
+            return error
+        if quantity is not None:
+            error = _validate_positive_quantity(quantity)
+            if error:
+                return error
+
         query = session.query(Plant).filter(
             Plant.user_id == 1,
             Plant.name.ilike(f"%{name}%"),

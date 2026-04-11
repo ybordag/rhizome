@@ -5,7 +5,6 @@ from datetime import datetime
 import uuid
 from typing import Optional
 
-@staticmethod
 def _fmt_date(d) -> str:
     return d.strftime("%B %d, %Y") if d else "not set"
 
@@ -38,20 +37,19 @@ class GardenProfile(Base):
     def to_summary(self) -> str:
         return (
             f"[Garden] Zone {self.climate_zone} | "
-            f"Last frost: {self.frost_date_last_spring} | "
-            f"First frost: {self.frost_date_first_fall}\n"
-            f"  Soil: {self.soil_type}\n"
-            f"  Trays: {self.tray_indoor_capacity} indoor, "
-            f"{self.tray_capacity} total"
-            f"Created at: {_fmt_date(self.created_at)}"
+            f"Last frost: {self.frost_date_last_spring or 'not set'} | "
+            f"First frost: {self.frost_date_first_fall or 'not set'}\n"
+            f"  Soil: {self.soil_type or 'unknown'}\n"
+            f"  Trays: {self.tray_indoor_capacity if self.tray_indoor_capacity is not None else 'unknown'} indoor, "
+            f"{self.tray_capacity if self.tray_capacity is not None else 'unknown'} total\n"
+            f"  Created at: {_fmt_date(self.created_at)}"
         )
     
     def to_detailed(self) -> str:
         return (
             self.to_summary()
-            + f"Updated at: {_fmt_date(self.updated_at)}"
-
-            f"\n  Log:\n{self.notes or '  none'}"
+            + f"\n  Updated at: {_fmt_date(self.updated_at)}"
+            + f"\n  Log:\n{self.notes or '  none'}"
         )
 
 
@@ -90,8 +88,8 @@ class GardeningProject(Base):
             f"Batches: {batch_count} | "
             f"Beds: {bed_count} | "
             f"Containers: {container_count}\n"
-            f"  Goal: {self.goal}"
-            f"Created at: {_fmt_date(self.created_at)}"
+            f"  Goal: {self.goal}\n"
+            f"  Created at: {_fmt_date(self.created_at)}"
         )
 
     def to_detailed(
@@ -108,10 +106,10 @@ class GardeningProject(Base):
                 container_count=container_count,
                 batch_count=batch_count
             )
-            + f"\n  Budget: ${self.budget_ceiling or 'not set'} | "
-            f"Tray slots: {self.tray_slots or 0}\n"
+            + f"\n  Budget: ${self.budget_ceiling if self.budget_ceiling is not None else 'not set'} | "
+            f"Tray slots: {self.tray_slots if self.tray_slots is not None else 0}\n"
             f"  Plan: {self.approved_plan.get('notes', 'none') if self.approved_plan else 'none'}\n"
-            f"Updated at: {_fmt_date(self.updated_at)}"
+            f"  Updated at: {_fmt_date(self.updated_at)}\n"
             f"  Notes: {self.notes or 'none'}"
         )
 
@@ -137,11 +135,11 @@ class Bed(Base):
     def to_summary(self) -> str:
         return (
             f"[Bed] {self.name} (id: {self.id})\n"
-            f"  Location: {self.location} | "
-            f"Sunlight: {self.sunlight}\n"
-            f"  Size: {self.dimensions_sqft or 'unknown'} sqft | "
+            f"  Location: {self.location or 'unknown'} | "
+            f"Sunlight: {self.sunlight or 'unknown'}\n"
+            f"  Size: {self.dimensions_sqft if self.dimensions_sqft is not None else 'unknown'} sqft | "
             f"Soil: {self.soil_type or 'unknown'}\n"
-            f"Created at: {_fmt_date(self.created_at)}"
+            f"  Created at: {_fmt_date(self.created_at)}"
         )
 
     # beds don't have much more to say yet — to_detailed is the same
@@ -149,7 +147,7 @@ class Bed(Base):
     def to_detailed(self) -> str:
         return (
             self.to_summary()
-            + f"Updated at: {_fmt_date(self.updated_at)}"
+            + f"\n  Updated at: {_fmt_date(self.updated_at)}"
             f"\n  Notes: {self.notes or 'none'}"
         )
 
@@ -175,17 +173,17 @@ class Container(Base):
     def to_summary(self) -> str:
         return (
             f"[Container] {self.name} (id: {self.id})\n"
-            f"  Type: {self.container_type} | "
-            f"Size: {self.size_gallons or 'unknown'} gal | "
-            f"Location: {self.location}"
+            f"  Type: {self.container_type or 'unknown'} | "
+            f"Size: {self.size_gallons if self.size_gallons is not None else 'unknown'} gal | "
+            f"Location: {self.location or 'unknown'}"
             f"\n  Mobile: {self.is_mobile}\n"
-            f"Created at: {_fmt_date(self.created_at)}"
+            f"  Created at: {_fmt_date(self.created_at)}"
         )
 
     def to_detailed(self) -> str:
         return (
             self.to_summary()
-            + f"Updated at: {_fmt_date(self.updated_at)}"
+            + f"\n  Updated at: {_fmt_date(self.updated_at)}\n"
             f"  Notes: {self.notes or 'none'}"
         )
 
@@ -275,7 +273,7 @@ class Plant(Base):
             f"  Status: {self.status} | {self._state_text()}\n"
             f"  Location: {self._location_text(location_name)} | "
             f"Source: {self.source or 'unknown'}\n"
-            f"  Created: {_fmt_date(self.created_at)}"
+            f"  Created at: {_fmt_date(self.created_at)}"
         )
 
     def to_detailed(self, location_name: Optional[str] = None) -> str:
@@ -335,14 +333,14 @@ class PlantBatch(Base):
             f"  Supplier: {self.supplier or 'not recorded'} | "
             f"Ref: {self.supplier_reference or 'none'}\n"
             f"  Light: {self.grow_light or 'not recorded'} | "
-            f"Tray: {self.tray or 'not recorded'}"
-            f"Created at: {_fmt_date(self.created_at)}"
+            f"Tray: {self.tray or 'not recorded'}\n"
+            f"  Created at: {_fmt_date(self.created_at)}"
         )
     
     def to_detailed(self) -> str:
         return (
             self.to_summary()
-            + f"Updated at: {_fmt_date(self.updated_at)}"
+            + f"\n  Updated at: {_fmt_date(self.updated_at)}"
             f"\n  Log:\n{self.notes or '  none'}"
         )
     
