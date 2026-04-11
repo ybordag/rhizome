@@ -86,24 +86,24 @@ def update_garden_profile(
 
         # merge new constraints in
         if hard_constraints is not None:
-            existing = profile.hard_constraints or {}
+            existing = dict(profile.hard_constraints or {})
             existing.update(hard_constraints)
             profile.hard_constraints = existing
 
         if soft_preferences is not None:
-            existing = profile.soft_preferences or {}
+            existing = dict(profile.soft_preferences or {})
             existing.update(soft_preferences)
             profile.soft_preferences = existing
 
         # remove specified keys
         if remove_hard_constraints:
-            existing = profile.hard_constraints or {}
+            existing = dict(profile.hard_constraints or {})
             for key in remove_hard_constraints:
                 existing.pop(key, None)   # pop with None default — no error if key missing
             profile.hard_constraints = existing
 
         if remove_soft_preferences:
-            existing = profile.soft_preferences or {}
+            existing = dict(profile.soft_preferences or {})
             for key in remove_soft_preferences:
                 existing.pop(key, None)
             profile.soft_preferences = existing
