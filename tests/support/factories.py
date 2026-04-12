@@ -11,8 +11,12 @@ from db.models import (
     Plant,
     PlantBatch,
     ProjectBed,
+    ProjectBrief,
     ProjectContainer,
+    ProjectExecutionSpec,
     ProjectPlant,
+    ProjectProposal,
+    ProjectRevision,
 )
 
 
@@ -58,6 +62,110 @@ def make_project(session, profile: GardenProfile, **overrides: Any) -> Gardening
     data.update(overrides)
     project = GardeningProject(**data)
     return _persist(session, project)
+
+
+def make_project_brief(session, project: GardeningProject, **overrides: Any) -> ProjectBrief:
+    data = {
+        "project_id": project.id,
+        "status": "ready_for_proposal",
+        "goal": project.goal,
+        "desired_outcome": "Healthy summer harvest by July.",
+        "target_start": datetime(2026, 4, 1),
+        "target_completion": datetime(2026, 7, 1),
+        "budget_cap": project.budget_ceiling,
+        "effort_preference": "medium",
+        "propagation_preference": "seed",
+        "priority_preferences": ["cost", "yield"],
+        "notes": "Planner brief notes.",
+    }
+    data.update(overrides)
+    brief = ProjectBrief(**data)
+    return _persist(session, brief)
+
+
+def make_project_proposal(
+    session,
+    project: GardeningProject,
+    brief: ProjectBrief,
+    **overrides: Any,
+) -> ProjectProposal:
+    data = {
+        "project_id": project.id,
+        "brief_id": brief.id,
+        "version": 1,
+        "status": "proposed",
+        "title": "Balanced seed-start plan",
+        "summary": "Use growbags and seed starts for a July harvest.",
+        "recommended_approach": "Seed start tomatoes and direct sow basil.",
+        "selected_locations": [{"location_type": "container", "location_id": "c1", "name": "Growbag 1"}],
+        "selected_plants": [{"name": "Tomato", "quantity": 2, "propagation_method": "seed"}],
+        "material_strategy": {"reuse_existing": True},
+        "propagation_strategy": {"primary": "seed"},
+        "assumptions": ["Outdoor hardening-off is available."],
+        "tradeoffs": ["Lower cost, more labor"],
+        "risks": ["Late transplanting shortens the season."],
+        "feasibility_notes": ["Fits the current budget."],
+        "cost_estimate": {"total_estimated_cost": 50.0, "cost_confidence": "medium"},
+        "timeline_estimate": {"expected_completion_date": "2026-07-01", "timeline_confidence": "medium"},
+        "effort_estimate": {"total_hours": 12.0, "avg_hours_per_week": 1.5},
+        "maintenance_assumptions": {"watering": "every 2 days"},
+        "resource_assumptions": {"tray_slots": 4},
+        "budget_assumptions": {"contingency": 5.0},
+        "timing_anchors": {"modes": ["calendar", "event"], "calendar": [], "event": []},
+    }
+    data.update(overrides)
+    proposal = ProjectProposal(**data)
+    return _persist(session, proposal)
+
+
+def make_project_revision(
+    session,
+    project: GardeningProject,
+    proposal: ProjectProposal,
+    **overrides: Any,
+) -> ProjectRevision:
+    data = {
+        "project_id": project.id,
+        "source_proposal_id": proposal.id,
+        "revision_number": 1,
+        "status": "active",
+        "approved_plan": {"proposal_id": proposal.id, "title": proposal.title},
+    }
+    data.update(overrides)
+    revision = ProjectRevision(**data)
+    return _persist(session, revision)
+
+
+def make_project_execution_spec(
+    session,
+    project: GardeningProject,
+    revision: ProjectRevision,
+    **overrides: Any,
+) -> ProjectExecutionSpec:
+    data = {
+        "project_id": project.id,
+        "revision_id": revision.id,
+        "status": "active",
+        "selected_plants": [{"name": "Tomato", "quantity": 2, "propagation_method": "seed"}],
+        "selected_locations": [{"location_type": "container", "location_id": "c1", "name": "Growbag 1"}],
+        "propagation_strategy": {"primary": "seed"},
+        "timing_windows": {
+            "planning_start": "2026-04-01",
+            "expected_first_action_date": "2026-04-01",
+            "expected_establishment_date": "2026-05-20",
+            "expected_completion_date": "2026-07-01",
+            "maintenance_mode_date": "2026-06-01",
+        },
+        "maintenance_assumptions": {"watering": "every 2 days"},
+        "resource_assumptions": {"tray_slots": 4},
+        "budget_assumptions": {"contingency": 5.0},
+        "preferred_completion_target": datetime(2026, 7, 1),
+        "plant_categories": [{"name": "Tomato", "annual": True, "edible": True}],
+        "timing_anchors": {"modes": ["calendar", "event"], "calendar": [], "event": []},
+    }
+    data.update(overrides)
+    spec = ProjectExecutionSpec(**data)
+    return _persist(session, spec)
 
 
 def make_bed(session, profile: GardenProfile, **overrides: Any) -> Bed:

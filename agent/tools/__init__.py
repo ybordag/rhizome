@@ -23,6 +23,19 @@ from agent.tools.activity import (
     get_batch_activity,
     list_recent_activity,
 )
+from agent.tools.planning import (
+    get_or_create_project_brief,
+    update_project_brief,
+    get_project_brief,
+    assemble_planning_context,
+    check_blocking_unknowns,
+    list_candidate_locations,
+    list_candidate_plant_material,
+    save_project_proposal,
+    list_project_proposals,
+    accept_project_proposal,
+    preview_project_schedule,
+)
 
 tools = [
     get_garden_profile,
@@ -63,5 +76,16 @@ tools = [
     get_container_activity,
     get_batch_activity,
     list_recent_activity,
+    get_or_create_project_brief,
+    update_project_brief,
+    get_project_brief,
+    assemble_planning_context,
+    check_blocking_unknowns,
+    list_candidate_locations,
+    list_candidate_plant_material,
+    save_project_proposal,
+    list_project_proposals,
+    accept_project_proposal,
+    preview_project_schedule,
 ]
 tools_by_name = {t.name: t for t in tools}

@@ -114,6 +114,145 @@ class GardeningProject(Base):
         )
 
 
+class ProjectBrief(Base):
+    __tablename__ = "project_brief"
+    __table_args__ = (
+        Index("ix_project_brief_project_id", "project_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    status = Column(String, nullable=False, default="draft")
+    goal = Column(Text, nullable=False)
+    desired_outcome = Column(Text, nullable=True)
+    target_start = Column(DateTime, nullable=True)
+    target_completion = Column(DateTime, nullable=True)
+    budget_cap = Column(Float, nullable=True)
+    effort_preference = Column(String, nullable=True)
+    propagation_preference = Column(String, nullable=True)
+    priority_preferences = Column(JSON, default=list)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        return (
+            f"[Project Brief] {self.project_id} (id: {self.id})\n"
+            f"  Status: {self.status}\n"
+            f"  Goal: {self.goal}\n"
+            f"  Desired outcome: {self.desired_outcome or 'not set'}\n"
+            f"  Budget cap: ${self.budget_cap if self.budget_cap is not None else 'not set'}\n"
+            f"  Target start: {_fmt_date(self.target_start)} | "
+            f"Target completion: {_fmt_date(self.target_completion)}"
+        )
+
+
+class ProjectProposal(Base):
+    __tablename__ = "project_proposal"
+    __table_args__ = (
+        Index("ix_project_proposal_project_id", "project_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    brief_id = Column(String, ForeignKey("project_brief.id"), nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    status = Column(String, nullable=False, default="proposed")
+    title = Column(String, nullable=False)
+    summary = Column(Text, nullable=False)
+    recommended_approach = Column(Text, nullable=False)
+    selected_locations = Column(JSON, default=list)
+    selected_plants = Column(JSON, default=list)
+    material_strategy = Column(JSON, default=dict)
+    propagation_strategy = Column(JSON, default=dict)
+    assumptions = Column(JSON, default=list)
+    tradeoffs = Column(JSON, default=list)
+    risks = Column(JSON, default=list)
+    feasibility_notes = Column(JSON, default=list)
+    cost_estimate = Column(JSON, default=dict)
+    timeline_estimate = Column(JSON, default=dict)
+    effort_estimate = Column(JSON, default=dict)
+    maintenance_assumptions = Column(JSON, default=dict)
+    resource_assumptions = Column(JSON, default=dict)
+    budget_assumptions = Column(JSON, default=dict)
+    timing_anchors = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        total_cost = (self.cost_estimate or {}).get("total_estimated_cost", "not set")
+        completion = (self.timeline_estimate or {}).get("expected_completion_date", "not set")
+        effort = (self.effort_estimate or {}).get("total_hours", "not set")
+        return (
+            f"[Project Proposal] {self.title} (id: {self.id})\n"
+            f"  Status: {self.status} | Version: {self.version}\n"
+            f"  Estimated cost: ${total_cost}\n"
+            f"  Expected completion: {completion}\n"
+            f"  Estimated effort: {effort} hours\n"
+            f"  Summary: {self.summary}"
+        )
+
+
+class ProjectRevision(Base):
+    __tablename__ = "project_revision"
+    __table_args__ = (
+        Index("ix_project_revision_project_id", "project_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    source_proposal_id = Column(String, ForeignKey("project_proposal.id"), nullable=False)
+    revision_number = Column(Integer, nullable=False, default=1)
+    status = Column(String, nullable=False, default="active")
+    approved_plan = Column(JSON, nullable=False, default=dict)
+    approved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    superseded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        return (
+            f"[Project Revision] {self.project_id} (id: {self.id})\n"
+            f"  Revision: {self.revision_number} | Status: {self.status}\n"
+            f"  Approved at: {_fmt_date(self.approved_at)}"
+        )
+
+
+class ProjectExecutionSpec(Base):
+    __tablename__ = "project_execution_spec"
+    __table_args__ = (
+        Index("ix_project_execution_spec_project_id", "project_id"),
+        Index("ix_project_execution_spec_revision_id", "revision_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=False)
+    status = Column(String, nullable=False, default="active")
+    selected_plants = Column(JSON, default=list)
+    selected_locations = Column(JSON, default=list)
+    propagation_strategy = Column(JSON, default=dict)
+    timing_windows = Column(JSON, default=dict)
+    maintenance_assumptions = Column(JSON, default=dict)
+    resource_assumptions = Column(JSON, default=dict)
+    budget_assumptions = Column(JSON, default=dict)
+    preferred_completion_target = Column(DateTime, nullable=True)
+    plant_categories = Column(JSON, default=list)
+    timing_anchors = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        timing_modes = (self.timing_anchors or {}).get("modes", [])
+        return (
+            f"[Execution Spec] {self.project_id} (id: {self.id})\n"
+            f"  Revision: {self.revision_id} | Status: {self.status}\n"
+            f"  Plants: {len(self.selected_plants or [])} | "
+            f"Locations: {len(self.selected_locations or [])}\n"
+            f"  Timing modes: {', '.join(timing_modes) if timing_modes else 'calendar'}"
+        )
+
+
 class Bed(Base):
     __tablename__ = "bed"
 

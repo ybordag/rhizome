@@ -5,10 +5,11 @@ from langgraph.graph import END, START, StateGraph
 
 def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
     from agent import nodes
-    from agent.tools import activity, beds_containers, plants, profile, projects, search
+    from agent.tools import activity, beds_containers, planning, plants, profile, projects, search
 
     monkeypatch.setattr(nodes, "SessionLocal", session_factory)
     monkeypatch.setattr(activity, "SessionLocal", session_factory)
+    monkeypatch.setattr(planning, "SessionLocal", session_factory)
     monkeypatch.setattr(profile, "SessionLocal", session_factory)
     monkeypatch.setattr(projects, "SessionLocal", session_factory)
     monkeypatch.setattr(plants, "SessionLocal", session_factory)

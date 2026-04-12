@@ -1,7 +1,43 @@
 # Rhizome Activity Log and Task System Plan
 
-**Status:** Proposed  
-**Last updated:** 2026-04-11
+**Status:** Phase 1 and Phase 2 implemented  
+**Last updated:** 2026-04-12
+
+---
+
+## Current status
+
+Progress against the proposed sequencing:
+
+1. **Implement Activity Log (at least basic)**  
+   Status: complete
+2. **Implement Project Planner**  
+   Status: complete
+3. **Implement Task Tracker**  
+   Status: not started
+4. **Finish implementing Activity Log (if necessary)**  
+   Status: deferred until task-tracker integration
+
+What is now in place:
+
+- phase 1 activity-log persistence, write-path instrumentation, and history
+  query tools
+- phase 2 project-planner persistence using `ProjectBrief`,
+  `ProjectProposal`, `ProjectRevision`, and `ProjectExecutionSpec`
+- deterministic planner helpers for feasibility, cost, timeline, and effort
+  estimation
+- planner tools for brief management, proposal management, proposal acceptance,
+  and schedule preview
+- a non-persistent schedule preview that defines the contract Phase 3 will use
+  for persistent task generation
+
+What remains:
+
+- persistent `Task`, `TaskDependency`, `TaskSeries`, and `TaskGenerationRun`
+- rolling materialization of recurring care tasks
+- event-driven follow-up scheduling from activity-log events
+- daily triage over persisted tasks
+- later care-event expansion of the activity log
 
 ---
 
@@ -231,9 +267,13 @@ The activity log spans the whole flow.
 Going forward, we should plan this feature area under the following structure:
 
 - **Phase 1:** basic activity log
+  Status: complete
 - **Phase 2:** project planner
+  Status: complete
 - **Phase 3:** task tracker
+  Status: next implementation target
 - **Phase 4:** finish or expand activity log based on real planner/tracker needs
+  Status: follow-on after task tracking
 
 This is the plan we should use for future issue creation, schema planning, and
 implementation sequencing unless we explicitly revise it again.
