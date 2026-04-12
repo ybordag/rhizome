@@ -5,6 +5,15 @@ Tools must return strings — the LLM reads tool output as text.
 """
 
 from langchain.tools import tool
+from agent.activity_log import (
+    DEFAULT_ACTOR_LABEL,
+    DEFAULT_ACTOR_TYPE,
+    record_activity_event,
+    record_create_event,
+    record_delete_event,
+    record_update_event,
+    snapshot_model,
+)
 from db.database import SessionLocal
 from db.models import (
     GardenProfile, GardeningProject, Bed, Container, 
@@ -82,6 +91,20 @@ def create_project(
             iterations=[],
         )
         session.add(project)
+        session.flush()
+        record_create_event(
+            session,
+            event_type="project_created",
+            category="project",
+            summary=f"Created project '{project.name}'.",
+            obj=project,
+            project_id=project.id,
+            subjects=[
+                {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return f"Project '{name}' created successfully with id {project.id}."
     except Exception as e:
@@ -118,6 +141,9 @@ def update_project(
         if not project:
             return f"No project found with id {project_id}."
 
+        before = snapshot_model(project)
+        old_status = project.status
+
         # only update fields that were explicitly provided
         if name is not None:
             project.name = name
@@ -141,6 +167,26 @@ def update_project(
         if notes is not None:
             project.notes = notes
 
+        changed_event_type = "project_status_changed" if status is not None and status != old_status else "project_updated"
+        changed_summary = (
+            f"Project '{project.name}' status changed from {old_status} to {project.status}."
+            if changed_event_type == "project_status_changed"
+            else f"Updated project '{project.name}'."
+        )
+        record_update_event(
+            session,
+            event_type=changed_event_type,
+            category="project",
+            summary=changed_summary,
+            before=before,
+            obj=project,
+            project_id=project.id,
+            subjects=[
+                {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return f"Project '{project.name}' updated successfully."
     except Exception as e:
@@ -367,6 +413,19 @@ def assign_bed_to_project(project_id: str, bed_id: str) -> str:
             return f"Bed '{bed.name}' is already assigned to '{project.name}'."
 
         session.add(ProjectBed(project_id=project_id, bed_id=bed_id))
+        record_activity_event(
+            session,
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+            event_type="project_bed_assigned",
+            category="project",
+            summary=f"Assigned bed '{bed.name}' to project '{project.name}'.",
+            project_id=project.id,
+            subjects=[
+                {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                {"subject_type": "bed", "subject_id": bed.id, "role": "affected"},
+            ],
+        )
         session.commit()
         return f"Bed '{bed.name}' assigned to project '{project.name}'."
     except Exception as e:
@@ -429,6 +488,19 @@ def assign_container_to_project(project_id: str, container_id: str) -> str:
             return f"Container '{container.name}' is already assigned to '{project.name}'."
 
         session.add(ProjectContainer(project_id=project_id, container_id=container_id))
+        record_activity_event(
+            session,
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+            event_type="project_container_assigned",
+            category="project",
+            summary=f"Assigned container '{container.name}' to project '{project.name}'.",
+            project_id=project.id,
+            subjects=[
+                {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                {"subject_type": "container", "subject_id": container.id, "role": "affected"},
+            ],
+        )
         session.commit()
         return f"Container '{container.name}' assigned to project '{project.name}'."
     except Exception as e:
@@ -448,6 +520,10 @@ def unassign_bed_from_project(project_id: str, bed_id: str) -> str:
     """
     session = SessionLocal()
     try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id
+        ).first()
+        bed = session.query(Bed).filter(Bed.id == bed_id).first()
         row = session.query(ProjectBed).filter(
             ProjectBed.project_id == project_id,
             ProjectBed.bed_id == bed_id
@@ -455,6 +531,20 @@ def unassign_bed_from_project(project_id: str, bed_id: str) -> str:
         if not row:
             return "That bed is not assigned to this project."
         session.delete(row)
+        if project and bed:
+            record_activity_event(
+                session,
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+                event_type="project_bed_unassigned",
+                category="project",
+                summary=f"Unassigned bed '{bed.name}' from project '{project.name}'.",
+                project_id=project.id,
+                subjects=[
+                    {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                    {"subject_type": "bed", "subject_id": bed.id, "role": "affected"},
+                ],
+            )
         session.commit()
         return "Bed unassigned from project."
     except Exception as e:
@@ -473,6 +563,12 @@ def unassign_container_from_project(project_id: str, container_id: str) -> str:
     """
     session = SessionLocal()
     try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id
+        ).first()
+        container = session.query(Container).filter(
+            Container.id == container_id
+        ).first()
         row = session.query(ProjectContainer).filter(
             ProjectContainer.project_id == project_id,
             ProjectContainer.container_id == container_id
@@ -480,6 +576,20 @@ def unassign_container_from_project(project_id: str, container_id: str) -> str:
         if not row:
             return "That container is not assigned to this project."
         session.delete(row)
+        if project and container:
+            record_activity_event(
+                session,
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+                event_type="project_container_unassigned",
+                category="project",
+                summary=f"Unassigned container '{container.name}' from project '{project.name}'.",
+                project_id=project.id,
+                subjects=[
+                    {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                    {"subject_type": "container", "subject_id": container.id, "role": "affected"},
+                ],
+            )
         session.commit()
         return "Container unassigned from project."
     except Exception as e:
@@ -525,6 +635,21 @@ def add_plant_to_project(project_id: str, plant_id: str, notes: Optional[str] = 
             plant_id=plant_id,
             notes=notes
         ))
+        record_activity_event(
+            session,
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+            event_type="project_plant_added",
+            category="project",
+            summary=f"Added plant '{plant.name}' to project '{project.name}'.",
+            notes=notes,
+            project_id=project.id,
+            subjects=[
+                {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                {"subject_type": "plant", "subject_id": plant.id, "role": "affected"},
+            ],
+            metadata={"reason": notes} if notes else None,
+        )
         session.commit()
         return f"'{plant.name}' added to project '{project.name}'."
     except Exception as e:
@@ -546,6 +671,10 @@ def remove_plant_from_project(project_id: str, plant_id: str, reason: Optional[s
     """
     session = SessionLocal()
     try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id
+        ).first()
+        plant = session.query(Plant).filter(Plant.id == plant_id).first()
 
         link = session.query(ProjectPlant).filter(
             ProjectPlant.project_id == project_id,
@@ -558,6 +687,21 @@ def remove_plant_from_project(project_id: str, plant_id: str, reason: Optional[s
         link.removed_at = datetime.utcnow()
         if reason:
             link.notes = f"{link.notes or ''}\nRemoved: {reason}".strip()
+        if project and plant:
+            record_activity_event(
+                session,
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+                event_type="project_plant_removed",
+                category="project",
+                summary=f"Removed plant '{plant.name}' from project '{project.name}'.",
+                project_id=project.id,
+                subjects=[
+                    {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                    {"subject_type": "plant", "subject_id": plant.id, "role": "affected"},
+                ],
+                metadata={"reason": reason} if reason else None,
+            )
         session.commit()
         return "Plant decoupled from project. It remains in your garden."
     except Exception as e:
@@ -594,6 +738,8 @@ def delete_project(project_id: str) -> str:
         if not project:
             return f"No project found with id {project_id}."
 
+        before = snapshot_model(project)
+
         # unlink plants from project
         links = session.query(ProjectPlant).filter(
             ProjectPlant.project_id == project_id
@@ -619,6 +765,28 @@ def delete_project(project_id: str) -> str:
             batch.project_id = None
 
         name = project.name
+        link_count = len(links)
+        batch_count = len(batches)
+        record_delete_event(
+            session,
+            event_type="project_deleted",
+            category="project",
+            summary=(
+                f"Deleted project '{name}'. "
+                f"Removed {link_count} plant links and unlinked {batch_count} batches."
+            ),
+            before=before,
+            project_id=project.id,
+            metadata={
+                "link_count": link_count,
+                "batch_count": batch_count,
+            },
+            subjects=[
+                {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.delete(project)
         session.commit()
         return (

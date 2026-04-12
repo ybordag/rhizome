@@ -4,6 +4,14 @@ Tools must return strings — the LLM reads tool output as text.
 """
 
 from langchain.tools import tool
+from agent.activity_log import (
+    DEFAULT_ACTOR_LABEL,
+    DEFAULT_ACTOR_TYPE,
+    record_create_event,
+    record_delete_event,
+    record_update_event,
+    snapshot_model,
+)
 from db.database import SessionLocal
 from db.models import GardenProfile, Plant, Bed, Container, ProjectBed, ProjectContainer
 from typing import Optional
@@ -50,6 +58,8 @@ def update_bed(
         if not bed:
             return f"No bed found with id {bed_id}."
 
+        before = snapshot_model(bed)
+
         if soil_type is not None:
             bed.soil_type = soil_type
         if sunlight is not None:
@@ -64,6 +74,19 @@ def update_bed(
         if notes is not None:
             bed.notes = notes
 
+        record_update_event(
+            session,
+            event_type="bed_updated",
+            category="bed",
+            summary=f"Updated bed '{bed.name}'.",
+            before=before,
+            obj=bed,
+            subjects=[
+                {"subject_type": "bed", "subject_id": bed.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return f"Bed '{bed.name}' updated successfully."
     except Exception as e:
@@ -141,6 +164,19 @@ def add_container(
             notes=notes
         )
         session.add(container)
+        session.flush()
+        record_create_event(
+            session,
+            event_type="container_created",
+            category="container",
+            summary=f"Created container '{container.name}'.",
+            obj=container,
+            subjects=[
+                {"subject_type": "container", "subject_id": container.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return f"Container '{name}' added successfully with id {container.id}."
     except Exception as e:
@@ -169,10 +205,31 @@ def update_container(
         ).first()
         if not container:
             return f"No container found with id {container_id}."
+        before = snapshot_model(container)
+        old_location = container.location
         if location is not None:
             container.location = location
         if notes is not None:
             container.notes = notes
+        event_type = "container_moved" if location is not None and location != old_location else "container_updated"
+        summary = (
+            f"Moved container '{container.name}' from {old_location or 'unknown'} to {container.location or 'unknown'}."
+            if event_type == "container_moved"
+            else f"Updated container '{container.name}'."
+        )
+        record_update_event(
+            session,
+            event_type=event_type,
+            category="container",
+            summary=summary,
+            before=before,
+            obj=container,
+            subjects=[
+                {"subject_type": "container", "subject_id": container.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return f"Container '{container.name}' updated successfully."
     except Exception as e:
@@ -219,6 +276,20 @@ def remove_container(container_id: str, reason: Optional[str] = None) -> str:
         ).delete()
 
         name = container.name
+        before = snapshot_model(container)
+        record_delete_event(
+            session,
+            event_type="container_removed",
+            category="container",
+            summary=f"Removed container '{name}' from the garden.",
+            before=before,
+            metadata={"reason": reason} if reason else None,
+            subjects=[
+                {"subject_type": "container", "subject_id": container.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.delete(container)
         session.commit()
         reason_text = f" Reason: {reason}." if reason else ""
@@ -274,6 +345,8 @@ def delete_bed(bed_id: str) -> str:
         if not bed:
             return f"No bed found with id {bed_id}."
 
+        before = snapshot_model(bed)
+
         # check for active plants
         active_plants = session.query(Plant).filter(
             Plant.bed_id == bed_id,
@@ -292,6 +365,18 @@ def delete_bed(bed_id: str) -> str:
         ).delete()
 
         name = bed.name
+        record_delete_event(
+            session,
+            event_type="bed_deleted",
+            category="bed",
+            summary=f"Deleted bed '{name}'.",
+            before=before,
+            subjects=[
+                {"subject_type": "bed", "subject_id": bed.id, "role": "primary"},
+            ],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.delete(bed)
         session.commit()
         return f"Bed '{name}' permanently deleted."

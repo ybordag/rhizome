@@ -1,6 +1,6 @@
 # db/models.py
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey, Index
 from datetime import datetime
 import uuid
 from typing import Optional
@@ -366,3 +366,47 @@ class Conversation(Base):
 
     def __repr__(self):
         return f"<Conversation id={self.id}>"
+
+
+class ActivityEvent(Base):
+    __tablename__ = "activity_event"
+    __table_args__ = (
+        Index("ix_activity_event_created_at", "created_at"),
+        Index("ix_activity_event_project_id", "project_id"),
+        Index("ix_activity_event_event_type", "event_type"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    actor_type = Column(String, nullable=False)
+    actor_label = Column(String, nullable=True)
+
+    event_type = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+
+    summary = Column(Text, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
+    caused_by_event_id = Column(String, ForeignKey("activity_event.id"), nullable=True)
+    conversation_id = Column(String, ForeignKey("conversation.id"), nullable=True)
+    thread_id = Column(String, nullable=True)
+    revision_id = Column(String, nullable=True)
+
+    event_metadata = Column("metadata", JSON, nullable=True)
+
+
+class ActivitySubject(Base):
+    __tablename__ = "activity_subject"
+    __table_args__ = (
+        Index("ix_activity_subject_event_id", "event_id"),
+        Index("ix_activity_subject_type_id", "subject_type", "subject_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_id = Column(String, ForeignKey("activity_event.id"), nullable=False)
+
+    subject_type = Column(String, nullable=False)
+    subject_id = Column(String, nullable=False)
+    role = Column(String, nullable=True)

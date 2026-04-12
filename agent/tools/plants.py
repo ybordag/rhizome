@@ -3,6 +3,15 @@ Agent tools for managing plants.
 Tools must return strings — the LLM reads tool output as text.
 """
 from langchain.tools import tool
+from agent.activity_log import (
+    DEFAULT_ACTOR_LABEL,
+    DEFAULT_ACTOR_TYPE,
+    record_activity_event,
+    record_create_event,
+    record_delete_event,
+    record_update_event,
+    snapshot_model,
+)
 from typing import Optional
 from datetime import datetime
 from db.database import SessionLocal
@@ -52,6 +61,14 @@ def _validate_location_assignment(
     if container_id and bed_id:
         return "A plant cannot be assigned to both a bed and a container in the same tool call."
     return None
+
+
+def _plant_subject(plant_id: str, role: str = "primary") -> dict[str, str]:
+    return {"subject_type": "plant", "subject_id": plant_id, "role": role}
+
+
+def _batch_subject(batch_id: str, role: str = "primary") -> dict[str, str]:
+    return {"subject_type": "batch", "subject_id": batch_id, "role": role}
 
 
 # ─── Plant tools ──────────────────────────────────────────────────────────────
@@ -177,6 +194,23 @@ def add_plant(
             notes=notes
         )
         session.add(plant)
+        session.flush()
+        event_type = "plant_sown" if plant.sow_date is not None else "plant_created"
+        summary = (
+            f"Sowed plant '{plant.name}'."
+            if event_type == "plant_sown"
+            else f"Created plant '{plant.name}'."
+        )
+        record_create_event(
+            session,
+            event_type=event_type,
+            category="plant",
+            summary=summary,
+            obj=plant,
+            subjects=[_plant_subject(plant.id)],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return (
             f"Added {quantity}x {name} {variety or ''} to your garden "
@@ -217,6 +251,9 @@ def update_plant(
         if not plant:
             return f"No plant found with id {plant_id}."
 
+        before = snapshot_model(plant)
+        old_status = plant.status
+
         if status is not None:
             error = _validate_plant_status(status)
             if error:
@@ -235,6 +272,27 @@ def update_plant(
         if notes is not None:
             plant.notes = notes
 
+        if status is not None and plant.status != old_status:
+            event_type = "plant_status_changed"
+            summary = f"Plant '{plant.name}' status changed from {old_status} to {plant.status}."
+        elif last_fertilized_at is not None or fertilizing_schedule is not None:
+            event_type = "plant_fertilized"
+            summary = f"Updated fertilizing details for plant '{plant.name}'."
+        else:
+            event_type = "plant_updated"
+            summary = f"Updated plant '{plant.name}'."
+
+        record_update_event(
+            session,
+            event_type=event_type,
+            category="plant",
+            summary=summary,
+            before=before,
+            obj=plant,
+            subjects=[_plant_subject(plant.id)],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
         return f"Plant '{plant.name}' updated successfully."
     except ValueError as e:
@@ -262,6 +320,8 @@ def remove_plant(plant_id: str, reason: Optional[str] = None) -> str:
         plant = session.query(Plant).filter(Plant.id == plant_id).first()
         if not plant:
             return f"No plant found with id {plant_id}."
+
+        before = snapshot_model(plant)
 
         now = datetime.utcnow()
         timestamp = now.strftime("%B %d, %Y")
@@ -294,6 +354,18 @@ def remove_plant(plant_id: str, reason: Optional[str] = None) -> str:
                 )
                 batch.notes = f"{batch.notes or ''}\n{batch_entry}".strip()
 
+        record_update_event(
+            session,
+            event_type="plant_removed",
+            category="plant",
+            summary=f"Marked plant '{plant.name}' as removed.",
+            before=before,
+            obj=plant,
+            metadata={"reason": reason} if reason else None,
+            subjects=[_plant_subject(plant.id)],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.commit()
 
         if active_links:
@@ -492,6 +564,17 @@ def batch_add_plant_type(
         )
         session.add(batch)
         session.flush()
+        record_create_event(
+            session,
+            event_type="batch_created",
+            category="batch",
+            summary=f"Created batch '{batch.name}'.",
+            obj=batch,
+            project_id=project_id,
+            subjects=[_batch_subject(batch.id)],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
 
         # create individual plant records
         created = []
@@ -522,6 +605,27 @@ def batch_add_plant_type(
             created.append(plant)
 
         session.flush()
+        for plant in created:
+            event_type = "plant_sown" if plant.sow_date is not None else "plant_created"
+            summary = (
+                f"Sowed plant '{plant.name}' from batch '{batch.name}'."
+                if event_type == "plant_sown"
+                else f"Created plant '{plant.name}' from batch '{batch.name}'."
+            )
+            record_create_event(
+                session,
+                event_type=event_type,
+                category="plant",
+                summary=summary,
+                obj=plant,
+                project_id=project_id,
+                subjects=[
+                    _plant_subject(plant.id),
+                    _batch_subject(batch.id, role="affected"),
+                ],
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+            )
 
         if project_id:
             for plant in created:
@@ -529,6 +633,20 @@ def batch_add_plant_type(
                     project_id=project_id,
                     plant_id=plant.id
                 ))
+            record_activity_event(
+                session,
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+                event_type="project_plant_added",
+                category="project",
+                summary=f"Added {len(created)} plant records from batch '{batch.name}' to project '{project.name}'.",
+                project_id=project.id,
+                subjects=[
+                    {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                    *[_plant_subject(plant.id, role="affected") for plant in created],
+                    _batch_subject(batch.id, role="affected"),
+                ],
+            )
 
         session.commit()
 
@@ -634,15 +752,20 @@ def batch_update_plants(
                 )
             plants = plants[:quantity]
 
+        before_by_id = {plant.id: snapshot_model(plant) for plant in plants}
+        affected_batch_ids = {plant.batch_id for plant in plants if plant.batch_id}
+        batch_before = {}
+        for batch_id in affected_batch_ids:
+            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            if batch:
+                batch_before[batch_id] = snapshot_model(batch)
+
         parsed_red_cup = _parse_optional_datetime(red_cup_date, "red_cup_date")
         parsed_transplant = _parse_optional_datetime(transplant_date, "transplant_date")
         parsed_last_fertilized = _parse_optional_datetime(last_fertilized_at, "last_fertilized_at")
 
         now = datetime.utcnow()
         timestamp = now.strftime("%B %d, %Y")
-
-        # collect unique batch ids affected
-        affected_batch_ids = set()
 
         for plant in plants:
             if new_status is not None:
@@ -665,9 +788,6 @@ def batch_update_plants(
                 plant.notes = f"{plant.notes or ''}\n{notes}".strip()
             if update_reason:
                 plant.notes = f"{plant.notes or ''}\n{timestamp}: {update_reason}".strip()
-
-            if plant.batch_id:
-                affected_batch_ids.add(plant.batch_id)
 
         # append update summary to each affected batch's notes
         if affected_batch_ids:
@@ -695,6 +815,47 @@ def batch_update_plants(
                 ).first()
                 if batch:
                     batch.notes = f"{batch.notes or ''}\n{batch_log_entry}".strip()
+
+        for plant in plants:
+            if parsed_transplant is not None:
+                event_type = "plant_transplanted"
+                summary = f"Recorded transplanting for plant '{plant.name}'."
+            elif parsed_last_fertilized is not None or fertilizing_schedule is not None:
+                event_type = "plant_fertilized"
+                summary = f"Updated fertilizing details for plant '{plant.name}'."
+            elif new_status is not None and before_by_id[plant.id].get("status") != plant.status:
+                event_type = "plant_status_changed"
+                summary = f"Plant '{plant.name}' status changed from {before_by_id[plant.id].get('status')} to {plant.status}."
+            else:
+                event_type = "plant_updated"
+                summary = f"Updated plant '{plant.name}'."
+            record_update_event(
+                session,
+                event_type=event_type,
+                category="plant",
+                summary=summary,
+                before=before_by_id[plant.id],
+                obj=plant,
+                subjects=[_plant_subject(plant.id)],
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+            )
+
+        for batch_id, before_batch in batch_before.items():
+            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            if batch:
+                record_update_event(
+                    session,
+                    event_type="batch_updated",
+                    category="batch",
+                    summary=f"Updated batch '{batch.name}'.",
+                    before=before_batch,
+                    obj=batch,
+                    project_id=batch.project_id,
+                    subjects=[_batch_subject(batch.id)],
+                    actor_type=DEFAULT_ACTOR_TYPE,
+                    actor_label=DEFAULT_ACTOR_LABEL,
+                )
 
         session.commit()
         return (
@@ -789,9 +950,16 @@ def batch_remove_plants(
                 )
             plants = plants[:quantity]
 
+        before_by_id = {plant.id: snapshot_model(plant) for plant in plants}
+        affected_batch_ids = {plant.batch_id for plant in plants if plant.batch_id}
+        batch_before = {}
+        for batch_id in affected_batch_ids:
+            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            if batch:
+                batch_before[batch_id] = snapshot_model(batch)
+
         now = datetime.utcnow()
         timestamp = now.strftime("%B %d, %Y")
-        affected_batch_ids = set()
 
         for plant in plants:
             plant.status = "removed"
@@ -806,9 +974,6 @@ def batch_remove_plants(
                 link.removed_at = now
                 link.notes = f"{link.notes or ''}\nAuto-decoupled: {reason}".strip()
 
-            if plant.batch_id:
-                affected_batch_ids.add(plant.batch_id)
-
         # append removal summary to each affected batch's notes
         if affected_batch_ids:
             batch_log_entry = (
@@ -820,6 +985,36 @@ def batch_remove_plants(
                 ).first()
                 if batch:
                     batch.notes = f"{batch.notes or ''}\n{batch_log_entry}".strip()
+
+        for plant in plants:
+            record_update_event(
+                session,
+                event_type="plant_removed",
+                category="plant",
+                summary=f"Marked plant '{plant.name}' as removed.",
+                before=before_by_id[plant.id],
+                obj=plant,
+                metadata={"reason": reason},
+                subjects=[_plant_subject(plant.id)],
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+            )
+
+        for batch_id, before_batch in batch_before.items():
+            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            if batch:
+                record_update_event(
+                    session,
+                    event_type="batch_updated",
+                    category="batch",
+                    summary=f"Updated batch '{batch.name}' after plant removals.",
+                    before=before_batch,
+                    obj=batch,
+                    project_id=batch.project_id,
+                    subjects=[_batch_subject(batch.id)],
+                    actor_type=DEFAULT_ACTOR_TYPE,
+                    actor_label=DEFAULT_ACTOR_LABEL,
+                )
 
         session.commit()
         return (
@@ -896,6 +1091,9 @@ def delete_plant(plant_id: str) -> str:
         if not plant:
             return f"No plant found with id {plant_id}."
 
+        before = snapshot_model(plant)
+        batch_before = None
+
         # close out project links first
         session.query(ProjectPlant).filter(
             ProjectPlant.plant_id == plant_id
@@ -907,6 +1105,7 @@ def delete_plant(plant_id: str) -> str:
                 PlantBatch.id == plant.batch_id
             ).first()
             if batch:
+                batch_before = snapshot_model(batch)
                 timestamp = datetime.utcnow().strftime("%B %d, %Y")
                 batch.notes = (
                     f"{batch.notes or ''}\n"
@@ -914,7 +1113,35 @@ def delete_plant(plant_id: str) -> str:
                 ).strip()
                 batch.quantity_sown = max(0, (batch.quantity_sown or 1) - 1)
 
+        if batch_before and plant.batch_id:
+            batch = session.query(PlantBatch).filter(
+                PlantBatch.id == plant.batch_id
+            ).first()
+            if batch:
+                record_update_event(
+                    session,
+                    event_type="batch_updated",
+                    category="batch",
+                    summary=f"Updated batch '{batch.name}' after deleting a plant record.",
+                    before=batch_before,
+                    obj=batch,
+                    project_id=batch.project_id,
+                    subjects=[_batch_subject(batch.id)],
+                    actor_type=DEFAULT_ACTOR_TYPE,
+                    actor_label=DEFAULT_ACTOR_LABEL,
+                )
+
         name = plant.name
+        record_delete_event(
+            session,
+            event_type="plant_deleted",
+            category="plant",
+            summary=f"Deleted plant record '{name}'.",
+            before=before,
+            subjects=[_plant_subject(plant.id)],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.delete(plant)
         session.commit()
         return f"Plant record '{name}' permanently deleted."
@@ -950,15 +1177,33 @@ def delete_batch(batch_id: str, delete_plants: bool = False) -> str:
         if not batch:
             return f"No batch found with id {batch_id}."
 
+        before = snapshot_model(batch)
+
         plants = session.query(Plant).filter(
             Plant.batch_id == batch_id
         ).all()
+
+        plant_before = {plant.id: snapshot_model(plant) for plant in plants}
 
         if delete_plants:
             for plant in plants:
                 session.query(ProjectPlant).filter(
                     ProjectPlant.plant_id == plant.id
                 ).delete()
+                record_delete_event(
+                    session,
+                    event_type="plant_deleted",
+                    category="plant",
+                    summary=f"Deleted plant record '{plant.name}' with batch '{batch.name}'.",
+                    before=plant_before[plant.id],
+                    project_id=batch.project_id,
+                    subjects=[
+                        _plant_subject(plant.id),
+                        _batch_subject(batch.id, role="affected"),
+                    ],
+                    actor_type=DEFAULT_ACTOR_TYPE,
+                    actor_label=DEFAULT_ACTOR_LABEL,
+                )
                 session.delete(plant)
             plant_note = f"and {len(plants)} linked plants "
         else:
@@ -968,6 +1213,18 @@ def delete_batch(batch_id: str, delete_plants: bool = False) -> str:
             plant_note = f"({len(plants)} plants unlinked from batch) "
 
         name = batch.name
+        record_delete_event(
+            session,
+            event_type="batch_deleted",
+            category="batch",
+            summary=f"Deleted batch '{name}'.",
+            before=before,
+            project_id=batch.project_id,
+            metadata={"delete_plants": delete_plants, "plant_count": len(plants)},
+            subjects=[_batch_subject(batch.id)],
+            actor_type=DEFAULT_ACTOR_TYPE,
+            actor_label=DEFAULT_ACTOR_LABEL,
+        )
         session.delete(batch)
         session.commit()
         return f"Batch '{name}' {plant_note}permanently deleted."

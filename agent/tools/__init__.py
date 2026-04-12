@@ -15,6 +15,14 @@ from agent.tools.plants import (
     batch_add_plant_type, batch_update_plants, batch_remove_plants, list_batches,
     delete_plant, delete_batch)
 from agent.tools.search import search_garden, list_by_location
+from agent.tools.activity import (
+    get_project_activity,
+    get_plant_activity,
+    get_bed_activity,
+    get_container_activity,
+    get_batch_activity,
+    list_recent_activity,
+)
 
 tools = [
     get_garden_profile,
@@ -49,5 +57,11 @@ tools = [
     delete_batch,
     search_garden,
     list_by_location,
+    get_project_activity,
+    get_plant_activity,
+    get_bed_activity,
+    get_container_activity,
+    get_batch_activity,
+    list_recent_activity,
 ]
 tools_by_name = {t.name: t for t in tools}
