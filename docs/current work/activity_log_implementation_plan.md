@@ -1,6 +1,6 @@
 # Activity Log Implementation Plan
 
-**Status:** Proposed  
+**Status:** Phase 1 implemented  
 **Last updated:** 2026-04-11
 
 ---
@@ -25,6 +25,32 @@ This phase is meant to establish the activity log as a usable backend feature:
 - events are recorded at write time
 - the agent can query history for a specific object
 - a future frontend can call into stable history-query APIs
+
+---
+
+## Current status
+
+Phase 1 of the activity log has been implemented in Rhizome.
+
+Completed work:
+
+- added `ActivityEvent` and `ActivitySubject` persistence models
+- added centralized activity-log writer/query helpers
+- instrumented current project, bed, container, plant, batch, and assignment
+  mutation paths
+- added history query tools for projects, plants, beds, containers, and batches
+- added automated test coverage for schema, helper behavior, write-path
+  instrumentation, and queries
+
+GitHub tracking:
+
+- issue [#34](https://github.com/ybordag/rhizome/issues/34) is complete and
+  closed
+- follow-up issue [#33](https://github.com/ybordag/rhizome/issues/33) remains
+  open for later task-driven care events and current-state care fields
+
+This document now serves as both the phase 1 implementation record and the
+reference for what remains deferred.
 
 ---
 
@@ -183,23 +209,34 @@ Each activity entry should include:
 ## Rollout order
 
 1. add schema
+   Status: complete
 2. add activity-log helper module
+   Status: complete
 3. add query helpers and history tools
+   Status: complete
 4. instrument current mutation tools
+   Status: complete
 5. add tests for models/helpers
+   Status: complete
 6. add tests for write-path instrumentation
+   Status: complete
 7. add tests for history queries
+   Status: complete
 
 ---
 
 ## Acceptance criteria
 
+Phase 1 acceptance criteria have been met:
+
 - Rhizome records meaningful activity events for current mutation tools
-- object history can be fetched for projects, plants, beds, containers, and batches
+- object history can be fetched for projects, plants, beds, containers, and
+  batches
 - recent project-scoped activity can be fetched
 - event writes roll back with failed writes
-- history formatting is stable enough for agent use and future frontend wrapping
-- phase 1 is complete without introducing task models or frontend UI work
+- history formatting is stable enough for agent use and future frontend
+  wrapping
+- phase 1 was completed without introducing task models or frontend UI work
 
 ---
 
