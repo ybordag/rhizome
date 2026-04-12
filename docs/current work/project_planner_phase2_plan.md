@@ -42,13 +42,14 @@ Current verification status:
 
 GitHub tracking:
 
-- epic [#35](https://github.com/ybordag/rhizome/issues/35) captures the Phase 2
+- epic [#59](https://github.com/ybordag/rhizome/issues/59) captures the Phase 2
   planner rollout
-- child issues [#36](https://github.com/ybordag/rhizome/issues/36) through
-  [#42](https://github.com/ybordag/rhizome/issues/42) reflect the implemented
+- child issues [#60](https://github.com/ybordag/rhizome/issues/60) through
+  [#65](https://github.com/ybordag/rhizome/issues/65), plus
+  [#70](https://github.com/ybordag/rhizome/issues/70), reflect the implemented
   sub-slices
 - the older Step 4 issue [#19](https://github.com/ybordag/rhizome/issues/19)
-  has been commented as superseded, but could not be closed from this token
+  is now closed as superseded
 
 This document now acts as both the implementation record for Phase 2 and the
 handoff point into Phase 3 task tracking.

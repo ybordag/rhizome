@@ -17,6 +17,10 @@ from db.models import (
     ProjectPlant,
     ProjectProposal,
     ProjectRevision,
+    Task,
+    TaskDependency,
+    TaskGenerationRun,
+    TaskSeries,
 )
 
 
@@ -107,7 +111,12 @@ def make_project_proposal(
         "feasibility_notes": ["Fits the current budget."],
         "cost_estimate": {"total_estimated_cost": 50.0, "cost_confidence": "medium"},
         "timeline_estimate": {"expected_completion_date": "2026-07-01", "timeline_confidence": "medium"},
-        "effort_estimate": {"total_hours": 12.0, "avg_hours_per_week": 1.5},
+        "effort_estimate": {
+            "total_hours": 12.0,
+            "avg_hours_per_week": 1.5,
+            "peak_hours_per_week": 3.0,
+            "maintenance_hours_per_week": 1.0,
+        },
         "maintenance_assumptions": {"watering": "every 2 days"},
         "resource_assumptions": {"tray_slots": 4},
         "budget_assumptions": {"contingency": 5.0},
@@ -146,7 +155,16 @@ def make_project_execution_spec(
         "project_id": project.id,
         "revision_id": revision.id,
         "status": "active",
-        "selected_plants": [{"name": "Tomato", "quantity": 2, "propagation_method": "seed"}],
+        "selected_plants": [
+            {
+                "name": "Tomato",
+                "quantity": 2,
+                "propagation_method": "seed",
+                "task_profile": "fruiting_vine",
+                "maintenance_hours_per_week": 1.5,
+                "event_triggers": [],
+            }
+        ],
         "selected_locations": [{"location_type": "container", "location_id": "c1", "name": "Growbag 1"}],
         "propagation_strategy": {"primary": "seed"},
         "timing_windows": {
@@ -166,6 +184,116 @@ def make_project_execution_spec(
     data.update(overrides)
     spec = ProjectExecutionSpec(**data)
     return _persist(session, spec)
+
+
+def make_task_generation_run(
+    session,
+    project: GardeningProject,
+    revision: ProjectRevision,
+    **overrides: Any,
+) -> TaskGenerationRun:
+    data = {
+        "project_id": project.id,
+        "revision_id": revision.id,
+        "run_type": "initial",
+        "status": "complete",
+        "source_event_id": None,
+        "summary": f"Generated tasks for {project.name}.",
+        "run_metadata": {"reason": "test"},
+    }
+    data.update(overrides)
+    run = TaskGenerationRun(**data)
+    return _persist(session, run)
+
+
+def make_task(
+    session,
+    project: GardeningProject,
+    revision: ProjectRevision,
+    generation_run: TaskGenerationRun,
+    **overrides: Any,
+) -> Task:
+    data = {
+        "project_id": project.id,
+        "revision_id": revision.id,
+        "generation_run_id": generation_run.id,
+        "parent_task_id": None,
+        "series_id": None,
+        "source_type": "generated",
+        "generator_key": "test.task",
+        "title": "Test task",
+        "description": "Test task description.",
+        "type": "milestone",
+        "status": "pending",
+        "scheduled_date": datetime(2026, 4, 15),
+        "earliest_start": datetime(2026, 4, 14),
+        "window_start": datetime(2026, 4, 14),
+        "window_end": datetime(2026, 4, 16),
+        "deadline": datetime(2026, 4, 16),
+        "completed_at": None,
+        "deferred_until": None,
+        "estimated_minutes": 30,
+        "actual_minutes": None,
+        "reversible": True,
+        "what_happens_if_skipped": "The task will be missed.",
+        "what_happens_if_delayed": "Follow-on work may slip.",
+        "notes": "Task notes.",
+        "event_anchor_type": None,
+        "event_anchor_subject_type": None,
+        "event_anchor_subject_id": None,
+        "event_anchor_offset_days": None,
+        "is_user_modified": False,
+    }
+    data.update(overrides)
+    task = Task(**data)
+    return _persist(session, task)
+
+
+def make_task_series(
+    session,
+    project: GardeningProject,
+    revision: ProjectRevision,
+    generation_run: TaskGenerationRun,
+    **overrides: Any,
+) -> TaskSeries:
+    data = {
+        "project_id": project.id,
+        "revision_id": revision.id,
+        "generation_run_id": generation_run.id,
+        "parent_task_id": None,
+        "source_type": "generated",
+        "generator_key": "test.series",
+        "title": "Water tomatoes",
+        "description": "Recurring watering rule.",
+        "type": "maintenance",
+        "cadence": "every 2 days",
+        "cadence_days": 2,
+        "start_condition": {"type": "calendar", "date": "2026-04-15"},
+        "end_condition": {"type": "season_end"},
+        "linked_subjects": [{"subject_type": "project", "subject_id": project.id, "role": "affected"}],
+        "default_estimated_minutes": 10,
+        "next_generation_date": datetime(2026, 4, 15),
+        "active": True,
+    }
+    data.update(overrides)
+    series = TaskSeries(**data)
+    return _persist(session, series)
+
+
+def make_task_dependency(
+    session,
+    blocking_task: Task,
+    blocked_task: Task,
+    **overrides: Any,
+) -> TaskDependency:
+    data = {
+        "blocking_task_id": blocking_task.id,
+        "blocked_task_id": blocked_task.id,
+        "dependency_type": "finish_to_start",
+    }
+    data.update(overrides)
+    dependency = TaskDependency(**data)
+    return _persist(session, dependency)
 
 
 def make_bed(session, profile: GardenProfile, **overrides: Any) -> Bed:

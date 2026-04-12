@@ -1,6 +1,6 @@
 # Rhizome Activity Log and Task System Plan
 
-**Status:** Phase 1 and Phase 2 implemented  
+**Status:** Phase 1, Phase 2, and Phase 3 implemented  
 **Last updated:** 2026-04-12
 
 ---
@@ -14,7 +14,7 @@ Progress against the proposed sequencing:
 2. **Implement Project Planner**  
    Status: complete
 3. **Implement Task Tracker**  
-   Status: not started
+   Status: complete
 4. **Finish implementing Activity Log (if necessary)**  
    Status: deferred until task-tracker integration
 
@@ -30,14 +30,17 @@ What is now in place:
   and schedule preview
 - a non-persistent schedule preview that defines the contract Phase 3 will use
   for persistent task generation
+- persistent task generation using `Task`, `TaskDependency`, `TaskSeries`, and
+  `TaskGenerationRun`
+- tracker tools for generation, lifecycle updates, blocked/due queries, and
+  recurring-series materialization
+- runtime urgency computation and basic event-anchored follow-up scheduling
+- task activity-log events integrated into project history
 
 What remains:
 
-- persistent `Task`, `TaskDependency`, `TaskSeries`, and `TaskGenerationRun`
-- rolling materialization of recurring care tasks
-- event-driven follow-up scheduling from activity-log events
-- daily triage over persisted tasks
 - later care-event expansion of the activity log
+- daily triage over persisted tasks
 
 ---
 

@@ -91,11 +91,11 @@ There is currently **no explicit open GitHub issue** for:
 Updates since this document was first drafted:
 
 - the unit and integration test baseline now exists and is tracked in open
-  issue [#27](https://github.com/ybordag/rhizome/issues/27)
+  issue [#51](https://github.com/ybordag/rhizome/issues/51)
 - the phase 1 activity log foundation is now implemented and tracked by closed
-  issue [#34](https://github.com/ybordag/rhizome/issues/34)
+  issue [#58](https://github.com/ybordag/rhizome/issues/58)
 - the later task-driven care follow-up remains open in
-  [#33](https://github.com/ybordag/rhizome/issues/33)
+  [#57](https://github.com/ybordag/rhizome/issues/57)
 
 The task tracker / planner direction is still represented by the roadmap and
 GitHub issues, but the activity log is no longer only implied future work: its
@@ -279,7 +279,7 @@ Without tests, every new scheduling rule or urgency rule will be fragile.
 
 ### Ticket recommendation
 
-Keep [#27](https://github.com/ybordag/rhizome/issues/27) as the umbrella test
+Keep [#51](https://github.com/ybordag/rhizome/issues/51) as the umbrella test
 coverage tracker for follow-on expansion.
 
 ---

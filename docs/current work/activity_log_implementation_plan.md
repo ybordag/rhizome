@@ -44,9 +44,9 @@ Completed work:
 
 GitHub tracking:
 
-- issue [#34](https://github.com/ybordag/rhizome/issues/34) is complete and
+- issue [#58](https://github.com/ybordag/rhizome/issues/58) is complete and
   closed
-- follow-up issue [#33](https://github.com/ybordag/rhizome/issues/33) remains
+- follow-up issue [#57](https://github.com/ybordag/rhizome/issues/57) remains
   open for later task-driven care events and current-state care fields
 
 This document now serves as both the phase 1 implementation record and the

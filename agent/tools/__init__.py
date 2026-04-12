@@ -36,6 +36,23 @@ from agent.tools.planning import (
     accept_project_proposal,
     preview_project_schedule,
 )
+from agent.tools.tracker import (
+    generate_project_tasks,
+    regenerate_project_tasks,
+    materialize_recurring_tasks,
+    list_project_tasks,
+    get_task,
+    list_due_tasks,
+    list_blocked_tasks,
+    list_task_series,
+    explain_task_blockers,
+    start_task,
+    complete_task,
+    skip_task,
+    defer_task,
+    update_task,
+    update_task_series,
+)
 
 tools = [
     get_garden_profile,
@@ -87,5 +104,20 @@ tools = [
     list_project_proposals,
     accept_project_proposal,
     preview_project_schedule,
+    generate_project_tasks,
+    regenerate_project_tasks,
+    materialize_recurring_tasks,
+    list_project_tasks,
+    get_task,
+    list_due_tasks,
+    list_blocked_tasks,
+    list_task_series,
+    explain_task_blockers,
+    start_task,
+    complete_task,
+    skip_task,
+    defer_task,
+    update_task,
+    update_task_series,
 ]
 tools_by_name = {t.name: t for t in tools}

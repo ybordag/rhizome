@@ -253,6 +253,145 @@ class ProjectExecutionSpec(Base):
         )
 
 
+class TaskGenerationRun(Base):
+    __tablename__ = "task_generation_run"
+    __table_args__ = (
+        Index("ix_task_generation_run_project_id", "project_id"),
+        Index("ix_task_generation_run_revision_id", "revision_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=False)
+    run_type = Column(String, nullable=False, default="initial")
+    status = Column(String, nullable=False, default="complete")
+    source_event_id = Column(String, ForeignKey("activity_event.id"), nullable=True)
+    summary = Column(Text, nullable=False)
+    run_metadata = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        return (
+            f"[Task Generation Run] {self.project_id} (id: {self.id})\n"
+            f"  Revision: {self.revision_id} | Type: {self.run_type} | Status: {self.status}\n"
+            f"  Summary: {self.summary}"
+        )
+
+
+class Task(Base):
+    __tablename__ = "task"
+    __table_args__ = (
+        Index("ix_task_project_id", "project_id"),
+        Index("ix_task_revision_id", "revision_id"),
+        Index("ix_task_generation_run_id", "generation_run_id"),
+        Index("ix_task_series_id", "series_id"),
+        Index("ix_task_status", "status"),
+        Index("ix_task_scheduled_date", "scheduled_date"),
+        Index("ix_task_deadline", "deadline"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=False)
+    generation_run_id = Column(String, ForeignKey("task_generation_run.id"), nullable=False)
+    parent_task_id = Column(String, ForeignKey("task.id"), nullable=True)
+    series_id = Column(String, ForeignKey("task_series.id", use_alter=True), nullable=True)
+    source_type = Column(String, nullable=False, default="generated")
+    generator_key = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    type = Column(String, nullable=False, default="milestone")
+    status = Column(String, nullable=False, default="pending")
+    scheduled_date = Column(DateTime, nullable=True)
+    earliest_start = Column(DateTime, nullable=True)
+    window_start = Column(DateTime, nullable=True)
+    window_end = Column(DateTime, nullable=True)
+    deadline = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    deferred_until = Column(DateTime, nullable=True)
+    estimated_minutes = Column(Integer, nullable=False, default=0)
+    actual_minutes = Column(Integer, nullable=True)
+    reversible = Column(Boolean, default=True)
+    what_happens_if_skipped = Column(Text, nullable=True)
+    what_happens_if_delayed = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    event_anchor_type = Column(String, nullable=True)
+    event_anchor_subject_type = Column(String, nullable=True)
+    event_anchor_subject_id = Column(String, nullable=True)
+    event_anchor_offset_days = Column(Integer, nullable=True)
+    is_user_modified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        date_bits = []
+        if self.scheduled_date:
+            date_bits.append(f"scheduled {_fmt_date(self.scheduled_date)}")
+        if self.deadline:
+            date_bits.append(f"deadline {_fmt_date(self.deadline)}")
+        timing = " | ".join(date_bits) if date_bits else "no date set"
+        return (
+            f"[Task] {self.title} (id: {self.id})\n"
+            f"  Type: {self.type} | Status: {self.status}\n"
+            f"  Timing: {timing}\n"
+            f"  Estimated: {self.estimated_minutes} minutes"
+        )
+
+
+class TaskDependency(Base):
+    __tablename__ = "task_dependency"
+    __table_args__ = (
+        Index("ix_task_dependency_blocking_task_id", "blocking_task_id"),
+        Index("ix_task_dependency_blocked_task_id", "blocked_task_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    blocking_task_id = Column(String, ForeignKey("task.id"), nullable=False)
+    blocked_task_id = Column(String, ForeignKey("task.id"), nullable=False)
+    dependency_type = Column(String, nullable=False, default="finish_to_start")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TaskSeries(Base):
+    __tablename__ = "task_series"
+    __table_args__ = (
+        Index("ix_task_series_project_id", "project_id"),
+        Index("ix_task_series_revision_id", "revision_id"),
+        Index("ix_task_series_generation_run_id", "generation_run_id"),
+        Index("ix_task_series_next_generation_date", "next_generation_date"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=False)
+    generation_run_id = Column(String, ForeignKey("task_generation_run.id"), nullable=False)
+    parent_task_id = Column(String, ForeignKey("task.id"), nullable=True)
+    source_type = Column(String, nullable=False, default="generated")
+    generator_key = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    type = Column(String, nullable=False, default="maintenance")
+    cadence = Column(String, nullable=False)
+    cadence_days = Column(Integer, nullable=True)
+    start_condition = Column(JSON, default=dict)
+    end_condition = Column(JSON, default=dict)
+    linked_subjects = Column(JSON, default=list)
+    default_estimated_minutes = Column(Integer, nullable=False, default=0)
+    next_generation_date = Column(DateTime, nullable=True)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_summary(self) -> str:
+        return (
+            f"[Task Series] {self.title} (id: {self.id})\n"
+            f"  Type: {self.type} | Cadence: {self.cadence}\n"
+            f"  Next generation: {_fmt_date(self.next_generation_date)} | Active: {self.active}"
+        )
+
+
 class Bed(Base):
     __tablename__ = "bed"
 
