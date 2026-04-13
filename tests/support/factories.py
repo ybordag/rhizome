@@ -8,6 +8,8 @@ from db.models import (
     Container,
     GardenProfile,
     GardeningProject,
+    IncidentReport,
+    IncidentSubject,
     Plant,
     PlantBatch,
     ProjectBed,
@@ -21,6 +23,10 @@ from db.models import (
     TaskDependency,
     TaskGenerationRun,
     TaskSeries,
+    TriageSnapshot,
+    TreatmentPlan,
+    WeatherSnapshot,
+    WeatherTaskChangeSet,
 )
 
 
@@ -40,6 +46,9 @@ def make_profile(session, **overrides: Any) -> GardenProfile:
         "soil_type": "hard clay",
         "tray_capacity": 10,
         "tray_indoor_capacity": 6,
+        "location_label": "San Francisco, CA",
+        "latitude": 37.7749,
+        "longitude": -122.4194,
         "hard_constraints": {"pets": "dog"},
         "soft_preferences": {"organic": True},
         "notes": "Established garden profile.",
@@ -238,6 +247,7 @@ def make_task(
         "what_happens_if_skipped": "The task will be missed.",
         "what_happens_if_delayed": "Follow-on work may slip.",
         "notes": "Task notes.",
+        "linked_subjects": [{"subject_type": "project", "subject_id": project.id, "role": "affected"}],
         "event_anchor_type": None,
         "event_anchor_subject_type": None,
         "event_anchor_subject_id": None,
@@ -305,6 +315,11 @@ def make_bed(session, profile: GardenProfile, **overrides: Any) -> Bed:
         "sunlight": "full sun",
         "soil_type": "loam",
         "dimensions_sqft": 24.0,
+        "last_watered_at": None,
+        "last_fertilized_at": None,
+        "last_amended_at": None,
+        "last_inspected_at": None,
+        "care_state_notes": None,
         "notes": "Mulched heavily.",
     }
     data.update(overrides)
@@ -321,6 +336,11 @@ def make_container(session, profile: GardenProfile, **overrides: Any) -> Contain
         "size_gallons": 15.0,
         "location": "front",
         "is_mobile": True,
+        "last_watered_at": None,
+        "last_fertilized_at": None,
+        "last_amended_at": None,
+        "last_inspected_at": None,
+        "care_state_notes": None,
         "notes": "Black fabric growbag.",
     }
     data.update(overrides)
@@ -380,7 +400,12 @@ def make_plant(
         "is_flowering": False,
         "is_fruiting": False,
         "fertilizing_schedule": "weekly",
+        "last_watered_at": datetime(2026, 3, 11),
         "last_fertilized_at": datetime(2026, 3, 10),
+        "last_inspected_at": datetime(2026, 3, 12),
+        "last_treated_at": None,
+        "last_pruned_at": None,
+        "care_state_notes": "Doing fine.",
         "special_instructions": "Pinch suckers.",
         "notes": "Plant notes.",
     }
@@ -415,3 +440,98 @@ def link_plant_to_project(
         **overrides,
     )
     return _persist(session, link)
+
+
+def make_weather_snapshot(session, **overrides: Any) -> WeatherSnapshot:
+    data = {
+        "timezone": "America/Los_Angeles",
+        "location_label": "San Francisco, CA",
+        "forecast_start_date": datetime(2026, 4, 12),
+        "forecast_end_date": datetime(2026, 4, 18),
+        "conditions_summary": "Warm and dry to start the week.",
+        "alerts_summary": "Heat stress likely. (2026-04-14)",
+        "derived_impacts": [{"date": "2026-04-14", "impact_type": "heat", "severity": "high", "summary": "Heat stress likely."}],
+        "recommended_actions": [{"date": "2026-04-14", "action": "Prioritize watering and shade protection."}],
+        "source": "open-meteo",
+        "raw_payload": {"daily": {"time": ["2026-04-14"]}},
+    }
+    data.update(overrides)
+    snapshot = WeatherSnapshot(**data)
+    return _persist(session, snapshot)
+
+
+def make_triage_snapshot(session, **overrides: Any) -> TriageSnapshot:
+    data = {
+        "timezone": "America/Los_Angeles",
+        "session_context": {"available_minutes": 30, "energy_level": "low"},
+        "temporal_context": {"today": "2026-04-12"},
+        "weather_snapshot_id": None,
+        "recommended_task_ids": [],
+        "urgent_task_ids": [],
+        "routine_task_ids": [],
+        "project_task_ids": [],
+        "reasoning_summary": "Focus on a few quick tasks.",
+        "user_focus_summary": "30 minutes available, energy=low",
+        "notes": "Test triage snapshot.",
+    }
+    data.update(overrides)
+    snapshot = TriageSnapshot(**data)
+    return _persist(session, snapshot)
+
+
+def make_weather_task_change_set(session, weather_snapshot: WeatherSnapshot, **overrides: Any) -> WeatherTaskChangeSet:
+    data = {
+        "weather_snapshot_id": weather_snapshot.id,
+        "project_id": None,
+        "status": "draft",
+        "summary": "Drafted 1 weather-aware recommendation.",
+        "proposed_changes": [],
+        "notes": None,
+        "approved_at": None,
+    }
+    data.update(overrides)
+    change_set = WeatherTaskChangeSet(**data)
+    return _persist(session, change_set)
+
+
+def make_incident_report(session, **overrides: Any) -> IncidentReport:
+    data = {
+        "project_id": None,
+        "incident_type": "pest",
+        "status": "reported",
+        "severity": "medium",
+        "summary": "Aphids on tomato leaves",
+        "notes": "Observed this morning.",
+        "reported_by": "user",
+        "detected_at": datetime(2026, 4, 12),
+    }
+    data.update(overrides)
+    incident = IncidentReport(**data)
+    return _persist(session, incident)
+
+
+def make_incident_subject(session, incident: IncidentReport, **overrides: Any) -> IncidentSubject:
+    data = {
+        "incident_id": incident.id,
+        "subject_type": "plant",
+        "subject_id": "unknown",
+        "role": "affected",
+    }
+    data.update(overrides)
+    subject = IncidentSubject(**data)
+    return _persist(session, subject)
+
+
+def make_treatment_plan(session, incident: IncidentReport, **overrides: Any) -> TreatmentPlan:
+    data = {
+        "incident_id": incident.id,
+        "status": "draft",
+        "approach_summary": "Organic-first treatment approach.",
+        "recommended_steps": [{"title": "Apply treatment"}],
+        "follow_up_strategy": [{"title": "Reinspect"}],
+        "monitoring_notes": "Check again in 3 days.",
+        "approved_at": None,
+    }
+    data.update(overrides)
+    plan = TreatmentPlan(**data)
+    return _persist(session, plan)

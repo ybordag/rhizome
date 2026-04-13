@@ -10,6 +10,7 @@ from typing import Optional
 from langchain.tools import tool
 
 from agent.activity_log import record_update_event, snapshot_model
+from agent.care import apply_task_completion_side_effects
 from agent.tracker import (
     VALID_TASK_STATUSES,
     build_due_task_view,
@@ -363,7 +364,7 @@ def complete_task(task_id: str, actual_minutes: Optional[int] = None, notes: Opt
         if notes:
             task.notes = f"{task.notes}\n{notes}".strip() if task.notes else notes
 
-        record_update_event(
+        completion_event = record_update_event(
             session,
             event_type="task_completed",
             category="task",
@@ -373,6 +374,12 @@ def complete_task(task_id: str, actual_minutes: Optional[int] = None, notes: Opt
             project_id=task.project_id,
             revision_id=task.revision_id,
             subjects=[{"subject_type": "project", "subject_id": task.project_id, "role": "affected"}, {"subject_type": "task", "subject_id": task.id, "role": "primary"}],
+        )
+        care_updates = apply_task_completion_side_effects(
+            session,
+            task,
+            completion_event_id=completion_event.id if completion_event else task.id,
+            notes=notes,
         )
 
         dependents = (
@@ -399,9 +406,10 @@ def complete_task(task_id: str, actual_minutes: Optional[int] = None, notes: Opt
                 )
                 unblocked_titles.append(dependent.title)
         session.commit()
+        care_suffix = f" Updated care state for: {', '.join(care_updates)}." if care_updates else ""
         if unblocked_titles:
-            return f"Completed task '{task.title}'. Unblocked: {', '.join(unblocked_titles)}."
-        return f"Completed task '{task.title}'."
+            return f"Completed task '{task.title}'. Unblocked: {', '.join(unblocked_titles)}.{care_suffix}"
+        return f"Completed task '{task.title}'.{care_suffix}"
     except Exception as e:
         session.rollback()
         print(f"[DEBUG] Failed to complete task: {e}")
@@ -614,4 +622,3 @@ def update_task_series(
         return f"Failed to update task series: {str(e)}"
     finally:
         session.close()
-

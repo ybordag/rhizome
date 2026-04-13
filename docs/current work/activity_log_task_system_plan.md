@@ -1,6 +1,6 @@
 # Rhizome Activity Log and Task System Plan
 
-**Status:** Phase 1, Phase 2, and Phase 3 implemented  
+**Status:** Phase 1, Phase 2, Phase 3, and Phase 4 implemented  
 **Last updated:** 2026-04-12
 
 ---
@@ -36,11 +36,17 @@ What is now in place:
   recurring-series materialization
 - runtime urgency computation and basic event-anchored follow-up scheduling
 - task activity-log events integrated into project history
+- session-time temporal grounding and daily triage snapshots
+- persisted weather snapshots and approval-gated weather task updates
+- care-state fields and task-driven semantic care events
+- user-reported incident and treatment-plan workflows for pests, blight, and
+  weeds
 
 What remains:
 
-- later care-event expansion of the activity log
-- daily triage over persisted tasks
+- background automation for weather and triage
+- broader temporal reasoning and event scheduling
+- richer care/treatment coverage and image-assisted diagnosis
 
 ---
 

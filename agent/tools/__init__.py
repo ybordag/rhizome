@@ -53,6 +53,29 @@ from agent.tools.tracker import (
     update_task,
     update_task_series,
 )
+from agent.tools.weather import (
+    refresh_weather_snapshot,
+    get_latest_weather_snapshot,
+    list_weather_impacted_tasks,
+    draft_weather_task_changes,
+    approve_weather_task_changes,
+)
+from agent.tools.triage import (
+    run_daily_triage,
+    get_latest_triage_snapshot,
+    list_triage_recommendations,
+)
+from agent.tools.care import (
+    get_current_care_state,
+    get_recent_care_history,
+)
+from agent.tools.incidents import (
+    report_incident,
+    draft_treatment_plan,
+    get_treatment_plan,
+    approve_treatment_plan,
+    resolve_incident,
+)
 
 tools = [
     get_garden_profile,
@@ -119,5 +142,20 @@ tools = [
     defer_task,
     update_task,
     update_task_series,
+    refresh_weather_snapshot,
+    get_latest_weather_snapshot,
+    list_weather_impacted_tasks,
+    draft_weather_task_changes,
+    approve_weather_task_changes,
+    run_daily_triage,
+    get_latest_triage_snapshot,
+    list_triage_recommendations,
+    get_current_care_state,
+    get_recent_care_history,
+    report_incident,
+    draft_treatment_plan,
+    get_treatment_plan,
+    approve_treatment_plan,
+    resolve_incident,
 ]
 tools_by_name = {t.name: t for t in tools}

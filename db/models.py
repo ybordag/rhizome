@@ -25,6 +25,9 @@ class GardenProfile(Base):
     soil_type = Column(String)                          # e.g. "hard clay"
     tray_capacity = Column(Integer)                     # total trays available
     tray_indoor_capacity = Column(Integer)              # trays under grow lights
+    location_label = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     hard_constraints = Column(JSON)                     # JSON string for now
     soft_preferences = Column(JSON)                     # JSON string for now
     notes = Column(Text)                                # anything that doesn't fit above
@@ -42,6 +45,7 @@ class GardenProfile(Base):
             f"  Soil: {self.soil_type or 'unknown'}\n"
             f"  Trays: {self.tray_indoor_capacity if self.tray_indoor_capacity is not None else 'unknown'} indoor, "
             f"{self.tray_capacity if self.tray_capacity is not None else 'unknown'} total\n"
+            f"  Weather location: {self.location_label or 'not set'}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
     
@@ -316,6 +320,7 @@ class Task(Base):
     what_happens_if_skipped = Column(Text, nullable=True)
     what_happens_if_delayed = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
+    linked_subjects = Column(JSON, default=list)
     event_anchor_type = Column(String, nullable=True)
     event_anchor_subject_type = Column(String, nullable=True)
     event_anchor_subject_id = Column(String, nullable=True)
@@ -403,6 +408,11 @@ class Bed(Base):
     sunlight = Column(String)
     soil_type = Column(String)
     dimensions_sqft = Column(Float)
+    last_watered_at = Column(DateTime, nullable=True)
+    last_fertilized_at = Column(DateTime, nullable=True)
+    last_amended_at = Column(DateTime, nullable=True)
+    last_inspected_at = Column(DateTime, nullable=True)
+    care_state_notes = Column(Text, nullable=True)
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -417,6 +427,8 @@ class Bed(Base):
             f"Sunlight: {self.sunlight or 'unknown'}\n"
             f"  Size: {self.dimensions_sqft if self.dimensions_sqft is not None else 'unknown'} sqft | "
             f"Soil: {self.soil_type or 'unknown'}\n"
+            f"  Last watered: {_fmt_date(self.last_watered_at)} | "
+            f"Last amended: {_fmt_date(self.last_amended_at)}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
 
@@ -441,6 +453,11 @@ class Container(Base):
     size_gallons = Column(Float)
     location = Column(String)
     is_mobile = Column(Boolean, default=True)
+    last_watered_at = Column(DateTime, nullable=True)
+    last_fertilized_at = Column(DateTime, nullable=True)
+    last_amended_at = Column(DateTime, nullable=True)
+    last_inspected_at = Column(DateTime, nullable=True)
+    care_state_notes = Column(Text, nullable=True)
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -455,6 +472,8 @@ class Container(Base):
             f"Size: {self.size_gallons if self.size_gallons is not None else 'unknown'} gal | "
             f"Location: {self.location or 'unknown'}"
             f"\n  Mobile: {self.is_mobile}\n"
+            f"  Last watered: {_fmt_date(self.last_watered_at)} | "
+            f"Last amended: {_fmt_date(self.last_amended_at)}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
 
@@ -516,7 +535,12 @@ class Plant(Base):
 
     # fertilizing
     fertilizing_schedule = Column(String, nullable=True)  # e.g. "every 2 weeks"
+    last_watered_at = Column(DateTime, nullable=True)
     last_fertilized_at = Column(DateTime, nullable=True)
+    last_inspected_at = Column(DateTime, nullable=True)
+    last_treated_at = Column(DateTime, nullable=True)
+    last_pruned_at = Column(DateTime, nullable=True)
+    care_state_notes = Column(Text, nullable=True)
 
     # instructions
     special_instructions = Column(Text, nullable=True)
@@ -562,9 +586,14 @@ class Plant(Base):
             + f"\n  Sow: {_fmt_date(self.sow_date)} | "
             f"Red cup: {_fmt_date(self.red_cup_date)} | "
             f"Transplant: {_fmt_date(self.transplant_date)}\n"
+            f"  Last watered: {_fmt_date(self.last_watered_at)} | "
             f"  Fertilizing: {self.fertilizing_schedule or 'not set'} | "
             f"Last fertilized: {_fmt_date(self.last_fertilized_at)}\n"
+            f"  Last inspected: {_fmt_date(self.last_inspected_at)} | "
+            f"Last treated: {_fmt_date(self.last_treated_at)} | "
+            f"Last pruned: {_fmt_date(self.last_pruned_at)}\n"
             f"  Instructions: {self.special_instructions or 'none'}\n"
+            f"  Care notes: {self.care_state_notes or 'none'}\n"
             f"  Notes: {self.notes or 'none'}\n"
             f"  Updated: {_fmt_date(self.updated_at)}"
         )
@@ -688,3 +717,113 @@ class ActivitySubject(Base):
     subject_type = Column(String, nullable=False)
     subject_id = Column(String, nullable=False)
     role = Column(String, nullable=True)
+
+
+class WeatherSnapshot(Base):
+    __tablename__ = "weather_snapshot"
+    __table_args__ = (
+        Index("ix_weather_snapshot_created_at", "created_at"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timezone = Column(String, nullable=False)
+    location_label = Column(String, nullable=False)
+    forecast_start_date = Column(DateTime, nullable=False)
+    forecast_end_date = Column(DateTime, nullable=False)
+    conditions_summary = Column(Text, nullable=False)
+    alerts_summary = Column(Text, nullable=True)
+    derived_impacts = Column(JSON, default=list)
+    recommended_actions = Column(JSON, default=list)
+    source = Column(String, nullable=False, default="open-meteo")
+    raw_payload = Column(JSON, default=dict)
+
+
+class WeatherTaskChangeSet(Base):
+    __tablename__ = "weather_task_change_set"
+    __table_args__ = (
+        Index("ix_weather_task_change_set_weather_snapshot_id", "weather_snapshot_id"),
+        Index("ix_weather_task_change_set_project_id", "project_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    weather_snapshot_id = Column(String, ForeignKey("weather_snapshot.id"), nullable=False)
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
+    status = Column(String, nullable=False, default="draft")
+    summary = Column(Text, nullable=False)
+    proposed_changes = Column(JSON, default=list)
+    notes = Column(Text, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+
+
+class TriageSnapshot(Base):
+    __tablename__ = "triage_snapshot"
+    __table_args__ = (
+        Index("ix_triage_snapshot_created_at", "created_at"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timezone = Column(String, nullable=False)
+    session_context = Column(JSON, default=dict)
+    temporal_context = Column(JSON, default=dict)
+    weather_snapshot_id = Column(String, ForeignKey("weather_snapshot.id"), nullable=True)
+    recommended_task_ids = Column(JSON, default=list)
+    urgent_task_ids = Column(JSON, default=list)
+    routine_task_ids = Column(JSON, default=list)
+    project_task_ids = Column(JSON, default=list)
+    reasoning_summary = Column(Text, nullable=False)
+    user_focus_summary = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+
+class IncidentReport(Base):
+    __tablename__ = "incident_report"
+    __table_args__ = (
+        Index("ix_incident_report_project_id", "project_id"),
+        Index("ix_incident_report_status", "status"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
+    incident_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="reported")
+    severity = Column(String, nullable=True)
+    summary = Column(Text, nullable=False)
+    notes = Column(Text, nullable=True)
+    reported_by = Column(String, nullable=False, default="user")
+    detected_at = Column(DateTime, nullable=True)
+
+
+class IncidentSubject(Base):
+    __tablename__ = "incident_subject"
+    __table_args__ = (
+        Index("ix_incident_subject_incident_id", "incident_id"),
+        Index("ix_incident_subject_type_id", "subject_type", "subject_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    incident_id = Column(String, ForeignKey("incident_report.id"), nullable=False)
+    subject_type = Column(String, nullable=False)
+    subject_id = Column(String, nullable=False)
+    role = Column(String, nullable=True)
+
+
+class TreatmentPlan(Base):
+    __tablename__ = "treatment_plan"
+    __table_args__ = (
+        Index("ix_treatment_plan_incident_id", "incident_id"),
+        Index("ix_treatment_plan_status", "status"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    incident_id = Column(String, ForeignKey("incident_report.id"), nullable=False)
+    status = Column(String, nullable=False, default="draft")
+    approach_summary = Column(Text, nullable=False)
+    recommended_steps = Column(JSON, default=list)
+    follow_up_strategy = Column(JSON, default=list)
+    monitoring_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    approved_at = Column(DateTime, nullable=True)

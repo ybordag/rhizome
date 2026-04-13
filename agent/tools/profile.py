@@ -42,6 +42,9 @@ def update_garden_profile(
     soil_type: Optional[str] = None,
     tray_capacity: Optional[int] = None,
     tray_indoor_capacity: Optional[int] = None,
+    location_label: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
     hard_constraints: Optional[dict] = None,
     soft_preferences: Optional[dict] = None,
     remove_hard_constraints: Optional[List[str]] = None,
@@ -81,6 +84,12 @@ def update_garden_profile(
             profile.tray_capacity = tray_capacity
         if tray_indoor_capacity is not None:
             profile.tray_indoor_capacity = tray_indoor_capacity
+        if location_label is not None:
+            profile.location_label = location_label
+        if latitude is not None:
+            profile.latitude = latitude
+        if longitude is not None:
+            profile.longitude = longitude
         if notes is not None:
             profile.notes = notes
 
@@ -118,6 +127,10 @@ def update_garden_profile(
             changes.append(f"tray capacity → {tray_capacity}")
         if tray_indoor_capacity is not None:
             changes.append(f"indoor trays → {tray_indoor_capacity}")
+        if location_label is not None:
+            changes.append(f"weather location label → {location_label}")
+        if latitude is not None or longitude is not None:
+            changes.append(f"weather coordinates → ({profile.latitude}, {profile.longitude})")
         if hard_constraints is not None:
             changes.append(f"added/updated constraints: {list(hard_constraints.keys())}")
         if remove_hard_constraints:

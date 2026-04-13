@@ -1,12 +1,15 @@
 # nodes.py
-from langchain.messages import SystemMessage, ToolMessage
+from langchain.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END
 from langgraph.types import interrupt
 from langchain.messages import AIMessage
 
 from agent.model import model
 from agent.state import GardenState
+from agent.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
+from agent.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
+from agent.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
 from db.models import GardenProfile
 
@@ -23,6 +26,15 @@ You know this specific garden well:
 
 {garden_profile}
 
+Session time context:
+{temporal_context}
+
+Latest weather:
+{weather_context}
+
+Latest triage:
+{triage_context}
+
 Guidelines:
 - Always ground your advice in the specific conditions of this garden
 - Never recommend plants that are toxic to dogs or children — flag this immediately if the user asks about one
@@ -36,6 +48,120 @@ Guidelines:
 - Before creating a new batch or project, check whether a similar one already exists using list_batches or list_projects 
   first.
 """
+
+
+def _message_text(message) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(content)
+
+
+def session_context_intake(state: GardenState):
+    opener = ""
+    for message in reversed(state["messages"]):
+        if isinstance(message, HumanMessage):
+            opener = _message_text(message)
+            break
+
+    session = SessionLocal()
+    try:
+        temporal_context = build_temporal_context(session, timezone=DEFAULT_TIMEZONE)
+        session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
+        return {
+            "temporal_context": temporal_context,
+            "session_context": session_context,
+        }
+    finally:
+        session.close()
+
+
+def weather_context_loader(state: GardenState):
+    session = SessionLocal()
+    try:
+        snapshot = get_latest_weather_snapshot(session)
+        if snapshot:
+            return {
+                "weather_context": {
+                    "id": snapshot.id,
+                    "created_at": snapshot.created_at.isoformat(),
+                    "location_label": snapshot.location_label,
+                    "conditions_summary": snapshot.conditions_summary,
+                    "alerts_summary": snapshot.alerts_summary,
+                    "derived_impacts": snapshot.derived_impacts or [],
+                }
+            }
+        return {
+            "weather_context": {
+                "id": None,
+                "created_at": None,
+                "location_label": "not configured",
+                "conditions_summary": "Weather unavailable.",
+                "alerts_summary": "No weather snapshot available.",
+                "derived_impacts": [],
+            }
+        }
+    except Exception:
+        session.rollback()
+        return {
+            "weather_context": {
+                "id": None,
+                "created_at": None,
+                "location_label": "unavailable",
+                "conditions_summary": "Weather unavailable.",
+                "alerts_summary": "No weather snapshot available.",
+                "derived_impacts": [],
+            }
+        }
+    finally:
+        session.close()
+
+
+def triage_reasoner(state: GardenState):
+    opener = ""
+    for message in reversed(state["messages"]):
+        if isinstance(message, HumanMessage):
+            opener = _message_text(message)
+            break
+
+    session = SessionLocal()
+    try:
+        snapshot = build_triage_snapshot(session, opener=opener or "hi", timezone=DEFAULT_TIMEZONE)
+        session.commit()
+        return {
+            "triage_snapshot": {
+                "id": snapshot.id,
+                "created_at": snapshot.created_at.isoformat(),
+                "reasoning_summary": snapshot.reasoning_summary,
+                "user_focus_summary": snapshot.user_focus_summary,
+                "urgent_task_ids": snapshot.urgent_task_ids,
+                "routine_task_ids": snapshot.routine_task_ids,
+                "project_task_ids": snapshot.project_task_ids,
+                "formatted": format_triage_snapshot(session, snapshot),
+            }
+        }
+    except Exception:
+        session.rollback()
+        return {
+            "triage_snapshot": {
+                "id": None,
+                "created_at": None,
+                "reasoning_summary": "Triage unavailable.",
+                "user_focus_summary": None,
+                "urgent_task_ids": [],
+                "routine_task_ids": [],
+                "project_task_ids": [],
+                "formatted": "No triage snapshot available.",
+            }
+        }
+    finally:
+        session.close()
 
 def llm_call(state: GardenState):
     """Always loads fresh profile from DB before building the system prompt."""
@@ -51,7 +177,15 @@ def llm_call(state: GardenState):
         session.close()
 
     profile_text = profile_obj.to_detailed() if profile_obj else "No garden profile found."
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(garden_profile=profile_text)
+    temporal_text = state.get("temporal_context") or {"current_date": "unknown", "timezone": DEFAULT_TIMEZONE}
+    weather_text = state.get("weather_context") or {"alerts_summary": "No weather snapshot available."}
+    triage_text = (state.get("triage_snapshot") or {}).get("formatted") or "No triage snapshot available."
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        garden_profile=profile_text,
+        temporal_context=temporal_text,
+        weather_context=weather_text,
+        triage_context=triage_text,
+    )
     response = model_with_tools.invoke(
         [SystemMessage(content=system_prompt)] + state["messages"]
     )

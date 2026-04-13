@@ -187,10 +187,17 @@ Covered behaviors include:
 
 ## Follow-On Work
 
-The next major phase remains daily triage and richer reactive planning.
+The Phase 4 operational layer now sits on top of this tracker foundation.
+
+What it added on top of Phase 3:
+- temporal grounding at session start
+- triage snapshots
+- weather snapshots and weather-aware draft task changes
+- care-state updates from supported task completions
+- incident and treatment workflows
 
 Still open for later:
-- [#20](https://github.com/ybordag/rhizome/issues/20) daily triage
-- [#57](https://github.com/ybordag/rhizome/issues/57) richer task-driven care events and current-state care fields
 - [#12](https://github.com/ybordag/rhizome/issues/12) task-field expansion
-- [#13](https://github.com/ybordag/rhizome/issues/13) richer weather-aware scheduling
+- richer automation for background triage and weather monitoring
+- broader temporal reasoning and event scheduling
+- richer care/treatment coverage and image-assisted diagnosis

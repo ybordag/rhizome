@@ -233,6 +233,15 @@ def _task_blueprints(
     recurring_rules: list[dict[str, Any]] = []
 
     for location in execution_spec["selected_locations"]:
+        linked_subjects = [{"subject_type": "project", "subject_id": project_id, "role": "affected"}]
+        if location["location_type"] in {"bed", "container"} and location["location_id"] != "unknown-location":
+            linked_subjects.append(
+                {
+                    "subject_type": location["location_type"],
+                    "subject_id": location["location_id"],
+                    "role": "primary",
+                }
+            )
         key = f"prepare.{location['location_type']}.{location['location_id']}"
         tasks.append(
             {
@@ -251,6 +260,7 @@ def _task_blueprints(
                 "what_happens_if_skipped": "The final planting location may not be ready on time.",
                 "what_happens_if_delayed": "Transplant timing may slip and compress the schedule.",
                 "notes": f"Location type: {location['location_type']}.",
+                "linked_subjects": linked_subjects,
             }
         )
 
@@ -260,6 +270,16 @@ def _task_blueprints(
         plant_key = name.lower().replace(" ", "_")
         task_profile = plant["task_profile"]
         trigger_map = {trigger.get("event_type"): trigger for trigger in plant.get("event_triggers", [])}
+        location_subjects = [{"subject_type": "project", "subject_id": project_id, "role": "affected"}]
+        for location in execution_spec["selected_locations"]:
+            if location["location_type"] in {"bed", "container"} and location["location_id"] != "unknown-location":
+                location_subjects.append(
+                    {
+                        "subject_type": location["location_type"],
+                        "subject_id": location["location_id"],
+                        "role": "affected",
+                    }
+                )
 
         if propagation in {"seed", "cutting", "propagation"}:
             tasks.append(
@@ -279,6 +299,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": f"{name} will not enter the propagation pipeline.",
                     "what_happens_if_delayed": f"{name} may miss the target completion window.",
                     "notes": "Seed/cutting propagation milestone.",
+                    "linked_subjects": location_subjects,
                 }
             )
             tasks.append(
@@ -298,6 +319,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": "Seedlings may become root-bound before transplanting.",
                     "what_happens_if_delayed": "The transplant schedule may tighten.",
                     "notes": "Intermediate propagation milestone.",
+                    "linked_subjects": location_subjects,
                 }
             )
         else:
@@ -318,6 +340,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": f"{name} will not be available to transplant.",
                     "what_happens_if_delayed": "The establishment timeline may slip.",
                     "notes": "Nursery/transplant acquisition milestone.",
+                    "linked_subjects": location_subjects,
                 }
             )
 
@@ -353,6 +376,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": f"{name} may not establish in its final location.",
                     "what_happens_if_delayed": "The harvest window may move later into the season.",
                     "notes": f"Anchored to plant_germinated + {offset_days} days.",
+                    "linked_subjects": location_subjects,
                     "event_anchor_type": "plant_germinated",
                     "event_anchor_subject_type": germinated_trigger.get("subject_type"),
                     "event_anchor_subject_id": germinated_trigger.get("subject_id"),
@@ -378,6 +402,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": f"{name} may never establish outdoors.",
                     "what_happens_if_delayed": "The establishment and harvest windows may slip.",
                     "notes": "Calendar-anchored transplant milestone.",
+                    "linked_subjects": location_subjects,
                 }
             )
 
@@ -399,6 +424,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": f"{name} may sprawl or break under growth.",
                     "what_happens_if_delayed": "Later support installation can damage roots or stems.",
                     "notes": "Support installation milestone.",
+                    "linked_subjects": location_subjects,
                 }
             )
 
@@ -430,6 +456,7 @@ def _task_blueprints(
                     "what_happens_if_skipped": f"{name} may establish more slowly after transplant.",
                     "what_happens_if_delayed": "Early nutrient support may arrive late.",
                     "notes": f"Anchored to plant_transplanted + {offset_days} days.",
+                    "linked_subjects": location_subjects,
                     "event_anchor_type": "plant_transplanted",
                     "event_anchor_subject_type": transplanted_trigger.get("subject_type"),
                     "event_anchor_subject_id": transplanted_trigger.get("subject_id"),
@@ -455,6 +482,7 @@ def _task_blueprints(
                 "what_happens_if_skipped": "The first harvest window may be missed.",
                 "what_happens_if_delayed": "Quality checks and harvest planning may slide.",
                 "notes": "Harvest readiness checkpoint.",
+                "linked_subjects": location_subjects,
             }
         )
 
@@ -470,7 +498,7 @@ def _task_blueprints(
                 "cadence_days": watering_days,
                 "start_condition": {"type": "calendar", "date": care_start.date().isoformat()},
                 "end_condition": {"type": "season_end"},
-                "linked_subjects": [{"subject_type": "project", "subject_id": project_id, "role": "affected"}],
+                "linked_subjects": location_subjects,
                 "default_estimated_minutes": 10,
                 "next_generation_date": care_start,
             }
@@ -485,7 +513,7 @@ def _task_blueprints(
                 "cadence_days": 7,
                 "start_condition": {"type": "calendar", "date": care_start.date().isoformat()},
                 "end_condition": {"type": "season_end"},
-                "linked_subjects": [{"subject_type": "project", "subject_id": project_id, "role": "affected"}],
+                "linked_subjects": location_subjects,
                 "default_estimated_minutes": 10,
                 "next_generation_date": care_start,
             }
@@ -500,7 +528,7 @@ def _task_blueprints(
                 "cadence_days": 14,
                 "start_condition": {"type": "calendar", "date": care_start.date().isoformat()},
                 "end_condition": {"type": "season_end"},
-                "linked_subjects": [{"subject_type": "project", "subject_id": project_id, "role": "affected"}],
+                "linked_subjects": location_subjects,
                 "default_estimated_minutes": 12,
                 "next_generation_date": care_start,
             }
@@ -516,7 +544,7 @@ def _task_blueprints(
                     "cadence_days": 7,
                     "start_condition": {"type": "calendar", "date": care_start.date().isoformat()},
                     "end_condition": {"type": "season_end"},
-                    "linked_subjects": [{"subject_type": "project", "subject_id": project_id, "role": "affected"}],
+                    "linked_subjects": location_subjects,
                     "default_estimated_minutes": 12,
                     "next_generation_date": care_start,
                 }
@@ -613,6 +641,7 @@ def _create_task(
     what_happens_if_skipped: Optional[str],
     what_happens_if_delayed: Optional[str],
     notes: Optional[str],
+    linked_subjects: Optional[list[dict[str, Any]]] = None,
     event_anchor_type: Optional[str] = None,
     event_anchor_subject_type: Optional[str] = None,
     event_anchor_subject_id: Optional[str] = None,
@@ -640,6 +669,7 @@ def _create_task(
         what_happens_if_skipped=what_happens_if_skipped,
         what_happens_if_delayed=what_happens_if_delayed,
         notes=notes,
+        linked_subjects=linked_subjects or [],
         event_anchor_type=event_anchor_type,
         event_anchor_subject_type=event_anchor_subject_type,
         event_anchor_subject_id=event_anchor_subject_id,
@@ -920,6 +950,7 @@ def materialize_task_series(
                         what_happens_if_skipped="This recurring care interval will be missed.",
                         what_happens_if_delayed="Subsequent recurring care may bunch together or slip.",
                         notes=f"Materialized from recurring series '{series.title}'.",
+                        linked_subjects=series.linked_subjects or [],
                     )
                 )
             current = current + timedelta(days=series.cadence_days or 1)
@@ -1024,6 +1055,7 @@ def generate_tasks_for_revision(
             what_happens_if_skipped=None,
             what_happens_if_delayed=None,
             notes="Section grouping task.",
+            linked_subjects=[{"subject_type": "project", "subject_id": project_id, "role": "affected"}],
         )
 
     tasks_by_key: dict[str, Task] = {}
@@ -1052,6 +1084,7 @@ def generate_tasks_for_revision(
             what_happens_if_skipped=blueprint.get("what_happens_if_skipped"),
             what_happens_if_delayed=blueprint.get("what_happens_if_delayed"),
             notes=blueprint.get("notes"),
+            linked_subjects=blueprint.get("linked_subjects"),
             event_anchor_type=blueprint.get("event_anchor_type"),
             event_anchor_subject_type=blueprint.get("event_anchor_subject_type"),
             event_anchor_subject_id=blueprint.get("event_anchor_subject_id"),
