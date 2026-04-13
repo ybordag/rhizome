@@ -76,6 +76,12 @@ from agent.tools.incidents import (
     approve_treatment_plan,
     resolve_incident,
 )
+from agent.tools.interactions import (
+    get_pending_interaction,
+    list_recent_interactions,
+    get_interaction_record,
+    resolve_interaction,
+)
 
 tools = [
     get_garden_profile,
@@ -157,5 +163,9 @@ tools = [
     get_treatment_plan,
     approve_treatment_plan,
     resolve_incident,
+    get_pending_interaction,
+    list_recent_interactions,
+    get_interaction_record,
+    resolve_interaction,
 ]
 tools_by_name = {t.name: t for t in tools}

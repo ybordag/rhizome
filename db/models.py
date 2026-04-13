@@ -778,6 +778,37 @@ class TriageSnapshot(Base):
     notes = Column(Text, nullable=True)
 
 
+class InteractionRecord(Base):
+    __tablename__ = "interaction_record"
+    __table_args__ = (
+        Index("ix_interaction_record_created_at", "created_at"),
+        Index("ix_interaction_record_status", "status"),
+        Index("ix_interaction_record_project_id", "project_id"),
+        Index("ix_interaction_record_type", "interaction_type"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+    interaction_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    title = Column(Text, nullable=False)
+    summary = Column(Text, nullable=False)
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
+    source_type = Column(String, nullable=False)
+    source_id = Column(String, nullable=True)
+    resolution_action = Column(String, nullable=True)
+    resolution_summary = Column(Text, nullable=True)
+    record_metadata = Column("metadata", JSON, nullable=True)
+
+    def to_summary(self) -> str:
+        return (
+            f"[Interaction] {self.title} (id: {self.id})\n"
+            f"  Type: {self.interaction_type} | Status: {self.status}\n"
+            f"  Summary: {self.summary}"
+        )
+
+
 class IncidentReport(Base):
     __tablename__ = "incident_report"
     __table_args__ = (

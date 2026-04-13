@@ -4,7 +4,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from agent.state import GardenState
 from agent.nodes import (
-    confirmation_node,
+    interaction_node,
     llm_call,
     session_context_intake,
     should_continue,
@@ -23,7 +23,7 @@ def build_agent():
     builder.add_node("weather_context_loader", weather_context_loader)
     builder.add_node("triage_reasoner", triage_reasoner)
     builder.add_node("llm_call", llm_call)
-    builder.add_node("confirmation_node", confirmation_node)
+    builder.add_node("interaction_node", interaction_node)
     builder.add_node("tool_node", tool_node)
 
     builder.add_edge(START, "session_context_intake")
@@ -33,9 +33,9 @@ def build_agent():
     builder.add_conditional_edges(
         "llm_call",
         should_continue,
-        ["confirmation_node", "tool_node", END]
+        ["interaction_node", "tool_node", END]
     )
-    builder.add_edge("confirmation_node", "tool_node")
+    builder.add_edge("interaction_node", "tool_node")
     builder.add_edge("tool_node", "llm_call")
 
     return builder.compile(checkpointer=checkpointer)

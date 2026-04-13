@@ -42,7 +42,23 @@ def test_should_continue_routes_to_confirmation_node_for_destructive_tool():
         ]
     }
 
-    assert nodes.should_continue(state) == "confirmation_node"
+    assert nodes.should_continue(state) == "interaction_node"
+
+
+@pytest.mark.graph
+def test_should_continue_routes_to_interaction_node_for_review_tool():
+    state = {
+        "messages": [
+            make_tool_call_message(
+                "Accepting proposal",
+                name="accept_project_proposal",
+                args={"project_id": "proj-1", "proposal_id": "proposal-1"},
+                call_id="call-1",
+            )
+        ]
+    }
+
+    assert nodes.should_continue(state) == "interaction_node"
 
 
 @pytest.mark.graph
@@ -86,7 +102,7 @@ def test_confirmation_node_returns_empty_when_no_destructive_calls():
 
 
 @pytest.mark.graph
-def test_confirmation_node_cancels_on_non_affirmative_response(monkeypatch):
+def test_confirmation_node_cancels_on_non_affirmative_response(monkeypatch, patched_sessionlocal):
     monkeypatch.setattr(nodes, "interrupt", lambda prompt: "no")
     state = {
         "messages": [
@@ -101,12 +117,13 @@ def test_confirmation_node_cancels_on_non_affirmative_response(monkeypatch):
 
     result = nodes.confirmation_node(state)
 
-    assert result["messages"][0].content == "Deletion cancelled. No changes were made."
+    assert result["messages"][0].content == "Operation cancelled. No changes were made."
+    assert result["interaction_history"][0]["resolution_action"] == "cancel"
 
 
 @pytest.mark.graph
 @pytest.mark.parametrize("response", ["yes", "y", "confirm"])
-def test_confirmation_node_allows_affirmative_responses(monkeypatch, response):
+def test_confirmation_node_allows_affirmative_responses(monkeypatch, patched_sessionlocal, response):
     monkeypatch.setattr(nodes, "interrupt", lambda prompt: response)
     state = {
         "messages": [
@@ -119,4 +136,6 @@ def test_confirmation_node_allows_affirmative_responses(monkeypatch, response):
         ]
     }
 
-    assert nodes.confirmation_node(state) == {}
+    result = nodes.confirmation_node(state)
+
+    assert result["interaction_history"][0]["resolution_action"] == "confirm"

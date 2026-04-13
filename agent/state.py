@@ -7,3 +7,5 @@ class GardenState(MessagesState):
     session_context: Optional[dict[str, Any]]
     weather_context: Optional[dict[str, Any]]
     triage_snapshot: Optional[dict[str, Any]]
+    pending_interaction: Optional[dict[str, Any]]
+    interaction_history: Optional[list[dict[str, Any]]]

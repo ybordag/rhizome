@@ -1,6 +1,6 @@
 # Rhizome Activity Log and Task System Plan
 
-**Status:** Phase 1, Phase 2, Phase 3, and Phase 4 implemented  
+**Status:** Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 implemented  
 **Last updated:** 2026-04-12
 
 ---
@@ -41,6 +41,11 @@ What is now in place:
 - care-state fields and task-driven semantic care events
 - user-reported incident and treatment-plan workflows for pests, blight, and
   weeds
+- a structured interaction layer for confirmations, proposal reviews,
+  treatment-plan reviews, weather-change reviews, and triage cards
+- a terminal interaction renderer for simulating the future app experience
+- persisted interaction summaries and interaction query/resolve APIs for later
+  frontend integration
 
 What remains:
 
