@@ -1,7 +1,16 @@
 # Rhizome Agent Improvements
 
-**Status:** Partially completed  
-**Last updated:** 2026-04-11
+**Status:** Historical / partially superseded  
+**Last updated:** April 29th, 2026
+
+> This document is no longer the canonical roadmap or status snapshot.
+>
+> Use [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md)
+> for current sequencing and roadmap decisions.
+>
+> This file is still useful as a record of the earlier cleanup/hardening tracks,
+> especially testing, validation, presentation cleanup, and deferred telemetry
+> work.
 
 ---
 
@@ -51,7 +60,7 @@ first"; it is planner/task work on top of a cleaned-up and tested foundation.
 
 ## Current roadmap and GitHub confirmation
 
-The active build plan in [build_plan.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/current%20work/build_plan.md) is consistent with the current GitHub issue queue.
+The active build plan in [build_plan.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/archive/current_work/build_plan.md) is consistent with the current GitHub issue queue.
 
 ### Confirmed roadmap alignment
 

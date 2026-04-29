@@ -1,7 +1,12 @@
 # Project Planner Phase 2 Plan
 
-**Status:** Implemented  
-**Last updated:** 2026-04-12
+**Status:** Historical implementation record  
+**Last updated:** April 29th, 2026
+
+> This document remains useful as the implementation record for Phase 2.
+>
+> For current roadmap sequencing and epic prioritization, use
+> [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md).
 
 ---
 

@@ -1,7 +1,13 @@
 # Rhizome Activity Log and Task System Plan
 
-**Status:** Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 implemented  
-**Last updated:** 2026-04-12
+**Status:** Historical subsystem roadmap / implementation record  
+**Last updated:** April 29th, 2026
+
+> This document remains accurate as a record of the activity-log, planner,
+> tracker, triage, and interaction buildout.
+>
+> For the canonical product roadmap and what should happen next, use
+> [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md).
 
 ---
 

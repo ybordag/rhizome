@@ -1,7 +1,13 @@
 # Activity Log Implementation Plan
 
-**Status:** Phase 1 implemented  
-**Last updated:** 2026-04-11
+**Status:** Historical implementation record  
+**Last updated:** April 29th, 2026
+
+> This document remains useful as the implementation record for Phase 1 of the
+> activity log.
+>
+> For current roadmap sequencing and next-epic decisions, use
+> [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md).
 
 ---
 

@@ -1,7 +1,16 @@
 # Rhizome — Build Plan
 
-**Status:** Active  
-**Last updated:** 2026-03-26
+**Status:** Historical / superseded  
+**Last updated:** April 29th, 2026
+
+> This document is no longer the canonical roadmap.
+>
+> Use [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md)
+> for current product sequencing and roadmap decisions.
+>
+> This file remains useful as historical context for the original step-based
+> buildout, but its status table and next-step assumptions no longer reflect
+> the current codebase.
 
 ---
 

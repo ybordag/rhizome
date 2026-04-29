@@ -1,7 +1,14 @@
 # Rhizome Activity Log Specification
 
-**Status:** Proposed  
-**Last updated:** 2026-04-11
+**Status:** Historical specification / reference  
+**Last updated:** April 29th, 2026
+
+> This document is a subsystem specification for the activity log design.
+>
+> It should not be used as the primary product roadmap.
+>
+> For current roadmap sequencing and epic prioritization, use
+> [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md).
 
 ---
 

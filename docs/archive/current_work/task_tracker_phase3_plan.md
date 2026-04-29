@@ -1,5 +1,13 @@
 # Phase 3: Task Tracker and Persistent Task Generation
 
+**Status:** Historical implementation record  
+**Last updated:** April 29th, 2026
+
+> This document remains useful as the implementation record for Phase 3.
+>
+> For current roadmap sequencing and epic prioritization, use
+> [long_term_roadmap.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/long_term_roadmap.md).
+
 ## Status
 
 Implemented on `geranium`.
