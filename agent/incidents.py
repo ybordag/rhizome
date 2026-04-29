@@ -7,6 +7,9 @@ from agent.activity_log import record_create_event, record_update_event, snapsho
 from db.models import (
     IncidentReport,
     IncidentSubject,
+    ProjectBed,
+    ProjectContainer,
+    ProjectPlant,
     ProjectRevision,
     Task,
     TaskGenerationRun,
@@ -17,6 +20,91 @@ from db.models import (
 VALID_INCIDENT_TYPES = {"pest", "blight", "weed"}
 VALID_INCIDENT_STATUSES = {"reported", "drafted", "approved", "resolved", "dismissed"}
 VALID_TREATMENT_STATUSES = {"draft", "approved", "superseded", "completed"}
+OPEN_INCIDENT_STATUSES = {"reported", "drafted", "approved"}
+
+
+def _normalize_summary(value: str) -> str:
+    return " ".join(value.lower().split())
+
+
+def _subject_pairs(subjects: list[dict[str, str]] | None) -> set[tuple[str, str]]:
+    return {
+        (subject["subject_type"], subject["subject_id"])
+        for subject in (subjects or [])
+        if subject.get("subject_type") and subject.get("subject_id")
+    }
+
+
+def _find_existing_incident(
+    session,
+    *,
+    project_id: Optional[str],
+    incident_type: str,
+    summary: str,
+    subjects: list[dict[str, str]] | None,
+) -> Optional[IncidentReport]:
+    if not project_id:
+        return None
+    candidates = (
+        session.query(IncidentReport)
+        .filter(
+            IncidentReport.project_id == project_id,
+            IncidentReport.incident_type == incident_type,
+            IncidentReport.status.in_(OPEN_INCIDENT_STATUSES),
+        )
+        .order_by(IncidentReport.created_at.desc())
+        .all()
+    )
+    normalized_summary = _normalize_summary(summary)
+    desired_subjects = _subject_pairs(subjects)
+    for candidate in candidates:
+        if _normalize_summary(candidate.summary) == normalized_summary:
+            return candidate
+        if desired_subjects:
+            existing_subjects = {
+                (subject.subject_type, subject.subject_id)
+                for subject in session.query(IncidentSubject)
+                .filter(IncidentSubject.incident_id == candidate.id)
+                .all()
+            }
+            if existing_subjects and existing_subjects == desired_subjects:
+                return candidate
+    return None
+
+
+def _infer_project_id_from_subjects(session, subjects: list[dict[str, str]] | None) -> Optional[str]:
+    if not subjects:
+        return None
+    project_ids: set[str] = set()
+    for subject in subjects:
+        subject_type = subject.get("subject_type")
+        subject_id = subject.get("subject_id")
+        if not subject_type or not subject_id:
+            continue
+        if subject_type == "plant":
+            project_ids.update(
+                project_id
+                for (project_id,) in session.query(ProjectPlant.project_id)
+                .filter(ProjectPlant.plant_id == subject_id)
+                .all()
+            )
+        elif subject_type == "container":
+            project_ids.update(
+                project_id
+                for (project_id,) in session.query(ProjectContainer.project_id)
+                .filter(ProjectContainer.container_id == subject_id)
+                .all()
+            )
+        elif subject_type == "bed":
+            project_ids.update(
+                project_id
+                for (project_id,) in session.query(ProjectBed.project_id)
+                .filter(ProjectBed.bed_id == subject_id)
+                .all()
+            )
+    if len(project_ids) == 1:
+        return next(iter(project_ids))
+    return None
 
 
 def create_incident_report(
@@ -33,6 +121,16 @@ def create_incident_report(
 ) -> IncidentReport:
     if incident_type not in VALID_INCIDENT_TYPES:
         raise ValueError(f"Invalid incident_type '{incident_type}'. Must be one of: {', '.join(sorted(VALID_INCIDENT_TYPES))}.")
+    project_id = project_id or _infer_project_id_from_subjects(session, subjects)
+    existing = _find_existing_incident(
+        session,
+        project_id=project_id,
+        incident_type=incident_type,
+        summary=summary,
+        subjects=subjects,
+    )
+    if existing:
+        return existing
     incident = IncidentReport(
         project_id=project_id,
         incident_type=incident_type,
@@ -96,6 +194,17 @@ def draft_treatment_plan(session, incident_id: str) -> TreatmentPlan:
     incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
     if not incident:
         raise ValueError(f"No incident report found with id {incident_id}.")
+    existing = (
+        session.query(TreatmentPlan)
+        .filter(
+            TreatmentPlan.incident_id == incident.id,
+            TreatmentPlan.status.in_(["draft", "approved"]),
+        )
+        .order_by(TreatmentPlan.created_at.desc())
+        .first()
+    )
+    if existing:
+        return existing
     steps, follow_up, summary = _treatment_steps(incident)
     plan = TreatmentPlan(
         incident_id=incident.id,
@@ -257,6 +366,33 @@ def approve_treatment_plan(session, treatment_plan_id: str) -> TreatmentPlan:
         project_id=incident.project_id,
         subjects=[{"subject_type": "incident_report", "subject_id": incident.id, "role": "primary"}],
     )
+
+    sibling_plans = (
+        session.query(TreatmentPlan)
+        .join(IncidentReport, TreatmentPlan.incident_id == IncidentReport.id)
+        .filter(
+            IncidentReport.project_id == incident.project_id,
+            IncidentReport.incident_type == incident.incident_type,
+            TreatmentPlan.status == "draft",
+            TreatmentPlan.id != plan.id,
+        )
+        .all()
+    )
+    for sibling in sibling_plans:
+        sibling_before = snapshot_model(sibling)
+        sibling.status = "superseded"
+        record_update_event(
+            session,
+            event_type="treatment_plan_superseded",
+            category="incident",
+            summary=(
+                f"Superseded older draft treatment plan {sibling.id} after approving plan {plan.id}."
+            ),
+            before=sibling_before,
+            obj=sibling,
+            project_id=incident.project_id,
+            subjects=[{"subject_type": "treatment_plan", "subject_id": sibling.id, "role": "primary"}],
+        )
     return plan
 
 

@@ -1,7 +1,7 @@
 # Garden Helper Agent — Design Document
 
 **Version:** 0.1 (draft)
-**Status:** In design — pre-implementation
+**Status:** This document is STALE, please read docs/roadmap/long_term_roadmap.md for latest list of features
 **Authors:** Yashi + Claude
 
 ---

@@ -38,6 +38,18 @@ def _parse_date(value: Optional[str], field_name: str) -> Optional[datetime]:
 def _task_or_error(session, task_id: str) -> Task:
     task = session.query(Task).filter(Task.id == task_id).first()
     if not task:
+        title_matches = (
+            session.query(Task)
+            .filter(Task.title == task_id, Task.status != "superseded")
+            .order_by(Task.created_at.desc())
+            .all()
+        )
+        if len(title_matches) == 1:
+            return title_matches[0]
+        if len(title_matches) > 1:
+            raise ValueError(
+                f"Multiple tasks match the title '{task_id}'. Use an exact task id instead."
+            )
         raise ValueError(f"No task found with id {task_id}.")
     return task
 
@@ -182,7 +194,7 @@ def list_project_tasks(project_id: str, status: Optional[str] = None, include_su
                 for task in entries:
                     when = task.deadline or task.window_end or task.scheduled_date
                     lines.append(
-                        f"  - [{task.status}] {task.title} | {when.date().isoformat() if when else 'not set'}"
+                        f"  - [{task.status}] {task.title} | id={task.id} | {when.date().isoformat() if when else 'not set'}"
                     )
             lines.append("")
 
@@ -191,7 +203,7 @@ def list_project_tasks(project_id: str, status: Optional[str] = None, include_su
             for task in loose_tasks:
                 when = task.deadline or task.window_end or task.scheduled_date
                 lines.append(
-                    f"  - [{task.status}] {task.title} | {when.date().isoformat() if when else 'not set'}"
+                    f"  - [{task.status}] {task.title} | id={task.id} | {when.date().isoformat() if when else 'not set'}"
                 )
         return "\n".join(lines).rstrip()
     except Exception as e:
@@ -249,7 +261,10 @@ def list_blocked_tasks(project_id: Optional[str] = None) -> str:
         ]
         if not blocked:
             return "No blocked tasks found."
-        return "Blocked tasks:\n" + "\n".join(f"- {task.title} [{task.status}]" for task in blocked)
+        return "Blocked tasks:\n" + "\n".join(
+            f"- {task.title} | id={task.id} [{task.status}]"
+            for task in blocked
+        )
     except Exception as e:
         print(f"[DEBUG] Failed to list blocked tasks: {e}")
         return f"Failed to list blocked tasks: {str(e)}"

@@ -390,16 +390,25 @@ def build_triage_view_interaction(session, snapshot: TriageSnapshot) -> dict[str
                 items.append(f"{task.id}: {task.title} ({task.status}, {task.estimated_minutes} min)")
         return items or ["none"]
 
+    visible_sections = []
+    for title, ids in (
+        ("Urgent", snapshot.urgent_task_ids or []),
+        ("Routine", snapshot.routine_task_ids or []),
+        ("Project Work", snapshot.project_task_ids or []),
+    ):
+        if ids:
+            visible_sections.append({"title": title, "items": _task_items(ids)})
+    if not visible_sections:
+        visible_sections.append({"title": "Routine", "items": ["none"]})
+
+    section_options = [section["title"] for section in visible_sections]
+
     return make_envelope(
         interaction_type="triage_view",
         title="Daily triage",
         summary=snapshot.reasoning_summary,
         body=snapshot.user_focus_summary,
-        sections=[
-            {"title": "Urgent", "items": _task_items(snapshot.urgent_task_ids or [])},
-            {"title": "Routine", "items": _task_items(snapshot.routine_task_ids or [])},
-            {"title": "Project Work", "items": _task_items(snapshot.project_task_ids or [])},
-        ],
+        sections=visible_sections,
         actions=[
             make_action("continue", "Continue", "continue", style_hint="secondary"),
             make_action(
@@ -412,7 +421,7 @@ def build_triage_view_interaction(session, snapshot: TriageSnapshot) -> dict[str
                         "name": "section",
                         "label": "Section",
                         "required": True,
-                        "options": ["Urgent", "Routine", "Project Work"],
+                        "options": section_options,
                     }
                 ],
             ),

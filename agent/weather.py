@@ -21,6 +21,44 @@ from db.models import (
 
 WEATHER_FRESHNESS_HOURS = 12
 VALID_CHANGESET_STATUSES = {"draft", "approved", "dismissed"}
+RISK_IMPACT_TYPES = {"heat", "frost", "heavy_rain", "storm"}
+OPPORTUNITY_IMPACT_TYPES = {"good_planting_window"}
+
+
+def _task_intents(task: Task) -> set[str]:
+    key = (task.generator_key or "").lower()
+    title = (task.title or "").lower()
+    description = (task.description or "").lower()
+    haystack = f"{title} {description} {key}"
+    intents: set[str] = set()
+
+    if key.startswith("weather.") or task.type == "emergency":
+        intents.add("emergency_response")
+    if key.startswith("incident.") or any(term in haystack for term in ("treat", "spray", "protect", "respond")):
+        intents.add("treatment")
+    if key.endswith(".sow"):
+        intents.add("sow")
+    if key.endswith(".transplant") or key.endswith(".event_transplant"):
+        intents.add("transplant")
+    if key.endswith(".pot_up"):
+        intents.add("pot_up")
+    if key.endswith(".acquire_starts"):
+        intents.add("acquire")
+    if key.endswith(".supports"):
+        intents.add("support")
+    if key.endswith(".followup_fertilize") or key.endswith(".fertilizing") or "fertiliz" in title:
+        intents.add("fertilize")
+    if key.endswith(".watering") or "water" in title:
+        intents.add("water")
+    if key.endswith(".inspection") or "inspect" in title:
+        intents.add("inspect")
+    if key.endswith(".pruning") or "prune" in title:
+        intents.add("prune")
+    if any(word in haystack for word in ("amend", "mulch")):
+        intents.add("amend")
+    if any(word in haystack for word in ("plant ", " planting", "direct sow")):
+        intents.add("planting_related")
+    return intents
 
 
 def fetch_open_meteo_forecast(
@@ -171,20 +209,21 @@ def evaluate_weather_task_impacts(
 
     impacts: list[dict[str, Any]] = []
     for task in tasks:
-        haystack = f"{task.title} {task.description or ''} {task.generator_key}".lower()
+        intents = _task_intents(task)
         for impact in snapshot.derived_impacts or []:
             impact_type = impact.get("impact_type")
             impact_date = impact.get("date")
             proposed_change = None
-            if impact_type == "heat" and ("water" in haystack or "transplant" in haystack):
+            impact_kind = "risk" if impact_type in RISK_IMPACT_TYPES else "opportunity"
+            if impact_type == "heat" and ("water" in intents or "transplant" in intents or "emergency_response" in intents):
                 proposed_change = {
-                    "kind": "create_task" if "water" not in haystack else "update_task",
+                    "kind": "update_task" if "water" in intents else "create_task",
                     "summary": f"Heat risk affects '{task.title}'.",
                     "task_id": task.id,
                     "date": impact_date,
                     "updates": {"notes_append": "Heat advisory: prioritize hydration or shade support."},
                 }
-            elif impact_type in {"frost", "storm", "heavy_rain"} and any(word in haystack for word in ("transplant", "plant", "amend", "sow")):
+            elif impact_type in {"frost", "storm", "heavy_rain"} and ("transplant" in intents or "sow" in intents):
                 proposed_change = {
                     "kind": "defer_task",
                     "summary": f"Weather may delay '{task.title}'.",
@@ -192,7 +231,7 @@ def evaluate_weather_task_impacts(
                     "date": impact_date,
                     "updates": {"deferred_until": impact_date},
                 }
-            elif impact_type == "good_planting_window" and any(word in haystack for word in ("transplant", "plant", "sow")):
+            elif impact_type == "good_planting_window" and ("transplant" in intents or "sow" in intents):
                 proposed_change = {
                     "kind": "highlight",
                     "summary": f"Good planting window aligns with '{task.title}'.",
@@ -207,7 +246,9 @@ def evaluate_weather_task_impacts(
                         "task_id": task.id,
                         "task_title": task.title,
                         "impact_type": impact_type,
+                        "impact_kind": impact_kind,
                         "impact_date": impact_date,
+                        "task_intents": sorted(intents),
                         "summary": proposed_change["summary"],
                         "proposed_change": proposed_change,
                     }

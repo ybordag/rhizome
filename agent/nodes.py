@@ -26,7 +26,7 @@ from agent.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
 from agent.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
-from db.models import GardenProfile, InteractionRecord
+from db.models import GardenProfile, InteractionRecord, TreatmentPlan
 
 model_with_tools = model.bind_tools(tools)
 
@@ -55,6 +55,9 @@ Latest weather:
 Latest triage:
 {triage_context}
 
+Recent structured interactions:
+{interaction_context}
+
 Guidelines:
 - Always ground your advice in the specific conditions of this garden
 - Never recommend plants that are toxic to dogs or children — flag this immediately if the user asks about one
@@ -67,7 +70,29 @@ Guidelines:
   confirm. Only call the delete tool after the user explicitly confirms.
 - Before creating a new batch or project, check whether a similar one already exists using list_batches or list_projects 
   first.
+- If a plant problem is already being tracked, do not report a duplicate incident, draft a duplicate treatment plan, or
+  call approve_treatment_plan again for an already-approved plan. Reuse the existing plan or show the related tasks.
+- If the user asks for their task list, pending work, or what to do next, use task tools like list_project_tasks,
+  list_due_tasks, get_task, explain_task_blockers, or list_blocked_tasks. Do not report a new incident or open a
+  treatment-plan approval flow unless the user is explicitly asking to create or approve treatment work.
+- When you use task tools like get_task, start_task, complete_task, skip_task, defer_task, or update_task, always use the
+  exact task id returned by task-listing tools. Do not pass a task title as task_id unless the tool explicitly says that
+  exact-title fallback is supported.
 """
+
+
+def _interaction_context_text(state: GardenState) -> str:
+    history = state.get("interaction_history") or []
+    if not history:
+        return "No recent structured interactions."
+    lines = []
+    for item in history[-5:]:
+        lines.append(
+            f"- {item.get('interaction_type', 'interaction')}: "
+            f"status={item.get('status', 'unknown')}, "
+            f"resolution={item.get('resolution_action', 'none')}"
+        )
+    return "\n".join(lines)
 
 
 def _message_text(message) -> str:
@@ -89,6 +114,8 @@ def session_context_intake(state: GardenState):
         if isinstance(message, HumanMessage):
             opener = _message_text(message)
             break
+    if not opener:
+        opener = state.get("startup_opener") or ""
 
     session = SessionLocal()
     try:
@@ -97,6 +124,7 @@ def session_context_intake(state: GardenState):
         return {
             "temporal_context": temporal_context,
             "session_context": session_context,
+            "skip_tool_node": False,
         }
     finally:
         session.close()
@@ -144,11 +172,16 @@ def weather_context_loader(state: GardenState):
 
 
 def triage_reasoner(state: GardenState):
+    if state.get("triage_snapshot"):
+        return {}
+
     opener = ""
     for message in reversed(state["messages"]):
         if isinstance(message, HumanMessage):
             opener = _message_text(message)
             break
+    if not opener:
+        opener = state.get("startup_opener") or ""
 
     session = SessionLocal()
     try:
@@ -195,6 +228,12 @@ def triage_reasoner(state: GardenState):
     finally:
         session.close()
 
+
+def should_enter_llm_after_triage(state: GardenState):
+    if state.get("messages"):
+        return "llm_call"
+    return END
+
 def llm_call(state: GardenState):
     """Always loads fresh profile from DB before building the system prompt."""
     profile_obj = None
@@ -212,11 +251,13 @@ def llm_call(state: GardenState):
     temporal_text = state.get("temporal_context") or {"current_date": "unknown", "timezone": DEFAULT_TIMEZONE}
     weather_text = state.get("weather_context") or {"alerts_summary": "No weather snapshot available."}
     triage_text = (state.get("triage_snapshot") or {}).get("formatted") or "No triage snapshot available."
+    interaction_text = _interaction_context_text(state)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         garden_profile=profile_text,
         temporal_context=temporal_text,
         weather_context=weather_text,
         triage_context=triage_text,
+        interaction_context=interaction_text,
     )
     response = model_with_tools.invoke(
         [SystemMessage(content=system_prompt)] + state["messages"]
@@ -228,8 +269,15 @@ def tool_node(state: GardenState):
 
     result = []
     for tool_call in state["messages"][-1].tool_calls:
-        tool = tools_by_name[tool_call["name"]]
-        observation = tool.invoke(tool_call["args"])
+        tool = tools_by_name.get(tool_call["name"])
+        if tool is None:
+            available = ", ".join(sorted(tools_by_name))
+            observation = (
+                f"Unknown tool '{tool_call['name']}'. "
+                f"Use one of the registered tools instead: {available}"
+            )
+        else:
+            observation = tool.invoke(tool_call["args"])
         result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
     return {"messages": result}
 
@@ -304,6 +352,24 @@ def interaction_node(state: GardenState):
         elif interactive_call["name"] == "approve_treatment_plan":
             source_type = "incident"
             source_id = interactive_call["args"]["treatment_plan_id"]
+            plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == source_id).first()
+            if not plan:
+                return {
+                    "messages": [AIMessage(content=f"No treatment plan found with id {source_id}.")],
+                    "pending_interaction": None,
+                }
+            if plan.status != "draft":
+                return {
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                f"Treatment plan {source_id} is already {plan.status}. "
+                                "Use the existing treatment tasks or review the plan instead of approving it again."
+                            )
+                        )
+                    ],
+                    "pending_interaction": None,
+                }
             record = find_pending_interaction_record(
                 session,
                 source_type=source_type,
@@ -357,6 +423,7 @@ def interaction_node(state: GardenState):
                     "messages": [AIMessage(content="Operation cancelled. No changes were made.")],
                     "pending_interaction": None,
                     "interaction_history": _interaction_record_to_history(record),
+                    "skip_tool_node": True,
                 }
 
             resolve_interaction_record(
@@ -369,20 +436,25 @@ def interaction_node(state: GardenState):
             return {
                 "pending_interaction": None,
                 "interaction_history": _interaction_record_to_history(record),
+                "skip_tool_node": False,
             }
 
         if interactive_call["name"] == "accept_project_proposal":
             if action_id == "accept_proposal":
+                result = tools_by_name[interactive_call["name"]].invoke(interactive_call["args"])
+                success = not str(result).startswith("Failed")
                 resolve_interaction_record(
                     session,
                     record,
                     action_id=action_id,
-                    resolution_summary="Proposal approved for acceptance.",
+                    resolution_summary=result if success else f"Approval failed: {result}",
                 )
                 session.commit()
                 return {
+                    "messages": [AIMessage(content=result)],
                     "pending_interaction": None,
                     "interaction_history": _interaction_record_to_history(record),
+                    "skip_tool_node": True,
                 }
             summary = "Revision requested." if action_id == "request_revision" else "Proposal not accepted."
             resolve_interaction_record(session, record, action_id=action_id, resolution_summary=summary)
@@ -391,20 +463,25 @@ def interaction_node(state: GardenState):
                 "messages": [AIMessage(content=summary)],
                 "pending_interaction": None,
                 "interaction_history": _interaction_record_to_history(record),
+                "skip_tool_node": True,
             }
 
         if interactive_call["name"] == "approve_treatment_plan":
             if action_id == "approve_treatment_plan":
+                result = tools_by_name[interactive_call["name"]].invoke(interactive_call["args"])
+                success = not str(result).startswith("Failed")
                 resolve_interaction_record(
                     session,
                     record,
                     action_id=action_id,
-                    resolution_summary="Treatment plan approved.",
+                    resolution_summary=result if success else f"Approval failed: {result}",
                 )
                 session.commit()
                 return {
+                    "messages": [AIMessage(content=result)],
                     "pending_interaction": None,
                     "interaction_history": _interaction_record_to_history(record),
+                    "skip_tool_node": True,
                 }
             summary = "Revision requested." if action_id == "revise_treatment_plan" else "Treatment plan not approved."
             resolve_interaction_record(session, record, action_id=action_id, resolution_summary=summary)
@@ -413,20 +490,25 @@ def interaction_node(state: GardenState):
                 "messages": [AIMessage(content=summary)],
                 "pending_interaction": None,
                 "interaction_history": _interaction_record_to_history(record),
+                "skip_tool_node": True,
             }
 
         if interactive_call["name"] == "approve_weather_task_changes":
             if action_id == "approve_changes":
+                result = tools_by_name[interactive_call["name"]].invoke(interactive_call["args"])
+                success = not str(result).startswith("Failed")
                 resolve_interaction_record(
                     session,
                     record,
                     action_id=action_id,
-                    resolution_summary="Weather task changes approved.",
+                    resolution_summary=result if success else f"Approval failed: {result}",
                 )
                 session.commit()
                 return {
+                    "messages": [AIMessage(content=result)],
                     "pending_interaction": None,
                     "interaction_history": _interaction_record_to_history(record),
+                    "skip_tool_node": True,
                 }
             resolve_interaction_record(
                 session,
@@ -439,6 +521,7 @@ def interaction_node(state: GardenState):
                 "messages": [AIMessage(content="Weather task changes dismissed.")],
                 "pending_interaction": None,
                 "interaction_history": _interaction_record_to_history(record),
+                "skip_tool_node": True,
             }
 
         return {}
@@ -459,3 +542,12 @@ def should_continue(state: GardenState) -> str:
             return "interaction_node"
     
     return "tool_node"
+
+
+def should_continue_after_interaction(state: GardenState) -> str:
+    if state.get("skip_tool_node"):
+        return END
+    last_message = state["messages"][-1]
+    if getattr(last_message, "tool_calls", None):
+        return "tool_node"
+    return END

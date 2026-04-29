@@ -117,5 +117,7 @@ def test_build_weather_and_triage_interactions_capture_sections(db_session):
     assert weather_interaction["interaction_type"] == "weather_change_review"
     assert weather_interaction["sections"][0]["items"][0].startswith(child_task.title)
     assert triage_interaction["interaction_type"] == "triage_view"
-    assert triage_interaction["sections"][1]["title"] == "Routine"
+    assert [section["title"] for section in triage_interaction["sections"]] == ["Routine"]
+    focus_action = next(action for action in triage_interaction["actions"] if action["id"] == "focus_section")
+    assert focus_action["input_schema"][0]["options"] == ["Routine"]
     assert infer_resolution_status("dismiss_changes") == "dismissed"

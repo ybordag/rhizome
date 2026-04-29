@@ -4,6 +4,7 @@ from langgraph.graph import END
 from agent import nodes
 from langchain.messages import ToolMessage
 from tests.support.fakes import FakeTool, make_ai_message, make_tool_call_message
+from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
 
 
 @pytest.mark.graph
@@ -86,6 +87,26 @@ def test_tool_node_invokes_expected_tool(monkeypatch):
 
 
 @pytest.mark.graph
+def test_tool_node_returns_error_for_unknown_tool(monkeypatch):
+    monkeypatch.setattr(nodes, "tools_by_name", {})
+    state = {
+        "messages": [
+            make_tool_call_message(
+                "Calling missing tool",
+                name="get_plant",
+                args={"plant_id": "p-1"},
+                call_id="call-1",
+            )
+        ]
+    }
+
+    result = nodes.tool_node(state)
+
+    assert len(result["messages"]) == 1
+    assert "Unknown tool 'get_plant'" in result["messages"][0].content
+
+
+@pytest.mark.graph
 def test_confirmation_node_returns_empty_when_no_destructive_calls():
     state = {
         "messages": [
@@ -139,3 +160,26 @@ def test_confirmation_node_allows_affirmative_responses(monkeypatch, patched_ses
     result = nodes.confirmation_node(state)
 
     assert result["interaction_history"][0]["resolution_action"] == "confirm"
+
+
+@pytest.mark.graph
+def test_interaction_node_does_not_reopen_already_approved_treatment_plan(db_session, patched_sessionlocal):
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile)
+    incident = make_incident_report(db_session, project_id=project.id, incident_type="blight")
+    plan = make_treatment_plan(db_session, incident, status="approved")
+    state = {
+        "messages": [
+            make_tool_call_message(
+                "Approve treatment again",
+                name="approve_treatment_plan",
+                args={"treatment_plan_id": plan.id},
+                call_id="call-1",
+            )
+        ]
+    }
+
+    result = nodes.interaction_node(state)
+
+    assert "already approved" in result["messages"][0].content
+    assert result["pending_interaction"] is None

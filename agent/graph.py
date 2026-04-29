@@ -7,6 +7,8 @@ from agent.nodes import (
     interaction_node,
     llm_call,
     session_context_intake,
+    should_continue_after_interaction,
+    should_enter_llm_after_triage,
     should_continue,
     tool_node,
     triage_reasoner,
@@ -29,13 +31,21 @@ def build_agent():
     builder.add_edge(START, "session_context_intake")
     builder.add_edge("session_context_intake", "weather_context_loader")
     builder.add_edge("weather_context_loader", "triage_reasoner")
-    builder.add_edge("triage_reasoner", "llm_call")
+    builder.add_conditional_edges(
+        "triage_reasoner",
+        should_enter_llm_after_triage,
+        ["llm_call", END],
+    )
     builder.add_conditional_edges(
         "llm_call",
         should_continue,
         ["interaction_node", "tool_node", END]
     )
-    builder.add_edge("interaction_node", "tool_node")
+    builder.add_conditional_edges(
+        "interaction_node",
+        should_continue_after_interaction,
+        ["tool_node", END],
+    )
     builder.add_edge("tool_node", "llm_call")
 
     return builder.compile(checkpointer=checkpointer)

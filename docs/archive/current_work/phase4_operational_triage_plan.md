@@ -214,8 +214,8 @@ treatment tasks update care-state fields and emit semantic care events.
 
 Phase 4 coverage was added in:
 
-- [test_phase4_helpers.py](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/tests/db/test_phase4_helpers.py)
-- [test_phase4_operations.py](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/tests/tools/test_phase4_operations.py)
+- [test_temporal_weather_triage_helpers.py](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/tests/db/test_temporal_weather_triage_helpers.py)
+- [test_triage_care_incident_operations.py](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/tests/tools/test_triage_care_incident_operations.py)
 
 Covered behaviors include:
 

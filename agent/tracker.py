@@ -1222,7 +1222,7 @@ def format_due_tasks(rows: list[dict[str, Any]]) -> str:
         task = row["task"]
         blocked_text = " | blocked" if row["blocked"] else ""
         lines.append(
-            f"- [{row['urgency']}] {task.title} | due {_date_only_iso(row['due_date'])}{blocked_text}"
+            f"- [{row['urgency']}] {task.title} | id={task.id} | due {_date_only_iso(row['due_date'])}{blocked_text}"
         )
     return "\n".join(lines)
 
@@ -1233,7 +1233,7 @@ def format_task_series(series_list: list[TaskSeries]) -> str:
     lines = ["Recurring task series:", ""]
     for series in series_list:
         lines.append(
-            f"- {series.title} | {series.cadence} | next {_date_only_iso(series.next_generation_date)} | active={series.active}"
+            f"- {series.title} | id={series.id} | {series.cadence} | next {_date_only_iso(series.next_generation_date)} | active={series.active}"
         )
     return "\n".join(lines)
 
@@ -1247,6 +1247,7 @@ def format_task_detail(session, task: Task) -> str:
     )
     lines = [
         task.to_summary(),
+        f"  Task ID: {task.id}",
         f"  Description: {task.description or 'none'}",
         f"  Notes: {task.notes or 'none'}",
         f"  Deadline: {_date_only_iso(task.deadline)}",

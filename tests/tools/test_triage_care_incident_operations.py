@@ -86,10 +86,30 @@ def test_triage_uses_weather_snapshot_and_returns_grouped_output(db_session, pat
     latest = get_latest_triage_snapshot.invoke({})
 
     assert "Daily triage:" in result
-    assert "Urgent:" in result
-    assert "Routine:" in result
-    assert "Project Work:" in result
+    assert "Routine:" in result or "Project Work:" in result
     assert "Daily triage:" in latest
+    assert "Heat stress likely." in result
+    assert "Urgent:" not in result
+    assert "Urgent:" not in latest
+
+
+@pytest.mark.integration
+def test_triage_only_uses_urgent_for_emergencies(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="start")
+    generate_project_tasks.invoke({"project_id": project.id})
+    make_weather_snapshot(
+        db_session,
+        derived_impacts=[
+            {"date": "2026-04-14", "impact_type": "heat", "severity": "high", "summary": "Heat stress likely."},
+        ],
+        alerts_summary="Heat stress likely. (2026-04-14)",
+    )
+
+    result = run_daily_triage.invoke({"opener": "I can work outside today and want to focus on the tomato project."})
+
+    assert "Acquire Tomato starts" in result
+    assert "Project Work:" in result or "Routine:" in result
+    assert "Urgent:" not in result
 
 
 @pytest.mark.integration
@@ -147,3 +167,133 @@ def test_incident_reporting_and_treatment_workflow_creates_tasks(db_session, pat
     assert "Drafted treatment plan" in drafted
     assert "Approved treatment plan" in approved
     assert any("Inspect affected plants closely" == title or "Apply organic pest treatment" == title for title in task_titles)
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_reuses_existing_active_plan(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    reported = report_incident.invoke(
+        {
+            "incident_type": "blight",
+            "summary": "Powdery mildew on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        }
+    )
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+    first = draft_treatment_plan.invoke({"incident_id": incident.id})
+    second = draft_treatment_plan.invoke({"incident_id": incident.id})
+
+    plans = db_session.query(TreatmentPlan).filter(TreatmentPlan.incident_id == incident.id).all()
+    assert "Recorded blight incident" in reported
+    assert len(plans) == 1
+    assert plans[0].id in first
+    assert plans[0].id in second
+
+
+@pytest.mark.integration
+def test_report_incident_reuses_existing_open_incident_for_same_issue(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+
+    first = report_incident.invoke(
+        {
+            "incident_type": "blight",
+            "summary": "Powdery mildew on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        }
+    )
+    second = report_incident.invoke(
+        {
+            "incident_type": "blight",
+            "summary": "Powdery mildew on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        }
+    )
+
+    incidents = db_session.query(IncidentReport).filter(IncidentReport.project_id == project.id).all()
+    assert len(incidents) == 1
+    assert incidents[0].id in first
+    assert incidents[0].id in second
+
+
+@pytest.mark.integration
+def test_report_incident_infers_project_from_subjects_for_treatment_approval(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    generate_project_tasks.invoke({"project_id": project.id})
+    profile = db_session.query(GardenProfile).filter(GardenProfile.id == project.garden_profile_id).one()
+    container = make_container(db_session, profile)
+    plant = make_plant(db_session, profile, container=container, name="Tomato")
+    link_plant_to_project(db_session, project, plant)
+
+    reported = report_incident.invoke(
+        {
+            "incident_type": "blight",
+            "summary": "Powdery mildew suspected on tomato leaves.",
+            "severity": "medium",
+            "subjects": [{"subject_type": "plant", "subject_id": plant.id, "role": "affected"}],
+        }
+    )
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+    drafted = draft_treatment_plan.invoke({"incident_id": incident.id})
+    plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.desc()).first()
+    approved = approve_treatment_plan.invoke({"treatment_plan_id": plan.id})
+
+    db_session.expire_all()
+    refreshed_incident = db_session.query(IncidentReport).filter(IncidentReport.id == incident.id).one()
+    refreshed_plan = db_session.query(TreatmentPlan).filter(TreatmentPlan.id == plan.id).one()
+    incident_tasks = db_session.query(Task).filter(Task.project_id == project.id, Task.generator_key.like("incident.%")).all()
+
+    assert "Recorded blight incident" in reported
+    assert refreshed_incident.project_id == project.id
+    assert "Drafted treatment plan" in drafted
+    assert "Approved treatment plan" in approved
+    assert refreshed_plan.status == "approved"
+    assert incident_tasks
+
+
+@pytest.mark.integration
+def test_approving_treatment_plan_supersedes_other_draft_plans_for_same_project_issue(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    first = report_incident.invoke(
+        {
+            "incident_type": "blight",
+            "summary": "Powdery mildew on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        }
+    )
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+    first_plan_msg = draft_treatment_plan.invoke({"incident_id": incident.id})
+    first_plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.asc()).first()
+
+    duplicate_incident = IncidentReport(
+        project_id=project.id,
+        incident_type="blight",
+        status="reported",
+        severity="medium",
+        summary="Powdery mildew spreading on tomatoes",
+        reported_by="user",
+    )
+    db_session.add(duplicate_incident)
+    db_session.commit()
+    db_session.refresh(duplicate_incident)
+    second_plan_msg = draft_treatment_plan.invoke({"incident_id": duplicate_incident.id})
+    second_plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.desc()).first()
+
+    approved = approve_treatment_plan.invoke({"treatment_plan_id": second_plan.id})
+
+    db_session.expire_all()
+    refreshed_first = db_session.query(TreatmentPlan).filter(TreatmentPlan.id == first_plan.id).one()
+    refreshed_second = db_session.query(TreatmentPlan).filter(TreatmentPlan.id == second_plan.id).one()
+    assert "Drafted treatment plan" in first_plan_msg
+    assert "Drafted treatment plan" in second_plan_msg
+    assert "Approved treatment plan" in approved
+    assert refreshed_second.status == "approved"
+    assert refreshed_first.status == "superseded"

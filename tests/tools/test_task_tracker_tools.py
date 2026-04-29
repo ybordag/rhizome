@@ -77,6 +77,7 @@ def test_generate_project_tasks_creates_run_tasks_dependencies_and_series(db_ses
 
     assert "Generated project tasks" in result
     assert "Propagation:" in listed
+    assert "id=" in listed
     assert db_session.query(TaskGenerationRun).count() == 1
     assert "Sow Tomato" in milestone_titles
     assert "Pot up Tomato to red cups" in milestone_titles
@@ -147,9 +148,12 @@ def test_due_and_blocked_queries_reflect_runtime_state_and_lifecycle_updates(db_
     task_detail = get_task.invoke({"task_id": transplant_task.id})
 
     assert "Blocked tasks:" in blocked_before
+    assert "id=" in blocked_before or "No blocked tasks found." in blocked_before
     assert "Transplant Tomato to final location" not in due_after_defer
+    assert "id=" in due_after_defer
     assert "Blockers for task" in explain
     assert "[Task] Transplant Tomato to final location" in task_detail
+    assert f"Task ID: {transplant_task.id}" in task_detail
 
 
 def test_task_update_skip_series_and_materialization_tools_work(db_session, patched_sessionlocal):
@@ -197,7 +201,25 @@ def test_task_update_skip_series_and_materialization_tools_work(db_session, patc
     assert "Updated recurring task series" in update_series_result
     assert refreshed_series.cadence_days == 3
     assert "Recurring task series:" in list_result
+    assert "id=" in list_result
     assert "Materialized" in materialize_result or "No recurring task instances" in materialize_result
+
+
+def test_complete_task_accepts_unique_exact_title_fallback(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="start")
+    generate_project_tasks.invoke({"project_id": project.id})
+    acquire_task = (
+        db_session.query(Task)
+        .filter(Task.project_id == project.id, Task.title == "Acquire Tomato starts")
+        .first()
+    )
+
+    result = complete_task.invoke({"task_id": "Acquire Tomato starts", "actual_minutes": 18})
+
+    db_session.expire_all()
+    refreshed = db_session.query(Task).filter(Task.id == acquire_task.id).one()
+    assert "Completed task 'Acquire Tomato starts'." in result
+    assert refreshed.status == "done"
 
 
 def test_task_activity_events_are_queryable_and_generation_rolls_back_on_failure(db_session, patched_sessionlocal):
