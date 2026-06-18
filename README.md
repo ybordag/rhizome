@@ -1,68 +1,143 @@
-# rhizome
+# Rhizome
 
-The agent and domain engine for a hobby gardening assistant. Rhizome manages garden profiles, project planning, task scheduling, and daily triage through a LangGraph-based agent with persistent memory — acting as an advisor, co-worker, and coach for the hobby gardener.
+Rhizome is an AI-powered gardening assistant built on LangGraph. It acts as an **advisor, co-worker, and coach** for the hobby gardener — holding persistent knowledge of your specific garden, helping plan projects from seed to harvest, generating time-sensitive task schedules, surfacing daily priorities based on weather and deadlines, and tracking what happens over time.
 
-**Status:** Active development. Core agent loop is functional. Multi-user deployment, frontend API, and image analysis are in progress.
-
----
-
-## What it does
-
-Gardening is a deceptively complex management task. Even a small garden involves juggling competing constraints across space, soil, sunlight, climate, budget, and time — often seasons in advance. Rhizome holds all of that context and helps a gardener reason through it.
-
-**Currently working:**
-- Persistent garden model — beds, containers, plants, care history, activity log
-- Project planning with negotiation loop — brief → proposal → revision → approved plan → tasks
-- Task generation and lifecycle — deadlines, windows, consequence metadata, recurrence, dependencies
-- Daily triage with weather context — urgency-aware task surfacing, session context intake
-- Incident and treatment plan workflows
-- Weather integration (Open-Meteo) with approval-gated task impact recommendations
-- Structured human-in-the-loop interactions — proposals, treatment plans, destructive confirmations
-- CLI for manual testing
-
-**In progress / planned:**
-- FastAPI layer for frontend consumption
-- Multi-user auth and tenancy (Postgres migration required)
-- Image analysis — plant identification, pest diagnosis via vision model (MCP sidecar)
-- External knowledge retrieval — Perenual plant data, iNaturalist, RAG
-- Scheduled weather monitoring and proactive alerting
+**Status:** Active development on `geranium` branch. Core agent loop is fully functional with 93 tools and 310 tests. API gateway ([Cambium](../cambium)) is in active development; frontend ([Verdant](../verdant-pages)) is not yet started.
 
 ---
 
-## Architecture
+## The problem it solves
 
-Rhizome is the backend engine in a three-repo system:
+Gardening is deceptively complex. Even a small garden involves constraints across space, soil, sunlight, climate, budget, pests, and timing — often sequenced months in advance. A single planning decision cascades: which plants you grow affects seed start timelines, which affects tray space, which affects project schedules, which affects cost.
+
+Most tools treat gardening as a to-do list. Rhizome treats it as a planning and reasoning problem. It maintains a persistent model of your specific garden — beds, containers, plants, care history, projects, proposals, tasks — and reasons over all of it simultaneously.
+
+---
+
+## Key capabilities
+
+**Garden model**
+- Persistent beds, containers, and plants with full care history
+- Activity log on every object — every watering, fertilization, transplant, inspection
+- Garden profile with climate zone, frost dates, tray capacity, location
+
+**Project planning**
+- Guided planning: brief → proposal with cost/timeline/effort estimates → approved plan
+- Feasibility checking: budget caps, timeline constraints, location conflicts
+- Schedule preview before committing to a plan
+
+**Task management**
+- Auto-generated task graphs from approved plans (milestones, series, dependencies)
+- Event-anchored scheduling (tasks that wait for plant_germinated, plant_transplanted)
+- Recurring task series with rolling 14-day materialization
+- Daily priority scoring across urgency, task type, user priority, and triage alignment
+- Task lifecycle: start / complete / skip / defer (with cascade to dependents)
+
+**Daily triage**
+- Session-start triage snapshot with weather context
+- Urgency tiering: blocker / time_sensitive / scheduled / backlog
+- `GET /api/v1/tasks/daily` — deterministic ranked work list
+
+**Weather**
+- Open-Meteo integration (no API key required)
+- Derived impacts: frost, heat, heavy rain, storm, good planting windows
+- Approval-gated task adjustments when weather changes the schedule
+
+**Incidents and treatment**
+- User-reported pest, blight, and weed incidents
+- Agent-drafted treatment plans with approval gate
+- Treatment tasks auto-generated on approval
+
+**Human-in-the-loop interactions**
+- Structured approval flows: proposals, treatment plans, weather changes, destructive ops
+- LangGraph interrupt/resume — pauses mid-graph for user input, resumes exactly where it left off
+- Every interaction resolution recorded in the activity log
+
+**Action history**
+- Complete activity timeline for any object: plant, task, bed, project, incident
+- Cross-object project timeline with category/event-type filtering and cursor pagination
+- User decisions (approvals, cancellations) appear in the timeline
+
+---
+
+## System context
+
+Rhizome is one part of a four-repo system:
+
+```
+Verdant (React)
+    │  /api/v1
+    ▼
+Cambium (Go)  ←— JWT auth, bcrypt, refresh tokens
+    │  /internal/...  { user_id }
+    ▼
+Rhizome (Python + LangGraph)  ←— this repo
+    │
+    ▼
+Fairlead (inference router)  ←— GPU routing, provider failover
+```
 
 | Repo | Role |
 |---|---|
-| **rhizome** | Agent and domain engine (this repo) |
+| **rhizome** | Agent engine, domain logic, DB, internal HTTP API |
+| **[cambium](../cambium)** | Go API gateway — JWT auth, `/api/v1` proxy |
 | **verdant** | React frontend |
-| **fairlead** | Resource router — inference routing, agent worker pool, session failover |
-
-Rhizome connects to Fairlead through a standard OpenAI-compatible endpoint configured in `agent/model.py`. The repos are independently deployable.
-
-See [`docs/architecture/overview.md`](docs/architecture/overview.md) for the full architecture.
+| **fairlead** | Inference router — GPU resource accounting, LLM failover |
 
 ---
 
 ## Tech stack
 
-- **Agent framework:** LangGraph (Python)
-- **LLM:** Gemini via `langchain-google-genai`; multi-provider abstraction in progress
-- **Database:** SQLite (current) → Postgres with pgvector (target)
-- **Weather:** Open-Meteo (no API key required)
-- **Planned:** Perenual (plant data), iNaturalist (pest observations)
+| Layer | Technology |
+|---|---|
+| Agent framework | LangGraph (Python) |
+| LLM | Google Gemini via `langchain-google-genai` |
+| Database | SQLite → Postgres (migration path in place) |
+| Weather | Open-Meteo (free, no key required) |
+| Observability | OpenTelemetry (OTel) |
+| Tests | pytest, 310 tests |
 
 ---
 
 ## Getting started
 
 ```bash
+# Clone and install (use the RHIZOME_ENV conda environment)
+conda activate RHIZOME_ENV
 pip install -r requirements.txt -r requirements-dev.txt
-cp .env.example .env        # add your GOOGLE_API_KEY
-python main.py              # start the CLI
-python -m pytest            # run the test suite
+
+# Configure
+cp .env.example .env
+# Add your GOOGLE_API_KEY to .env
+
+# Run the CLI
+python main.py
+
+# Run the test suite
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest
 ```
+
+See [docs/getting-started/setup.md](docs/getting-started/setup.md) for full setup instructions.
+
+---
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [Vision and Design](docs/overview/vision-and-design.md) | Why Rhizome exists, design philosophy, interaction surface |
+| [Features](docs/overview/features.md) | Complete capability inventory |
+| [Setup Guide](docs/getting-started/setup.md) | Installation, configuration, first run |
+| [Using the CLI](docs/getting-started/using-the-cli.md) | How to have a session with the agent |
+| [System Architecture](docs/architecture/system-overview.md) | Repos, runtime topology, deployment model |
+| [Agent Loop](docs/architecture/agent-loop.md) | End-to-end walkthrough of one session |
+| [Data Model](docs/architecture/data-model.md) | All models, lifecycle, relationships |
+| [API Reference](docs/architecture/api-reference.md) | Complete `/api/v1` endpoint reference |
+| [Tools Reference](docs/architecture/tools-reference.md) | All 93 tools organized by domain |
+| [Code Organization](docs/development/code-organization.md) | Directory guide, module responsibilities |
+| [Testing Guide](docs/development/testing.md) | Test structure, patterns, how to add tests |
+| [Roadmap](docs/roadmap/overview.md) | Epic inventory, current status, what's next |
+| [CLAUDE.md](CLAUDE.md) | Claude Code session memory |
 
 ---
 
