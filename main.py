@@ -222,7 +222,6 @@ def make_session_config() -> dict:
 def chat():
     print("Rhizome 🌿 — your garden assistant. Type 'quit' to exit.\n")
     configure_from_env()
-    history = []
     config = make_session_config()
     shown_interaction_ids = set()
     pending_user_input = bootstrap_startup_triage(
@@ -244,7 +243,6 @@ def chat():
         if user_input.lower() == "quit":
             break
 
-        history.append(HumanMessage(content=user_input))
         emit_message(
             "user",
             user_input,
@@ -252,12 +250,12 @@ def chat():
         )
         with start_span(
             "rhizome.chat.turn",
-            {
-                "rhizome.thread_id": config["configurable"]["thread_id"],
-                "rhizome.history_length": len(history),
-            },
+            {"rhizome.thread_id": config["configurable"]["thread_id"]},
         ):
-            result = agent.invoke({"messages": history}, config=config)
+            result = agent.invoke(
+                {"messages": [HumanMessage(content=user_input)]},
+                config=config,
+            )
 
             # check graph state for interrupts
             state = agent.get_state(config)
@@ -292,7 +290,6 @@ def chat():
                     )
 
         response = result["messages"][-1]
-        history.append(response)
         response_text = get_response_text(response).strip() or get_latest_display_text(result["messages"])
         emit_message(
             "assistant",

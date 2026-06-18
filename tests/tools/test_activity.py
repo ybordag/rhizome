@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -191,7 +191,7 @@ def test_activity_feeds_are_newest_first(db_session, patched_sessionlocal, seed_
         category="project",
         summary="Older project update.",
         project_id=project.id,
-        created_at=datetime.utcnow() - timedelta(days=2),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2),
         event_metadata={},
     )
     newer = ActivityEvent(
@@ -201,7 +201,7 @@ def test_activity_feeds_are_newest_first(db_session, patched_sessionlocal, seed_
         category="project",
         summary="Newer project update.",
         project_id=project.id,
-        created_at=datetime.utcnow() - timedelta(days=1),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1),
         event_metadata={},
     )
     db_session.add_all([older, newer])

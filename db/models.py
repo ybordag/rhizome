@@ -1,7 +1,7 @@
 # db/models.py
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey, Index
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from typing import Optional
 
@@ -31,8 +31,8 @@ class GardenProfile(Base):
     hard_constraints = Column(JSON)                     # JSON string for now
     soft_preferences = Column(JSON)                     # JSON string for now
     notes = Column(Text)                                # anything that doesn't fit above
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def __repr__(self):
         return f"<GardenProfile zone={self.climate_zone}>"
@@ -72,8 +72,8 @@ class GardeningProject(Base):
     negotiation_history = Column(JSON, default=list)
     iterations = Column(JSON, default=list)
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def __repr__(self):
         return f"<GardeningProject name={self.name}>"
@@ -136,8 +136,8 @@ class ProjectBrief(Base):
     propagation_preference = Column(String, nullable=True)
     priority_preferences = Column(JSON, default=list)
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         return (
@@ -180,8 +180,8 @@ class ProjectProposal(Base):
     resource_assumptions = Column(JSON, default=dict)
     budget_assumptions = Column(JSON, default=dict)
     timing_anchors = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         total_cost = (self.cost_estimate or {}).get("total_estimated_cost", "not set")
@@ -209,10 +209,10 @@ class ProjectRevision(Base):
     revision_number = Column(Integer, nullable=False, default=1)
     status = Column(String, nullable=False, default="active")
     approved_plan = Column(JSON, nullable=False, default=dict)
-    approved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    approved_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     superseded_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         return (
@@ -243,8 +243,8 @@ class ProjectExecutionSpec(Base):
     preferred_completion_target = Column(DateTime, nullable=True)
     plant_categories = Column(JSON, default=list)
     timing_anchors = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         timing_modes = (self.timing_anchors or {}).get("modes", [])
@@ -272,8 +272,8 @@ class TaskGenerationRun(Base):
     source_event_id = Column(String, ForeignKey("activity_event.id"), nullable=True)
     summary = Column(Text, nullable=False)
     run_metadata = Column("metadata", JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         return (
@@ -326,8 +326,8 @@ class Task(Base):
     event_anchor_subject_id = Column(String, nullable=True)
     event_anchor_offset_days = Column(Integer, nullable=True)
     is_user_modified = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         date_bits = []
@@ -355,8 +355,8 @@ class TaskDependency(Base):
     blocking_task_id = Column(String, ForeignKey("task.id"), nullable=False)
     blocked_task_id = Column(String, ForeignKey("task.id"), nullable=False)
     dependency_type = Column(String, nullable=False, default="finish_to_start")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class TaskSeries(Base):
@@ -386,8 +386,8 @@ class TaskSeries(Base):
     default_estimated_minutes = Column(Integer, nullable=False, default=0)
     next_generation_date = Column(DateTime, nullable=True)
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         return (
@@ -414,8 +414,8 @@ class Bed(Base):
     last_inspected_at = Column(DateTime, nullable=True)
     care_state_notes = Column(Text, nullable=True)
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def __repr__(self):
         return f"<Bed name={self.name}>"
@@ -459,8 +459,8 @@ class Container(Base):
     last_inspected_at = Column(DateTime, nullable=True)
     care_state_notes = Column(Text, nullable=True)
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def __repr__(self):
         return f"<Container name={self.name}>"
@@ -491,7 +491,7 @@ class ProjectBed(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
     bed_id = Column(String, ForeignKey("bed.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class ProjectContainer(Base):
@@ -500,7 +500,7 @@ class ProjectContainer(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
     container_id = Column(String, ForeignKey("container.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class Plant(Base):
@@ -546,8 +546,8 @@ class Plant(Base):
     special_instructions = Column(Text, nullable=True)
 
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def __repr__(self):
         return f"<Plant {self.name} {self.variety or ''}>"
@@ -626,8 +626,8 @@ class PlantBatch(Base):
     tray = Column(String, nullable=True)         # e.g. "tray_A", "72-cell flat"
 
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_summary(self) -> str:
         date_str = self.sow_date.strftime("%B %d, %Y") if self.sow_date else "unknown"
@@ -657,7 +657,7 @@ class ProjectPlant(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
     plant_id = Column(String, ForeignKey("plant.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     removed_at = Column(DateTime, nullable=True)  # when decoupled, not deleted
     notes = Column(Text, nullable=True)           # why it was added/removed
 
@@ -668,7 +668,7 @@ class Conversation(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(Integer, nullable=False)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     summary = Column(Text, nullable=True)
 
     def __repr__(self):
@@ -684,7 +684,7 @@ class ActivityEvent(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
 
     actor_type = Column(String, nullable=False)
     actor_label = Column(String, nullable=True)
@@ -726,7 +726,7 @@ class WeatherSnapshot(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     timezone = Column(String, nullable=False)
     location_label = Column(String, nullable=False)
     forecast_start_date = Column(DateTime, nullable=False)
@@ -747,7 +747,7 @@ class WeatherTaskChangeSet(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     weather_snapshot_id = Column(String, ForeignKey("weather_snapshot.id"), nullable=False)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     status = Column(String, nullable=False, default="draft")
@@ -764,7 +764,7 @@ class TriageSnapshot(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     timezone = Column(String, nullable=False)
     session_context = Column(JSON, default=dict)
     temporal_context = Column(JSON, default=dict)
@@ -788,7 +788,7 @@ class InteractionRecord(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     resolved_at = Column(DateTime, nullable=True)
     interaction_type = Column(String, nullable=False)
     status = Column(String, nullable=False, default="pending")
@@ -817,7 +817,7 @@ class IncidentReport(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     incident_type = Column(String, nullable=False)
     status = Column(String, nullable=False, default="reported")
@@ -856,5 +856,5 @@ class TreatmentPlan(Base):
     recommended_steps = Column(JSON, default=list)
     follow_up_strategy = Column(JSON, default=list)
     monitoring_notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     approved_at = Column(DateTime, nullable=True)

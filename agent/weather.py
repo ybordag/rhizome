@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -148,8 +148,8 @@ def refresh_weather_snapshot(
     impacts, actions, conditions_summary, alerts_summary = derive_weather_impacts(payload)
     daily = payload.get("daily") or {}
     dates = daily.get("time") or []
-    start = datetime.fromisoformat(dates[0]) if dates else datetime.utcnow()
-    end = datetime.fromisoformat(dates[-1]) if dates else datetime.utcnow()
+    start = datetime.fromisoformat(dates[0]) if dates else datetime.now(timezone.utc).replace(tzinfo=None)
+    end = datetime.fromisoformat(dates[-1]) if dates else datetime.now(timezone.utc).replace(tzinfo=None)
     snapshot = WeatherSnapshot(
         timezone=timezone,
         location_label=location["location_label"],
@@ -184,7 +184,7 @@ def load_or_refresh_weather_snapshot(
     fetcher=fetch_open_meteo_forecast,
 ) -> Optional[WeatherSnapshot]:
     latest = get_latest_weather_snapshot(session)
-    if latest and latest.created_at >= datetime.utcnow() - timedelta(hours=freshness_hours):
+    if latest and latest.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=freshness_hours):
         return latest
     try:
         return refresh_weather_snapshot(session, timezone=timezone, fetcher=fetcher)
@@ -427,7 +427,7 @@ def approve_weather_task_changes(session, change_set_id: str) -> WeatherTaskChan
 
     before_set = snapshot_model(change_set)
     change_set.status = "approved"
-    change_set.approved_at = datetime.utcnow()
+    change_set.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
     record_update_event(
         session,
         event_type="weather_task_changes_approved",

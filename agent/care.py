@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from agent.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_activity_event
@@ -127,7 +127,7 @@ def apply_task_completion_side_effects(
 
     updated: list[str] = []
     mapping = CARE_ACTIONS[action]
-    completed_at = task.completed_at or datetime.utcnow()
+    completed_at = task.completed_at or datetime.now(timezone.utc).replace(tzinfo=None)
 
     for subject_type, obj in resolved:
         if subject_type not in mapping:

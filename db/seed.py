@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import sys
@@ -264,7 +264,7 @@ def _schema_is_stale(db_path: Path) -> tuple[bool, str]:
 
 
 def _rotate_stale_databases(reason: str) -> None:
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     if DATABASE_PATH.exists():
         backup = DATABASE_PATH.with_name(f"rhizome.pre_seed_backup.{timestamp}.db")
         DATABASE_PATH.rename(backup)

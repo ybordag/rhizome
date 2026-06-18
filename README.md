@@ -1,60 +1,68 @@
 # rhizome
 
-The agentic backend for a hobby gardening assistant. Rhizome manages garden profiles, project planning, seed scheduling, and task prioritization through a LangGraph-based multi-workflow agent with persistent memory — acting as an advisor, co-worker, and coach for the hobby gardener.
+The agent and domain engine for a hobby gardening assistant. Rhizome manages garden profiles, project planning, task scheduling, and daily triage through a LangGraph-based agent with persistent memory — acting as an advisor, co-worker, and coach for the hobby gardener.
 
-**Status:** Early design phase — architecture and data model are being defined. No runnable code yet.
+**Status:** Active development. Core agent loop is functional. Multi-user deployment, frontend API, and image analysis are in progress.
 
 ---
 
 ## What it does
 
-Gardening is a deceptively complex management task. Even a small garden involves juggling competing constraints across space, soil, sunlight, climate, budget, and time — often seasons in advance. Rhizome is designed to hold all of that context and help a gardener reason through it.
+Gardening is a deceptively complex management task. Even a small garden involves juggling competing constraints across space, soil, sunlight, climate, budget, and time — often seasons in advance. Rhizome holds all of that context and helps a gardener reason through it.
 
-Concretely, it will:
+**Currently working:**
+- Persistent garden model — beds, containers, plants, care history, activity log
+- Project planning with negotiation loop — brief → proposal → revision → approved plan → tasks
+- Task generation and lifecycle — deadlines, windows, consequence metadata, recurrence, dependencies
+- Daily triage with weather context — urgency-aware task surfacing, session context intake
+- Incident and treatment plan workflows
+- Weather integration (Open-Meteo) with approval-gated task impact recommendations
+- Structured human-in-the-loop interactions — proposals, treatment plans, destructive confirmations
+- CLI for manual testing
 
-- Build and maintain a persistent model of your garden — beds, containers, sunlight zones, existing plants, and constraints
-- Help plan and negotiate gardening projects (what to grow, where, when, and how much it will cost) with explicit handling of hard constraints like toxicity, budget, and available space
-- Generate seed schedules and transplant timelines, accounting for frost dates, tray capacity, and multi-step transplant processes
-- Surface prioritized task recommendations based on what's urgent, what's due today, and what can wait for a free hour
-- Monitor weather forecasts and local pest reports and proactively alert when intervention is needed
+**In progress / planned:**
+- FastAPI layer for frontend consumption
+- Multi-user auth and tenancy (Postgres migration required)
+- Image analysis — plant identification, pest diagnosis via vision model (MCP sidecar)
+- External knowledge retrieval — Perenual plant data, iNaturalist, RAG
+- Scheduled weather monitoring and proactive alerting
 
 ---
 
 ## Architecture
 
-Rhizome is built on [LangGraph](https://github.com/langchain-ai/langgraph) and organized around five top-level workflows:
+Rhizome is the backend engine in a three-repo system:
 
-| Workflow | Description |
+| Repo | Role |
 |---|---|
-| **Garden Profiling** | Onboarding and ongoing updates to the garden layout and plant inventory |
-| **Project Management** | Planning, iterating, and task creation for scoped gardening projects |
-| **Task Management** | Daily triage and prioritization across all active projects |
-| **Reactive Monitoring** | Weather and pest alerts that trigger proactive recommendations |
+| **rhizome** | Agent and domain engine (this repo) |
+| **verdant** | React frontend |
+| **fairlead** | Resource router — inference routing, agent worker pool, session failover |
 
-Projects are the central organizing unit — plant selection and seed scheduling are sub-workflows of a project lifecycle (`planning → active → maintaining → paused → complete`), not standalone features.
+Rhizome connects to Fairlead through a standard OpenAI-compatible endpoint configured in `agent/model.py`. The repos are independently deployable.
 
-For full architecture documentation see [`docs/design.md`](docs/design.md).
+See [`docs/architecture/overview.md`](docs/architecture/overview.md) for the full architecture.
 
 ---
 
 ## Tech stack
 
 - **Agent framework:** LangGraph (Python)
-- **LLM:** Gemini (via `langchain-google-genai`)
-- **Database:** Postgres with pgvector (structured data + embeddings in one place)
-- **External APIs:** Open-Meteo (weather), Perenual (plant data), iNaturalist (pest reports), USDA PLANTS (climate zones)
+- **LLM:** Gemini via `langchain-google-genai`; multi-provider abstraction in progress
+- **Database:** SQLite (current) → Postgres with pgvector (target)
+- **Weather:** Open-Meteo (no API key required)
+- **Planned:** Perenual (plant data), iNaturalist (pest observations)
 
 ---
 
-## Project status
+## Getting started
 
-This repository is in active design. The current focus is:
-
-- [ ] Global state object and persistence architecture
-- [ ] Human-in-the-loop interrupt pattern (needed for the planning negotiation loop)
-- [ ] Garden Profiling workflow (first workflow to implement)
-
-See [`docs/design.md`](docs/design.md) for the full design document including open problems and build order.
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env        # add your GOOGLE_API_KEY
+python main.py              # start the CLI
+python -m pytest            # run the test suite
+```
 
 ---
 

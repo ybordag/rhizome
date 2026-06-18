@@ -20,7 +20,7 @@ from db.models import (
     Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant
 )
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 VALID_PROJECT_STATUSES = {"planning", "active", "maintaining", "paused", "complete"}
 
@@ -684,7 +684,7 @@ def remove_plant_from_project(project_id: str, plant_id: str, reason: Optional[s
         if not link:
             return "That plant is not currently active in this project."
 
-        link.removed_at = datetime.utcnow()
+        link.removed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if reason:
             link.notes = f"{link.notes or ''}\nRemoved: {reason}".strip()
         if project and plant:

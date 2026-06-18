@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 import json
 import uuid
@@ -45,7 +45,7 @@ class InteractionEnvelope:
     actions: list[InteractionAction] = field(default_factory=list)
     context: dict[str, Any] = field(default_factory=dict)
     requires_response: bool = False
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
     expires_at: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,7 +59,7 @@ class InteractionResolution:
     interaction_id: str
     action_id: str
     inputs: dict[str, Any] = field(default_factory=dict)
-    resolved_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    resolved_at: str = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
     actor: str = "user"
 
     def to_dict(self) -> dict[str, Any]:
@@ -205,7 +205,7 @@ def resolve_interaction_record(
     action_id: str,
     resolution_summary: Optional[str] = None,
 ) -> InteractionRecord:
-    record.resolved_at = datetime.utcnow()
+    record.resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
     record.resolution_action = action_id
     record.resolution_summary = resolution_summary
     record.status = infer_resolution_status(action_id)
@@ -226,7 +226,7 @@ def normalize_resolution(resolution: Any) -> InteractionResolution:
             interaction_id=resolution.get("interaction_id", ""),
             action_id=resolution.get("action_id", ""),
             inputs=resolution.get("inputs") or {},
-            resolved_at=resolution.get("resolved_at") or datetime.utcnow().isoformat(),
+            resolved_at=resolution.get("resolved_at") or datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             actor=resolution.get("actor") or "user",
         )
 

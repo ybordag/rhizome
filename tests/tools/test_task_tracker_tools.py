@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
+import pytest
+
 from agent.tools.activity import get_project_activity
 from agent.tools.planning import accept_project_proposal, save_project_proposal, update_project_brief
 from agent.tools.tracker import (
@@ -21,6 +25,11 @@ from agent.tools.tracker import (
 )
 from db.models import ActivityEvent, ProjectProposal, Task, TaskGenerationRun, TaskSeries
 from tests.support.factories import make_project, make_profile
+
+
+@pytest.fixture
+def future_date():
+    return (date.today() + timedelta(days=30)).isoformat()
 
 
 def _accept_plan(
@@ -122,7 +131,7 @@ def test_regeneration_supersedes_future_tasks_and_preserves_completed_history(db
     assert db_session.query(TaskGenerationRun).filter(TaskGenerationRun.project_id == project.id).count() == 2
 
 
-def test_due_and_blocked_queries_reflect_runtime_state_and_lifecycle_updates(db_session, patched_sessionlocal):
+def test_due_and_blocked_queries_reflect_runtime_state_and_lifecycle_updates(db_session, patched_sessionlocal, future_date):
     project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
     generate_project_tasks.invoke({"project_id": project.id})
 
@@ -142,7 +151,7 @@ def test_due_and_blocked_queries_reflect_runtime_state_and_lifecycle_updates(db_
 
     start_task.invoke({"task_id": sow_task.id, "notes": "Starting tray work."})
     complete_task.invoke({"task_id": sow_task.id, "actual_minutes": 25})
-    defer_task.invoke({"task_id": transplant_task.id, "deferred_until": "2026-06-10", "reason": "Waiting for weather."})
+    defer_task.invoke({"task_id": transplant_task.id, "deferred_until": future_date, "reason": "Waiting for weather."})
     due_after_defer = list_due_tasks.invoke({"project_id": project.id, "days_ahead": 7})
     explain = explain_task_blockers.invoke({"task_id": transplant_task.id})
     task_detail = get_task.invoke({"task_id": transplant_task.id})
@@ -226,7 +235,7 @@ def test_task_activity_events_are_queryable_and_generation_rolls_back_on_failure
     project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
 
     generated = generate_project_tasks.invoke({"project_id": project.id})
-    project_history = get_project_activity.invoke({"project_id": project.id})
+    project_history = get_project_activity.invoke({"project_id": project.id, "limit": 100})
     failed = generate_project_tasks.invoke({"project_id": "missing-project"})
 
     assert "Generated project tasks" in generated

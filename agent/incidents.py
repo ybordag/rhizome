@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from agent.activity_log import record_create_event, record_update_event, snapshot_model
@@ -298,7 +298,7 @@ def approve_treatment_plan(session, treatment_plan_id: str) -> TreatmentPlan:
         revision_id=revision.id,
         summary=f"Created treatment tasks for incident '{incident.summary}'.",
     )
-    approval_time = datetime.utcnow()
+    approval_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
     for step in plan.recommended_steps or []:
         due = approval_time + timedelta(days=int(step.get("days_from_approval", 0) or 0))

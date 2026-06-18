@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from agent.activity_log import (
@@ -206,7 +206,7 @@ def _find_trigger_event(
 
 def _timeline_dates(execution_spec: dict[str, Any]) -> dict[str, datetime]:
     windows = execution_spec.get("timing_windows") or {}
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     planning_start = _parse_date_value(windows.get("planning_start")) or now
     first_action = _parse_date_value(windows.get("expected_first_action_date")) or planning_start
     establishment = _parse_date_value(windows.get("expected_establishment_date")) or (first_action + timedelta(days=21))
@@ -906,7 +906,7 @@ def materialize_task_series(
     days_ahead: int = ROLLING_TASK_HORIZON_DAYS,
     project_id: Optional[str] = None,
 ) -> list[Task]:
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     horizon = now + timedelta(days=days_ahead)
     created: list[Task] = []
     series_list = list_materializable_series(session, now, days_ahead, project_id)
@@ -1150,7 +1150,7 @@ def generate_tasks_for_revision(
 
     materialized = materialize_task_series(
         session,
-        now=datetime.utcnow(),
+        now=datetime.now(timezone.utc).replace(tzinfo=None),
         days_ahead=ROLLING_TASK_HORIZON_DAYS,
         project_id=project_id,
     )
@@ -1176,7 +1176,7 @@ def build_due_task_view(
     days_ahead: int = 7,
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     horizon = now + timedelta(days=days_ahead)
     query = session.query(Task).filter(Task.status.notin_(["done", "skipped", "superseded"]))
     if project_id:

@@ -4,7 +4,7 @@ Persistent task-tracker tools for generated project work, recurring care, and li
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from langchain.tools import tool
@@ -221,7 +221,7 @@ def get_task(task_id: str) -> str:
         task = _task_or_error(session, task_id)
         detail = format_task_detail(session, task)
         blocked = compute_task_blocked_state(session, task)
-        urgency = compute_task_urgency(task, datetime.utcnow())
+        urgency = compute_task_urgency(task, datetime.now(timezone.utc).replace(tzinfo=None))
         return detail + f"\n  Computed urgency: {urgency}\n  Blocked: {blocked}"
     except Exception as e:
         print(f"[DEBUG] Failed to get task: {e}")
@@ -373,7 +373,7 @@ def complete_task(task_id: str, actual_minutes: Optional[int] = None, notes: Opt
         task = _task_or_error(session, task_id)
         before = snapshot_model(task)
         task.status = "done"
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if actual_minutes is not None:
             task.actual_minutes = actual_minutes
         if notes:

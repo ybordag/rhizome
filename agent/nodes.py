@@ -19,7 +19,8 @@ from agent.interactions import (
     resolve_interaction_record,
     stable_confirmation_source_id,
 )
-from agent.model import model
+from agent.model import get_model
+from agent.telemetry import emit_state_snapshot, emit_tool_completed, emit_tool_started, start_span
 from agent.state import GardenState
 from agent.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
 from agent.triage import build_triage_snapshot, format_triage_snapshot
@@ -28,7 +29,7 @@ from agent.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
 from db.models import GardenProfile, InteractionRecord, TreatmentPlan
 
-model_with_tools = model.bind_tools(tools)
+model_with_tools = get_model().bind_tools(tools)
 
 DESTRUCTIVE_TOOLS = {
     "delete_project", "delete_bed", "delete_plant", "remove_container",
@@ -186,6 +187,15 @@ def triage_reasoner(state: GardenState):
     session = SessionLocal()
     try:
         snapshot = build_triage_snapshot(session, opener=opener or "hi", timezone=DEFAULT_TIMEZONE)
+        emit_state_snapshot(
+            "triage_snapshot",
+            payload={
+                "snapshot_id": snapshot.id,
+                "urgent_count": len(snapshot.urgent_task_ids or []),
+                "recommended_count": len(snapshot.recommended_task_ids or []),
+            },
+            tags=["triage"],
+        )
         triage_interaction = build_triage_view_interaction(session, snapshot)
         record = record_interaction_summary(
             session,
@@ -259,9 +269,10 @@ def llm_call(state: GardenState):
         triage_context=triage_text,
         interaction_context=interaction_text,
     )
-    response = model_with_tools.invoke(
-        [SystemMessage(content=system_prompt)] + state["messages"]
-    )
+    with start_span("rhizome.llm_call", {"rhizome.model": "primary"}):
+        response = model_with_tools.invoke(
+            [SystemMessage(content=system_prompt)] + state["messages"]
+        )
     return {"messages": [response]}
 
 def tool_node(state: GardenState):
@@ -269,15 +280,23 @@ def tool_node(state: GardenState):
 
     result = []
     for tool_call in state["messages"][-1].tool_calls:
-        tool = tools_by_name.get(tool_call["name"])
+        tool_name = tool_call["name"]
+        tool = tools_by_name.get(tool_name)
         if tool is None:
             available = ", ".join(sorted(tools_by_name))
             observation = (
-                f"Unknown tool '{tool_call['name']}'. "
+                f"Unknown tool '{tool_name}'. "
                 f"Use one of the registered tools instead: {available}"
             )
+            emit_tool_completed(tool_name, success=False, error="unknown tool")
         else:
-            observation = tool.invoke(tool_call["args"])
+            emit_tool_started(tool_name, payload={"args": tool_call["args"]})
+            try:
+                observation = tool.invoke(tool_call["args"])
+                emit_tool_completed(tool_name, success=True)
+            except Exception as e:
+                observation = f"Tool '{tool_name}' raised an unexpected error: {e}"
+                emit_tool_completed(tool_name, success=False, error=str(e))
         result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
     return {"messages": result}
 
@@ -407,7 +426,23 @@ def interaction_node(state: GardenState):
             envelope["context"]["interaction_record_id"] = record.id
             session.commit()
 
+        emit_state_snapshot(
+            "interaction_requested",
+            payload={
+                "source_type": source_type,
+                "interaction_type": envelope.get("interaction_type"),
+            },
+            tags=["interaction"],
+        )
         resolution = normalize_resolution(interrupt(envelope))
+        emit_state_snapshot(
+            "interaction_resolved",
+            payload={
+                "source_type": source_type,
+                "action_id": resolution.action_id,
+            },
+            tags=["interaction"],
+        )
         action_id = resolution.action_id
 
         if destructive_calls:

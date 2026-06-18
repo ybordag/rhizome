@@ -4,7 +4,7 @@ from datetime import datetime, timezone as dt_timezone
 from typing import Any, Optional
 
 from agent.activity_log import record_create_event
-from agent.model import model
+from agent.model import get_triage_model
 from agent.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
 from agent.tracker import build_due_task_view, compute_task_urgency
 from agent.weather import evaluate_weather_task_impacts, get_latest_weather_snapshot
@@ -14,7 +14,7 @@ from langchain.messages import HumanMessage, SystemMessage
 
 TRIAGE_SECTIONS = ("Urgent", "Routine", "Project Work")
 EMERGENCY_TITLE_TERMS = ("treat", "spray", "weed", "protect", "cover", "shield", "respond")
-triage_summary_model = model
+triage_summary_model = get_triage_model()
 
 
 def _task_matches_project_focus(task: Task, focus_project_id: Optional[str]) -> bool:

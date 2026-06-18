@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from db.models import (
@@ -409,7 +409,7 @@ def estimate_plan_cost(plan_input: dict[str, Any]) -> dict[str, Any]:
 
 def estimate_plan_timeline(plan_input: dict[str, Any]) -> dict[str, Any]:
     plants = [_normalize_plant(plant) for plant in plan_input.get("selected_plants", [])]
-    planning_start = parse_optional_date(plan_input.get("target_start"), "target_start") or datetime.utcnow()
+    planning_start = parse_optional_date(plan_input.get("target_start"), "target_start") or datetime.now(timezone.utc).replace(tzinfo=None)
     preferred_completion = parse_optional_date(plan_input.get("target_completion"), "target_completion")
     max_establishment_weeks = max((plant["establishment_weeks"] for plant in plants), default=6)
     first_action = planning_start
@@ -462,7 +462,7 @@ def check_plan_feasibility(plan_input: dict[str, Any]) -> dict[str, Any]:
     locations = [_normalize_location(location) for location in plan_input.get("selected_locations", [])]
     budget_cap = plan_input.get("budget_cap")
     target_completion = parse_optional_date(plan_input.get("target_completion"), "target_completion")
-    target_start = parse_optional_date(plan_input.get("target_start"), "target_start") or datetime.utcnow()
+    target_start = parse_optional_date(plan_input.get("target_start"), "target_start") or datetime.now(timezone.utc).replace(tzinfo=None)
     tray_slots = int(plan_input.get("tray_slots", 0) or 0)
     tray_capacity = int(plan_input.get("tray_indoor_capacity", 0) or 0)
 

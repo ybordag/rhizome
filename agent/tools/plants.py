@@ -13,7 +13,7 @@ from agent.activity_log import (
     snapshot_model,
 )
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from db.database import SessionLocal
 from db.models import GardenProfile, GardeningProject, Bed, Container, Plant, PlantBatch, ProjectPlant
 
@@ -146,7 +146,7 @@ def add_plant(
         if not profile:
             return "Error: no garden profile found."
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # parse explicit dates
         parsed_sow = _parse_optional_datetime(sow_date, "sow_date")
@@ -323,7 +323,7 @@ def remove_plant(plant_id: str, reason: Optional[str] = None) -> str:
 
         before = snapshot_model(plant)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         timestamp = now.strftime("%B %d, %Y")
 
         # close out active project links
@@ -524,7 +524,7 @@ def batch_add_plant_type(
             if not project:
                 return f"No project found with id {project_id}."
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         parsed_sow = _parse_optional_datetime(sow_date, "sow_date")
         parsed_red_cup = _parse_optional_datetime(red_cup_date, "red_cup_date")
@@ -764,7 +764,7 @@ def batch_update_plants(
         parsed_transplant = _parse_optional_datetime(transplant_date, "transplant_date")
         parsed_last_fertilized = _parse_optional_datetime(last_fertilized_at, "last_fertilized_at")
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         timestamp = now.strftime("%B %d, %Y")
 
         for plant in plants:
@@ -958,7 +958,7 @@ def batch_remove_plants(
             if batch:
                 batch_before[batch_id] = snapshot_model(batch)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         timestamp = now.strftime("%B %d, %Y")
 
         for plant in plants:
@@ -1106,7 +1106,7 @@ def delete_plant(plant_id: str) -> str:
             ).first()
             if batch:
                 batch_before = snapshot_model(batch)
-                timestamp = datetime.utcnow().strftime("%B %d, %Y")
+                timestamp = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%B %d, %Y")
                 batch.notes = (
                     f"{batch.notes or ''}\n"
                     f"{timestamp}: 1 plant record deleted (correction)."
