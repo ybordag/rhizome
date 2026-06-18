@@ -19,10 +19,13 @@ from agent.tools.garden.plants import (
 from agent.tools.garden.search import search_garden, list_by_location
 from agent.tools.operations.activity import (
     get_project_activity,
+    list_project_activity,
     get_plant_activity,
     get_bed_activity,
     get_container_activity,
     get_batch_activity,
+    get_task_activity,
+    get_incident_activity,
     list_recent_activity,
 )
 from agent.tools.projects.planning import (
@@ -126,10 +129,13 @@ tools = [
     search_garden,
     list_by_location,
     get_project_activity,
+    list_project_activity,
     get_plant_activity,
     get_bed_activity,
     get_container_activity,
     get_batch_activity,
+    get_task_activity,
+    get_incident_activity,
     list_recent_activity,
     get_or_create_project_brief,
     update_project_brief,

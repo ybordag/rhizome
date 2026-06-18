@@ -532,6 +532,10 @@ def list_recent_activity_entries(
     *,
     project_id: Optional[str] = None,
     subject_type: Optional[str] = None,
+    event_type: Optional[str] = None,
+    category: Optional[str] = None,
+    since: Optional[datetime] = None,
+    before_timestamp: Optional[datetime] = None,
     limit: int = 50,
 ):
     query = session.query(ActivityEvent)
@@ -543,7 +547,37 @@ def list_recent_activity_entries(
             .filter(ActivitySubject.subject_type == subject_type)
             .distinct()
         )
+    if event_type:
+        query = query.filter(ActivityEvent.event_type == event_type)
+    if category:
+        query = query.filter(ActivityEvent.category == category)
+    if since:
+        query = query.filter(ActivityEvent.created_at >= since)
+    if before_timestamp:
+        query = query.filter(ActivityEvent.created_at < before_timestamp)
     return query.order_by(ActivityEvent.created_at.desc()).limit(limit).all()
+
+
+def get_activity_for_subject_in_project(
+    session,
+    *,
+    project_id: str,
+    category: Optional[str] = None,
+    event_type: Optional[str] = None,
+    since: Optional[datetime] = None,
+    before_timestamp: Optional[datetime] = None,
+    limit: int = 50,
+):
+    """Cross-object project timeline: all events with project_id, with full filtering."""
+    return list_recent_activity_entries(
+        session,
+        project_id=project_id,
+        event_type=event_type,
+        category=category,
+        since=since,
+        before_timestamp=before_timestamp,
+        limit=limit,
+    )
 
 
 def format_activity_feed(session, *, title: str, events: list[ActivityEvent]) -> str:

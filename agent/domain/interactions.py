@@ -6,6 +6,7 @@ from typing import Any, Optional
 import json
 import uuid
 
+from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_activity_event
 from db.models import (
     InteractionRecord,
     ProjectProposal,
@@ -210,6 +211,21 @@ def resolve_interaction_record(
     record.resolution_summary = resolution_summary
     record.status = infer_resolution_status(action_id)
     session.flush()
+
+    status = infer_resolution_status(action_id)
+    summary = resolution_summary or f"Interaction '{record.interaction_type}' {status} with action '{action_id}'."
+    record_activity_event(
+        session,
+        actor_type="user",
+        actor_label="user",
+        event_type="interaction_resolved",
+        category="interaction",
+        summary=summary,
+        project_id=record.project_id,
+        metadata={"action_id": action_id, "interaction_type": record.interaction_type, "status": status},
+        subjects=[{"subject_type": "interaction_record", "subject_id": record.id, "role": "primary"}],
+    )
+
     return record
 
 
