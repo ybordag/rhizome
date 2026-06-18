@@ -12,14 +12,18 @@ from langchain.tools import tool
 from agent.activity_log import record_update_event, snapshot_model
 from agent.care import apply_task_completion_side_effects
 from agent.tracker import (
+    VALID_TASK_PRIORITIES,
     VALID_TASK_STATUSES,
     build_due_task_view,
+    cascade_defer_to_dependents,
     compute_task_blocked_state,
     compute_task_urgency,
+    format_daily_priority_tasks,
     format_due_tasks,
     format_task_detail,
     format_task_series,
     generate_tasks_for_revision,
+    get_daily_priority_tasks as _get_daily_priority_tasks,
     materialize_task_series,
 )
 from db.database import SessionLocal
@@ -371,6 +375,8 @@ def complete_task(task_id: str, actual_minutes: Optional[int] = None, notes: Opt
         if error:
             return error
         task = _task_or_error(session, task_id)
+        if task.status in {"done", "skipped", "superseded"}:
+            return f"Task '{task.title}' cannot be completed from status '{task.status}'."
         before = snapshot_model(task)
         task.status = "done"
         task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -439,6 +445,8 @@ def skip_task(task_id: str, reason: str) -> str:
     session = SessionLocal()
     try:
         task = _task_or_error(session, task_id)
+        if task.status in {"done", "superseded"}:
+            return f"Task '{task.title}' cannot be skipped from status '{task.status}'."
         before = snapshot_model(task)
         task.status = "skipped"
         task.notes = f"{task.notes}\nSkip reason: {reason}".strip() if task.notes else f"Skip reason: {reason}"
@@ -466,10 +474,12 @@ def skip_task(task_id: str, reason: str) -> str:
 
 @tool
 def defer_task(task_id: str, deferred_until: str, reason: Optional[str] = None) -> str:
-    """Defer a task until a later date."""
+    """Defer a task until a later date, pushing dependent tasks' earliest start forward."""
     session = SessionLocal()
     try:
         task = _task_or_error(session, task_id)
+        if task.status in {"done", "superseded"}:
+            return f"Task '{task.title}' cannot be deferred from status '{task.status}'."
         defer_dt = _parse_date(deferred_until, "deferred_until")
         before = snapshot_model(task)
         task.status = "deferred"
@@ -488,8 +498,10 @@ def defer_task(task_id: str, deferred_until: str, reason: Optional[str] = None) 
             metadata={"reason": reason, "deferred_until": defer_dt.isoformat()},
             subjects=[{"subject_type": "project", "subject_id": task.project_id, "role": "affected"}, {"subject_type": "task", "subject_id": task.id, "role": "primary"}],
         )
+        pushed = cascade_defer_to_dependents(session, task=task, deferred_until=defer_dt)
         session.commit()
-        return f"Deferred task '{task.title}' until {defer_dt.date().isoformat()}."
+        suffix = f" Pushed earliest start for: {', '.join(pushed)}." if pushed else ""
+        return f"Deferred task '{task.title}' until {defer_dt.date().isoformat()}.{suffix}"
     except Exception as e:
         session.rollback()
         print(f"[DEBUG] Failed to defer task: {e}")
@@ -514,6 +526,7 @@ def update_task(
     reversible: Optional[bool] = None,
     what_happens_if_skipped: Optional[str] = None,
     what_happens_if_delayed: Optional[str] = None,
+    priority: Optional[str] = None,
 ) -> str:
     """Update editable task fields without regenerating the full project task graph."""
     session = SessionLocal()
@@ -524,6 +537,8 @@ def update_task(
             return error
         if status is not None and status not in VALID_TASK_STATUSES:
             return f"Invalid task status '{status}'. Must be one of: {', '.join(sorted(VALID_TASK_STATUSES))}."
+        if priority is not None and priority not in VALID_TASK_PRIORITIES:
+            return f"Invalid priority '{priority}'. Must be one of: {', '.join(sorted(VALID_TASK_PRIORITIES))}."
 
         before = snapshot_model(task)
         if title is not None:
@@ -552,6 +567,8 @@ def update_task(
             task.what_happens_if_skipped = what_happens_if_skipped
         if what_happens_if_delayed is not None:
             task.what_happens_if_delayed = what_happens_if_delayed
+        if priority is not None:
+            task.priority = priority
         task.is_user_modified = True
 
         event = record_update_event(
@@ -574,6 +591,22 @@ def update_task(
         session.rollback()
         print(f"[DEBUG] Failed to update task: {e}")
         return f"Failed to update task: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
+def get_daily_priority_tasks(project_id: Optional[str] = None, limit: int = 10) -> str:
+    """Return the top-N tasks ranked by daily priority score across urgency, type, priority, and triage alignment."""
+    session = SessionLocal()
+    try:
+        if limit < 1 or limit > 50:
+            return "limit must be between 1 and 50."
+        rows = _get_daily_priority_tasks(session, limit=limit, project_id=project_id)
+        return format_daily_priority_tasks(rows)
+    except Exception as e:
+        print(f"[DEBUG] Failed to get daily priority tasks: {e}")
+        return f"Failed to get daily priority tasks: {str(e)}"
     finally:
         session.close()
 

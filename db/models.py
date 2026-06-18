@@ -293,6 +293,7 @@ class Task(Base):
         Index("ix_task_status", "status"),
         Index("ix_task_scheduled_date", "scheduled_date"),
         Index("ix_task_deadline", "deadline"),
+        Index("ix_task_priority", "priority"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -326,6 +327,7 @@ class Task(Base):
     event_anchor_subject_id = Column(String, nullable=True)
     event_anchor_offset_days = Column(Integer, nullable=True)
     is_user_modified = Column(Boolean, default=False)
+    priority = Column(String, nullable=True, default="normal")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
@@ -338,7 +340,7 @@ class Task(Base):
         timing = " | ".join(date_bits) if date_bits else "no date set"
         return (
             f"[Task] {self.title} (id: {self.id})\n"
-            f"  Type: {self.type} | Status: {self.status}\n"
+            f"  Type: {self.type} | Status: {self.status} | Priority: {self.priority or 'normal'}\n"
             f"  Timing: {timing}\n"
             f"  Estimated: {self.estimated_minutes} minutes"
         )
@@ -399,6 +401,9 @@ class TaskSeries(Base):
 
 class Bed(Base):
     __tablename__ = "bed"
+    __table_args__ = (
+        Index("ix_bed_user_id", "user_id"),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(Integer, nullable=False)
@@ -444,6 +449,9 @@ class Bed(Base):
 
 class Container(Base):
     __tablename__ = "container"
+    __table_args__ = (
+        Index("ix_container_user_id", "user_id"),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(Integer, nullable=False)
@@ -487,24 +495,36 @@ class Container(Base):
 
 class ProjectBed(Base):
     __tablename__ = "project_bed"
+    __table_args__ = (
+        Index("ix_project_bed_project_id", "project_id"),
+        Index("ix_project_bed_unique", "project_id", "bed_id", unique=True),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
     bed_id = Column(String, ForeignKey("bed.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class ProjectContainer(Base):
     __tablename__ = "project_container"
+    __table_args__ = (
+        Index("ix_project_container_project_id", "project_id"),
+        Index("ix_project_container_unique", "project_id", "container_id", unique=True),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
     container_id = Column(String, ForeignKey("container.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class Plant(Base):
     __tablename__ = "plant"
+    __table_args__ = (
+        Index("ix_plant_user_id", "user_id"),
+        Index("ix_plant_status", "status"),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=False)
@@ -601,6 +621,10 @@ class Plant(Base):
 
 class PlantBatch(Base):
     __tablename__ = "plant_batch"
+    __table_args__ = (
+        Index("ix_plant_batch_user_id", "user_id"),
+        Index("ix_plant_batch_project_id", "project_id"),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(Integer, nullable=False)
@@ -653,11 +677,15 @@ class PlantBatch(Base):
     
 class ProjectPlant(Base):
     __tablename__ = "project_plant"
+    __table_args__ = (
+        Index("ix_project_plant_project_id", "project_id"),
+        Index("ix_project_plant_plant_id", "plant_id"),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
     plant_id = Column(String, ForeignKey("plant.id"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     removed_at = Column(DateTime, nullable=True)  # when decoupled, not deleted
     notes = Column(Text, nullable=True)           # why it was added/removed
 
@@ -681,6 +709,7 @@ class ActivityEvent(Base):
         Index("ix_activity_event_created_at", "created_at"),
         Index("ix_activity_event_project_id", "project_id"),
         Index("ix_activity_event_event_type", "event_type"),
+        Index("ix_activity_event_revision_id", "revision_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -699,7 +728,7 @@ class ActivityEvent(Base):
     caused_by_event_id = Column(String, ForeignKey("activity_event.id"), nullable=True)
     conversation_id = Column(String, ForeignKey("conversation.id"), nullable=True)
     thread_id = Column(String, nullable=True)
-    revision_id = Column(String, nullable=True)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=True)
 
     event_metadata = Column("metadata", JSON, nullable=True)
 

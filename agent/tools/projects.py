@@ -5,6 +5,7 @@ Tools must return strings — the LLM reads tool output as text.
 """
 
 from langchain.tools import tool
+from sqlalchemy import func
 from agent.activity_log import (
     DEFAULT_ACTOR_LABEL,
     DEFAULT_ACTOR_TYPE,
@@ -16,8 +17,9 @@ from agent.activity_log import (
 )
 from db.database import SessionLocal, current_user_id
 from db.models import (
-    GardenProfile, GardeningProject, Bed, Container, 
-    Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant
+    GardenProfile, GardeningProject, Bed, Container,
+    Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
+    ProjectExecutionSpec, ProjectRevision, Task,
 )
 from typing import Optional
 from datetime import datetime, timezone
@@ -256,19 +258,30 @@ def get_project(project_id: str) -> str:
         lines += ["", "Containers:"]
         lines += [f"  {c.to_detailed()}" for c in containers] or ["  none"]
 
+        # Build location name lookups from already-loaded project locations, plus
+        # any containers/beds referenced by plants but not assigned to the project.
+        loaded_container_ids = {c.id for c in containers}
+        loaded_bed_ids = {b.id for b in beds}
+        extra_container_ids = {p.container_id for p in plants if p.container_id} - loaded_container_ids
+        extra_bed_ids = {p.bed_id for p in plants if p.bed_id} - loaded_bed_ids
+        extra_containers = (
+            session.query(Container).filter(Container.id.in_(extra_container_ids)).all()
+            if extra_container_ids else []
+        )
+        extra_beds = (
+            session.query(Bed).filter(Bed.id.in_(extra_bed_ids)).all()
+            if extra_bed_ids else []
+        )
+        container_name_by_id = {c.id: c.name for c in containers + extra_containers}
+        bed_name_by_id = {b.id: b.name for b in beds + extra_beds}
+
         lines += ["", "Plants:"]
         for p in plants:
-            location_name = None
-            if p.container_id:
-                container = session.query(Container).filter(
-                    Container.id == p.container_id
-                ).first()
-                location_name = container.name if container else None
-            elif p.bed_id:
-                bed = session.query(Bed).filter(
-                    Bed.id == p.bed_id
-                ).first()
-                location_name = bed.name if bed else None
+            location_name = (
+                container_name_by_id.get(p.container_id) if p.container_id
+                else bed_name_by_id.get(p.bed_id) if p.bed_id
+                else None
+            )
             lines.append(f"  {p.to_detailed(location_name=location_name)}")
 
         if not plants:
@@ -276,13 +289,19 @@ def get_project(project_id: str) -> str:
 
         lines += ["", "Batches:"]
         if batches:
+            batch_ids = [b.id for b in batches]
+            batch_plant_rows = (
+                session.query(Plant.batch_id, Plant.status, func.count(Plant.id))
+                .filter(Plant.batch_id.in_(batch_ids))
+                .group_by(Plant.batch_id, Plant.status)
+                .all()
+            )
+            batch_status_map: dict[str, dict[str, int]] = {}
+            for batch_id, plant_status, count in batch_plant_rows:
+                batch_status_map.setdefault(batch_id, {})[plant_status] = count
+
             for b in batches:
-                plants_in_batch = session.query(Plant).filter(
-                    Plant.batch_id == b.id
-                ).all()
-                count_dict = {}
-                for p in plants_in_batch:
-                    count_dict[p.status] = count_dict.get(p.status, 0) + 1
+                count_dict = batch_status_map.get(b.id, {})
                 status_summary = " | ".join(
                     f"{s}: {c}" for s, c in sorted(count_dict.items())
                 ) or "none recorded"
@@ -328,28 +347,40 @@ def list_projects(status: Optional[str] = None) -> str:
         if not projects:
             return "No projects found."
 
+        project_ids = [p.id for p in projects]
+
+        plant_counts = dict(
+            session.query(ProjectPlant.project_id, func.count(ProjectPlant.id))
+            .filter(ProjectPlant.project_id.in_(project_ids), ProjectPlant.removed_at == None)
+            .group_by(ProjectPlant.project_id)
+            .all()
+        )
+        bed_counts = dict(
+            session.query(ProjectBed.project_id, func.count(ProjectBed.id))
+            .filter(ProjectBed.project_id.in_(project_ids))
+            .group_by(ProjectBed.project_id)
+            .all()
+        )
+        container_counts = dict(
+            session.query(ProjectContainer.project_id, func.count(ProjectContainer.id))
+            .filter(ProjectContainer.project_id.in_(project_ids))
+            .group_by(ProjectContainer.project_id)
+            .all()
+        )
+        batch_counts = dict(
+            session.query(PlantBatch.project_id, func.count(PlantBatch.id))
+            .filter(PlantBatch.project_id.in_(project_ids))
+            .group_by(PlantBatch.project_id)
+            .all()
+        )
+
         result = []
         for p in projects:
-            plant_count = session.query(Plant).join(
-                ProjectPlant, Plant.id == ProjectPlant.plant_id
-            ).filter(
-                ProjectPlant.project_id == p.id,
-                ProjectPlant.removed_at == None
-            ).count()
-            bed_count = session.query(ProjectBed).filter(
-                ProjectBed.project_id == p.id
-            ).count()
-            container_count = session.query(ProjectContainer).filter(
-                ProjectContainer.project_id == p.id
-            ).count()
-            batch_count = session.query(PlantBatch).filter(
-                PlantBatch.project_id == p.id
-            ).count()
             result.append(p.to_summary(
-                plant_count=plant_count,
-                bed_count=bed_count,
-                container_count=container_count,
-                batch_count=batch_count
+                plant_count=plant_counts.get(p.id, 0),
+                bed_count=bed_counts.get(p.id, 0),
+                container_count=container_counts.get(p.id, 0),
+                batch_count=batch_counts.get(p.id, 0),
             ))
         return "\n\n".join(result)
     except Exception as e:
@@ -507,6 +538,175 @@ def assign_container_to_project(project_id: str, container_id: str) -> str:
         session.rollback()
         print(f"[DEBUG] Failed to assign container: {e}")
         return f"Failed to assign container: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
+def assign_beds_to_project(project_id: str, bed_ids: list[str]) -> str:
+    """
+    Assign multiple beds to a project in a single call. Skips any bed that
+    is already assigned to this project or conflicts with another active project,
+    and reports each outcome. Use instead of repeated assign_bed_to_project
+    calls when the user confirms several beds at once.
+    """
+    session = SessionLocal()
+    try:
+        if not bed_ids:
+            return "No bed IDs provided."
+
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id
+        ).first()
+        if not project:
+            return f"No project found with id {project_id}."
+
+        beds_by_id = {
+            b.id: b
+            for b in session.query(Bed).filter(Bed.id.in_(bed_ids)).all()
+        }
+        conflict_map = dict(
+            session.query(ProjectBed.bed_id, GardeningProject.name)
+            .join(GardeningProject, ProjectBed.project_id == GardeningProject.id)
+            .filter(
+                ProjectBed.bed_id.in_(bed_ids),
+                GardeningProject.status.in_(["planning", "active"]),
+                GardeningProject.id != project_id,
+            )
+            .all()
+        )
+        already_assigned = {
+            pb.bed_id
+            for pb in session.query(ProjectBed).filter(
+                ProjectBed.project_id == project_id,
+                ProjectBed.bed_id.in_(bed_ids),
+            ).all()
+        }
+
+        assigned, skipped = [], []
+        for bed_id in bed_ids:
+            bed = beds_by_id.get(bed_id)
+            if not bed:
+                skipped.append(f"  - {bed_id}: not found")
+                continue
+            if bed_id in conflict_map:
+                skipped.append(f"  - '{bed.name}': in use by '{conflict_map[bed_id]}'")
+                continue
+            if bed_id in already_assigned:
+                skipped.append(f"  - '{bed.name}': already assigned")
+                continue
+            session.add(ProjectBed(project_id=project_id, bed_id=bed_id))
+            record_activity_event(
+                session,
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+                event_type="project_bed_assigned",
+                category="project",
+                summary=f"Assigned bed '{bed.name}' to project '{project.name}'.",
+                project_id=project.id,
+                subjects=[
+                    {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                    {"subject_type": "bed", "subject_id": bed.id, "role": "affected"},
+                ],
+            )
+            assigned.append(f"  - '{bed.name}'")
+
+        session.commit()
+        lines = [f"Assigned {len(assigned)} bed(s) to '{project.name}'."]
+        if assigned:
+            lines += ["Assigned:"] + assigned
+        if skipped:
+            lines += ["Skipped:"] + skipped
+        return "\n".join(lines)
+    except Exception as e:
+        session.rollback()
+        print(f"[DEBUG] Failed to bulk-assign beds: {e}")
+        return f"Failed to assign beds: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
+def assign_containers_to_project(project_id: str, container_ids: list[str]) -> str:
+    """
+    Assign multiple containers to a project in a single call. Skips any
+    container already assigned to this project or conflicting with another
+    active project, and reports each outcome. Use instead of repeated
+    assign_container_to_project calls when the user confirms several
+    containers at once.
+    """
+    session = SessionLocal()
+    try:
+        if not container_ids:
+            return "No container IDs provided."
+
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id
+        ).first()
+        if not project:
+            return f"No project found with id {project_id}."
+
+        containers_by_id = {
+            c.id: c
+            for c in session.query(Container).filter(Container.id.in_(container_ids)).all()
+        }
+        conflict_map = dict(
+            session.query(ProjectContainer.container_id, GardeningProject.name)
+            .join(GardeningProject, ProjectContainer.project_id == GardeningProject.id)
+            .filter(
+                ProjectContainer.container_id.in_(container_ids),
+                GardeningProject.status.in_(["planning", "active"]),
+                GardeningProject.id != project_id,
+            )
+            .all()
+        )
+        already_assigned = {
+            pc.container_id
+            for pc in session.query(ProjectContainer).filter(
+                ProjectContainer.project_id == project_id,
+                ProjectContainer.container_id.in_(container_ids),
+            ).all()
+        }
+
+        assigned, skipped = [], []
+        for container_id in container_ids:
+            container = containers_by_id.get(container_id)
+            if not container:
+                skipped.append(f"  - {container_id}: not found")
+                continue
+            if container_id in conflict_map:
+                skipped.append(f"  - '{container.name}': in use by '{conflict_map[container_id]}'")
+                continue
+            if container_id in already_assigned:
+                skipped.append(f"  - '{container.name}': already assigned")
+                continue
+            session.add(ProjectContainer(project_id=project_id, container_id=container_id))
+            record_activity_event(
+                session,
+                actor_type=DEFAULT_ACTOR_TYPE,
+                actor_label=DEFAULT_ACTOR_LABEL,
+                event_type="project_container_assigned",
+                category="project",
+                summary=f"Assigned container '{container.name}' to project '{project.name}'.",
+                project_id=project.id,
+                subjects=[
+                    {"subject_type": "project", "subject_id": project.id, "role": "primary"},
+                    {"subject_type": "container", "subject_id": container.id, "role": "affected"},
+                ],
+            )
+            assigned.append(f"  - '{container.name}'")
+
+        session.commit()
+        lines = [f"Assigned {len(assigned)} container(s) to '{project.name}'."]
+        if assigned:
+            lines += ["Assigned:"] + assigned
+        if skipped:
+            lines += ["Skipped:"] + skipped
+        return "\n".join(lines)
+    except Exception as e:
+        session.rollback()
+        print(f"[DEBUG] Failed to bulk-assign containers: {e}")
+        return f"Failed to assign containers: {str(e)}"
     finally:
         session.close()
 
@@ -738,6 +938,20 @@ def delete_project(project_id: str) -> str:
         if not project:
             return f"No project found with id {project_id}."
 
+        # Block deletion if any non-superseded tasks exist — prevents orphaned task records.
+        # For finished projects use update_project(status='complete') instead.
+        active_task_count = (
+            session.query(Task)
+            .filter(Task.project_id == project_id, Task.status != "superseded")
+            .count()
+        )
+        if active_task_count:
+            return (
+                f"Cannot delete project '{project.name}' — it has {active_task_count} active task(s). "
+                "To close a completed project use update_project with status='complete'. "
+                "To force removal, first supersede tasks via regenerate_project_tasks."
+            )
+
         before = snapshot_model(project)
 
         # unlink plants from project
@@ -798,5 +1012,96 @@ def delete_project(project_id: str) -> str:
         session.rollback()
         print(f"[DEBUG] Failed to delete project: {e}")
         return f"Failed to delete project: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
+def get_project_progress(project_id: str) -> str:
+    """Show task completion progress, timeline status, and budget tracking for a project."""
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(GardeningProject.id == project_id).first()
+        if not project:
+            return f"No project found with id {project_id}."
+
+        revision = (
+            session.query(ProjectRevision)
+            .filter(ProjectRevision.project_id == project_id, ProjectRevision.status == "active")
+            .order_by(ProjectRevision.revision_number.desc())
+            .first()
+        )
+        spec = (
+            session.query(ProjectExecutionSpec)
+            .filter(
+                ProjectExecutionSpec.project_id == project_id,
+                ProjectExecutionSpec.status == "active",
+            )
+            .order_by(ProjectExecutionSpec.updated_at.desc())
+            .first()
+        ) if revision else None
+
+        all_tasks = (
+            session.query(Task)
+            .filter(Task.project_id == project_id, Task.status != "superseded")
+            .all()
+        )
+        leaf_tasks = [t for t in all_tasks if t.parent_task_id is not None]
+        total = len(leaf_tasks)
+        done = sum(1 for t in leaf_tasks if t.status == "done")
+        skipped = sum(1 for t in leaf_tasks if t.status == "skipped")
+        blocked = sum(1 for t in leaf_tasks if t.status == "blocked")
+        in_progress = sum(1 for t in leaf_tasks if t.status == "in_progress")
+        pct = round((done + skipped) / total * 100) if total else 0
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        lines = [
+            f"Progress: {project.name} ({project.status})",
+            f"",
+            f"Tasks: {done} done, {skipped} skipped, {in_progress} in progress, {blocked} blocked of {total} total ({pct}% complete)",
+        ]
+
+        if spec:
+            windows = spec.timing_windows or {}
+            start = windows.get("expected_first_action_date")
+            completion = windows.get("expected_completion_date")
+            if start and completion:
+                try:
+                    start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
+                    end_dt = datetime.fromisoformat(completion) if isinstance(completion, str) else completion
+                    total_days = max((end_dt - start_dt).days, 1)
+                    elapsed_days = max((now - start_dt).days, 0)
+                    schedule_pct = round(min(elapsed_days / total_days * 100, 100))
+                    days_remaining = max((end_dt - now).days, 0)
+                    on_track = pct >= schedule_pct - 10
+                    lines.append(f"Timeline: {schedule_pct}% of planned duration elapsed, {days_remaining} days remaining")
+                    lines.append(f"Schedule health: {'on track' if on_track else 'behind schedule'} (work {pct}% done, time {schedule_pct}% elapsed)")
+                except (ValueError, TypeError):
+                    pass
+
+        if revision:
+            plan = revision.approved_plan or {}
+            cost_estimate = plan.get("cost_estimate") or {}
+            budget_cap = project.budget_ceiling
+            estimated_cost = cost_estimate.get("total_estimated_cost")
+            if budget_cap and estimated_cost:
+                lines.append(f"Budget: ${estimated_cost:.0f} estimated of ${budget_cap:.0f} cap ({round(estimated_cost / budget_cap * 100)}% of budget)")
+
+        blocker_tasks = [t for t in leaf_tasks if t.status not in {"done", "skipped", "superseded", "deferred"}]
+        from agent.tracker import compute_task_urgency
+        critical_tasks = [
+            t for t in blocker_tasks
+            if compute_task_urgency(t, now) == "blocker"
+        ]
+        if critical_tasks:
+            lines.append(f"")
+            lines.append(f"Overdue/blocker tasks ({len(critical_tasks)}):")
+            for t in critical_tasks[:5]:
+                lines.append(f"  - {t.title} [{t.status}] | id={t.id}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"[DEBUG] Failed to get project progress: {e}")
+        return f"Failed to get project progress: {str(e)}"
     finally:
         session.close()

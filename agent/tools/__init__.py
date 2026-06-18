@@ -1,10 +1,12 @@
 # agent/tools/__init__.py
 from agent.tools.profile import get_garden_profile, update_garden_profile
 from agent.tools.projects import (
-    create_project, update_project, get_project, list_projects, 
-    assign_bed_to_project, assign_container_to_project, 
+    create_project, update_project, get_project, list_projects,
+    assign_bed_to_project, assign_container_to_project,
+    assign_beds_to_project, assign_containers_to_project,
     unassign_bed_from_project, unassign_container_from_project,
-    add_plant_to_project, remove_plant_from_project, delete_project)
+    add_plant_to_project, remove_plant_from_project, delete_project,
+    get_project_progress)
 from agent.tools.beds_containers import (
     list_beds, update_bed,
     list_containers, add_container, update_container, remove_container,
@@ -33,6 +35,7 @@ from agent.tools.planning import (
     list_candidate_plant_material,
     save_project_proposal,
     list_project_proposals,
+    get_project_proposal,
     accept_project_proposal,
     preview_project_schedule,
 )
@@ -52,6 +55,7 @@ from agent.tools.tracker import (
     defer_task,
     update_task,
     update_task_series,
+    get_daily_priority_tasks,
 )
 from agent.tools.weather import (
     refresh_weather_snapshot,
@@ -70,6 +74,8 @@ from agent.tools.care import (
     get_recent_care_history,
 )
 from agent.tools.incidents import (
+    list_incidents,
+    get_incident,
     report_incident,
     draft_treatment_plan,
     get_treatment_plan,
@@ -92,11 +98,14 @@ tools = [
     list_projects,
     assign_bed_to_project,
     assign_container_to_project,
+    assign_beds_to_project,
+    assign_containers_to_project,
     unassign_bed_from_project,
     unassign_container_from_project,
     add_plant_to_project,
     remove_plant_from_project,
     delete_project,
+    get_project_progress,
     list_beds,
     update_bed,
     list_containers,
@@ -131,6 +140,7 @@ tools = [
     list_candidate_plant_material,
     save_project_proposal,
     list_project_proposals,
+    get_project_proposal,
     accept_project_proposal,
     preview_project_schedule,
     generate_project_tasks,
@@ -148,6 +158,7 @@ tools = [
     defer_task,
     update_task,
     update_task_series,
+    get_daily_priority_tasks,
     refresh_weather_snapshot,
     get_latest_weather_snapshot,
     list_weather_impacted_tasks,
@@ -158,6 +169,8 @@ tools = [
     list_triage_recommendations,
     get_current_care_state,
     get_recent_care_history,
+    list_incidents,
+    get_incident,
     report_incident,
     draft_treatment_plan,
     get_treatment_plan,

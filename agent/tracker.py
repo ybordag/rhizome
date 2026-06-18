@@ -22,14 +22,27 @@ from db.models import (
     TaskDependency,
     TaskGenerationRun,
     TaskSeries,
+    TriageSnapshot,
 )
 
 
 VALID_TASK_SOURCE_TYPES = {"generated", "manual", "generated_override"}
 VALID_TASK_TYPES = {"milestone", "maintenance", "emergency", "opportunistic"}
 VALID_TASK_STATUSES = {"pending", "in_progress", "done", "skipped", "deferred", "blocked", "superseded"}
+VALID_TASK_PRIORITIES = {"critical", "high", "normal", "low"}
 VALID_TASK_RUN_TYPES = {"initial", "regeneration", "event_followup"}
 VALID_TASK_RUN_STATUSES = {"complete", "superseded", "failed"}
+
+_DEFAULT_PRIORITY_FOR_TYPE: dict[str, str] = {
+    "milestone": "high",
+    "maintenance": "normal",
+    "emergency": "critical",
+    "opportunistic": "low",
+}
+
+_URGENCY_SCORE: dict[str, int] = {"blocker": 100, "time_sensitive": 75, "scheduled": 40, "backlog": 10}
+_TYPE_SCORE: dict[str, int] = {"emergency": 50, "milestone": 20, "maintenance": 5, "opportunistic": 0}
+_PRIORITY_SCORE: dict[str, int] = {"critical": 60, "high": 30, "normal": 0, "low": -20}
 
 SECTION_LABELS = [
     "Setup",
@@ -646,7 +659,9 @@ def _create_task(
     event_anchor_subject_type: Optional[str] = None,
     event_anchor_subject_id: Optional[str] = None,
     event_anchor_offset_days: Optional[int] = None,
+    priority: Optional[str] = None,
 ) -> Task:
+    resolved_priority = priority or _DEFAULT_PRIORITY_FOR_TYPE.get(task_type, "normal")
     task = Task(
         project_id=project_id,
         revision_id=revision_id,
@@ -674,6 +689,7 @@ def _create_task(
         event_anchor_subject_type=event_anchor_subject_type,
         event_anchor_subject_id=event_anchor_subject_id,
         event_anchor_offset_days=event_anchor_offset_days,
+        priority=resolved_priority,
     )
     session.add(task)
     session.flush()
@@ -1089,6 +1105,7 @@ def generate_tasks_for_revision(
             event_anchor_subject_type=blueprint.get("event_anchor_subject_type"),
             event_anchor_subject_id=blueprint.get("event_anchor_subject_id"),
             event_anchor_offset_days=blueprint.get("event_anchor_offset_days"),
+            priority=blueprint.get("priority"),
         )
         tasks_by_key[blueprint["generator_key"]] = task
 
@@ -1253,6 +1270,7 @@ def format_task_detail(session, task: Task) -> str:
         f"  Deadline: {_date_only_iso(task.deadline)}",
         f"  Deferred until: {_date_only_iso(task.deferred_until)}",
         f"  Actual minutes: {task.actual_minutes if task.actual_minutes is not None else 'not set'}",
+        f"  Priority: {task.priority or 'normal'}",
         f"  User modified: {task.is_user_modified}",
     ]
     if blockers:
@@ -1262,5 +1280,114 @@ def format_task_detail(session, task: Task) -> str:
         lines.append(
             "  Event anchor: "
             f"{task.event_anchor_type} + {task.event_anchor_offset_days or 0} days"
+        )
+    return "\n".join(lines)
+
+
+def cascade_defer_to_dependents(
+    session,
+    *,
+    task: Task,
+    deferred_until: datetime,
+) -> list[str]:
+    """Push direct dependents' earliest_start forward when their blocker is deferred."""
+    dependents = (
+        session.query(Task)
+        .join(TaskDependency, Task.id == TaskDependency.blocked_task_id)
+        .filter(
+            TaskDependency.blocking_task_id == task.id,
+            Task.status.notin_(["done", "skipped", "superseded"]),
+        )
+        .all()
+    )
+    new_earliest = deferred_until + timedelta(days=1)
+    pushed = []
+    for dep in dependents:
+        if dep.earliest_start is None or dep.earliest_start < new_earliest:
+            dep.earliest_start = new_earliest
+            pushed.append(dep.title)
+    return pushed
+
+
+def get_daily_priority_tasks(
+    session,
+    *,
+    limit: int = 10,
+    project_id: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Score and rank active tasks to produce a daily work list."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+
+    latest_triage = (
+        session.query(TriageSnapshot)
+        .order_by(TriageSnapshot.created_at.desc())
+        .first()
+    )
+    triage_recommended: set[str] = set(latest_triage.recommended_task_ids or []) if latest_triage else set()
+
+    query = session.query(Task).filter(
+        Task.status.notin_(["done", "skipped", "superseded"]),
+    )
+    if project_id:
+        query = query.filter(Task.project_id == project_id)
+
+    unblocks_count: dict[str, int] = {}
+    for dep in session.query(TaskDependency).all():
+        unblocks_count[dep.blocking_task_id] = unblocks_count.get(dep.blocking_task_id, 0) + 1
+
+    scored = []
+    for task in query.all():
+        if _is_section_task(task):
+            continue
+        if task.status == "deferred" and task.deferred_until and task.deferred_until > now:
+            continue
+
+        urgency = compute_task_urgency(task, now)
+        blocked = compute_task_blocked_state(session, task)
+        score = (
+            _URGENCY_SCORE.get(urgency, 10)
+            + _TYPE_SCORE.get(task.type, 0)
+            + _PRIORITY_SCORE.get(task.priority or "normal", 0)
+            + (30 if task.id in unblocks_count else 0)
+            + (25 if task.id in triage_recommended else 0)
+            + (-20 if blocked else 0)
+        )
+        due_date = task.deadline or task.window_end or task.scheduled_date
+        scored.append({
+            "task": task,
+            "score": score,
+            "urgency": urgency,
+            "blocked": blocked,
+            "due_date": due_date,
+            "triage_recommended": task.id in triage_recommended,
+            "unblocks_count": unblocks_count.get(task.id, 0),
+        })
+
+    scored.sort(key=lambda r: r["score"], reverse=True)
+    return scored[:limit]
+
+
+def format_daily_priority_tasks(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "No active tasks found."
+    lines = ["Today's priority tasks:", ""]
+    for i, row in enumerate(rows, 1):
+        task = row["task"]
+        flags = []
+        if row["triage_recommended"]:
+            flags.append("triage")
+        if row["blocked"]:
+            flags.append("blocked")
+        if row["unblocks_count"]:
+            flags.append(f"unblocks {row['unblocks_count']}")
+        flag_str = f" | {', '.join(flags)}" if flags else ""
+        due = _date_only_iso(row["due_date"])
+        lines.append(
+            f"{i}. [{row['urgency']}] {task.title}"
+            f" | priority={task.priority or 'normal'}"
+            f" | score={row['score']}"
+            f" | due {due}"
+            f"{flag_str}"
         )
     return "\n".join(lines)

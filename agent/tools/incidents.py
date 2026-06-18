@@ -22,6 +22,76 @@ def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
 
 
 @tool
+def list_incidents(project_id: Optional[str] = None, status: Optional[str] = None, limit: int = 20) -> str:
+    """List incident reports, optionally filtered by project or status."""
+    session = SessionLocal()
+    try:
+        query = session.query(IncidentReport)
+        if project_id:
+            query = query.filter(IncidentReport.project_id == project_id)
+        if status:
+            query = query.filter(IncidentReport.status == status)
+        incidents = query.order_by(IncidentReport.created_at.desc()).limit(limit).all()
+        if not incidents:
+            return "No incidents found."
+        lines = ["Incidents:", ""]
+        for inc in incidents:
+            lines.append(
+                f"- [{inc.status}] {inc.incident_type}: {inc.summary}"
+                f" | id={inc.id} | severity={inc.severity or 'not set'}"
+                f" | {inc.created_at.date().isoformat()}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Failed to list incidents: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
+def get_incident(incident_id: str) -> str:
+    """Show full details for a specific incident report including subjects and treatment plan status."""
+    session = SessionLocal()
+    try:
+        incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
+        if not incident:
+            return f"No incident found with id {incident_id}."
+        subjects = (
+            session.query(IncidentSubject)
+            .filter(IncidentSubject.incident_id == incident_id)
+            .all()
+        )
+        plan = (
+            session.query(TreatmentPlan)
+            .filter(TreatmentPlan.incident_id == incident_id)
+            .order_by(TreatmentPlan.created_at.desc())
+            .first()
+        )
+        lines = [
+            f"Incident {incident.id}:",
+            f"- Type: {incident.incident_type} | Status: {incident.status}",
+            f"- Severity: {incident.severity or 'not set'}",
+            f"- Reported by: {incident.reported_by} on {incident.created_at.date().isoformat()}",
+            f"- Summary: {incident.summary}",
+        ]
+        if incident.notes:
+            lines.append(f"- Notes: {incident.notes}")
+        if subjects:
+            lines.append("- Affected:")
+            for s in subjects:
+                lines.append(f"  - {s.subject_type}: {s.subject_id} ({s.role or 'primary'})")
+        if plan:
+            lines.append(f"- Treatment plan: {plan.id} [{plan.status}]")
+        else:
+            lines.append("- Treatment plan: none drafted")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Failed to get incident: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
 def report_incident(
     incident_type: str,
     summary: str,

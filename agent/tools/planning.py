@@ -495,6 +495,26 @@ def list_project_proposals(project_id: str) -> str:
 
 
 @tool
+def get_project_proposal(project_id: str, proposal_id: str) -> str:
+    """Show full details for a specific project proposal."""
+    session = SessionLocal()
+    try:
+        proposal = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.id == proposal_id, ProjectProposal.project_id == project_id)
+            .first()
+        )
+        if not proposal:
+            return f"No proposal found with id {proposal_id} for project {project_id}."
+        return format_proposal(proposal)
+    except Exception as e:
+        print(f"[DEBUG] Failed to get project proposal: {e}")
+        return f"Failed to get project proposal: {str(e)}"
+    finally:
+        session.close()
+
+
+@tool
 def accept_project_proposal(project_id: str, proposal_id: str) -> str:
     """Accept a proposal, create a new active revision, and derive the normalized execution spec."""
     session = SessionLocal()

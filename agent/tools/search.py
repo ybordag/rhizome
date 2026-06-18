@@ -3,6 +3,7 @@
 Search tools for finding garden entities by name, location, or other attributes.
 """
 from langchain.tools import tool
+from sqlalchemy import func
 from db.database import SessionLocal, current_user_id
 from db.models import Plant, Bed, Container, ProjectPlant
 from typing import Optional
@@ -83,34 +84,46 @@ def search_garden(
                 plant_query = plant_query.filter(Plant.status == status)
 
             plants = plant_query.all()
-            for p in plants:
-                # resolve location name from container or bed
-                location_name = None
-                if p.container_id:
-                    container = session.query(Container).filter(
-                        Container.id == p.container_id
-                    ).first()
-                    location_name = container.name if container else None
-                elif p.bed_id:
-                    bed = session.query(Bed).filter(
-                        Bed.id == p.bed_id
-                    ).first()
-                    location_name = bed.name if bed else None
+            if plants:
+                plant_container_ids = {p.container_id for p in plants if p.container_id}
+                plant_bed_ids = {p.bed_id for p in plants if p.bed_id}
+                plant_ids = [p.id for p in plants]
 
-                # find which projects this plant is in
-                project_links = session.query(ProjectPlant).filter(
-                    ProjectPlant.plant_id == p.id,
-                    ProjectPlant.removed_at == None
-                ).all()
-                projects_text = (
-                    f"{len(project_links)} project(s)"
-                    if project_links else "no projects"
+                container_name_map = {
+                    c.id: c.name
+                    for c in session.query(Container)
+                    .filter(Container.id.in_(plant_container_ids))
+                    .all()
+                } if plant_container_ids else {}
+
+                bed_name_map = {
+                    b.id: b.name
+                    for b in session.query(Bed)
+                    .filter(Bed.id.in_(plant_bed_ids))
+                    .all()
+                } if plant_bed_ids else {}
+
+                project_link_counts = dict(
+                    session.query(ProjectPlant.plant_id, func.count(ProjectPlant.id))
+                    .filter(
+                        ProjectPlant.plant_id.in_(plant_ids),
+                        ProjectPlant.removed_at == None,
+                    )
+                    .group_by(ProjectPlant.plant_id)
+                    .all()
                 )
 
-                results.append(
-                    p.to_summary(location_name=location_name)
-                    + f"\n  In: {projects_text}"
-                )
+                for p in plants:
+                    location_name = (
+                        container_name_map.get(p.container_id) if p.container_id
+                        else bed_name_map.get(p.bed_id)
+                    )
+                    count = project_link_counts.get(p.id, 0)
+                    projects_text = f"{count} project(s)" if count else "no projects"
+                    results.append(
+                        p.to_summary(location_name=location_name)
+                        + f"\n  In: {projects_text}"
+                    )
 
         if not results:
             return f"No results found for '{query}'."
@@ -169,20 +182,14 @@ def list_by_location(location: str) -> str:
                 (Plant.bed_id.in_(bed_ids))
             ).all()
             if plants:
+                container_name_map = {c.id: c.name for c in containers}
+                bed_name_map = {b.id: b.name for b in beds}
                 results.append(f"\nPlants in {location}:")
                 for p in plants:
-                    # resolve location name
-                    location_name = None
-                    if p.container_id:
-                        container = session.query(Container).filter(
-                            Container.id == p.container_id
-                        ).first()
-                        location_name = container.name if container else None
-                    elif p.bed_id:
-                        bed = session.query(Bed).filter(
-                            Bed.id == p.bed_id
-                        ).first()
-                        location_name = bed.name if bed else None
+                    location_name = (
+                        container_name_map.get(p.container_id) if p.container_id
+                        else bed_name_map.get(p.bed_id)
+                    )
                     results.append(f"  {p.to_summary(location_name=location_name)}")
 
         if not results:
