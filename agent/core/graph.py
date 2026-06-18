@@ -1,7 +1,6 @@
 # agent/graph.py
-import sqlite3
+import os
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.sqlite import SqliteSaver
 from agent.core.state import GardenState
 from agent.core.nodes import (
     interaction_node,
@@ -15,8 +14,19 @@ from agent.core.nodes import (
     weather_context_loader,
 )
 
-conn = sqlite3.connect("rhizome_checkpoints.db", check_same_thread=False)
-checkpointer = SqliteSaver(conn)
+_database_url = os.environ.get("DATABASE_URL", "")
+_use_postgres = _database_url.startswith("postgresql") or _database_url.startswith("postgres")
+
+if _use_postgres:
+    from langgraph.checkpoint.postgres import PostgresSaver
+    # PostgresSaver expects a plain postgres:// URI — strip any SQLAlchemy driver prefix
+    _checkpoint_url = _database_url.replace("postgresql+psycopg2://", "postgresql://")
+    checkpointer = PostgresSaver.from_conn_string(_checkpoint_url)
+else:
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    _conn = sqlite3.connect("rhizome_checkpoints.db", check_same_thread=False)
+    checkpointer = SqliteSaver(_conn)
 
 def build_agent():
     builder = StateGraph(GardenState)

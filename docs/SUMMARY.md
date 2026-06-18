@@ -12,6 +12,7 @@
 - [System Overview](architecture/system-overview.md) — repos, runtime topology, Cambium/Rhizome/Verdant/Fairlead
 - [Agent Loop](architecture/agent-loop.md) — end-to-end session walkthrough
 - [Data Model](architecture/data-model.md) — all models, lifecycle, relationships
+- [Deployment](architecture/deployment.md) — instance topology, stateless scaling, Postgres checkpointer, Temporal future
 - [API Reference](architecture/api-reference.md) — complete `/api/v1` endpoint reference
 - [Tools Reference](architecture/tools-reference.md) — all 93 tools by domain
 

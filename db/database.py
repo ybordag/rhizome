@@ -1,4 +1,5 @@
 # db/database.py
+import os
 from contextvars import ContextVar
 
 from sqlalchemy import create_engine
@@ -10,21 +11,27 @@ from db.models import Base
 # Tools read this instead of hardcoding a user ID.
 current_user_id: ContextVar[int] = ContextVar("current_user_id", default=1)
 
-# this is the connection string — for SQLite it's just a file path
-# the /// means relative path, so this creates rhizome.db in your project root
-DATABASE_URL = "sqlite:///rhizome.db"
+# DATABASE_URL drives the backend:
+#   - unset / sqlite:///...  → local SQLite file (dev/test)
+#   - postgresql://...       → shared Postgres instance (staging/prod)
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///rhizome.db")
 
-# the engine is the actual connection to the database
-engine = create_engine(DATABASE_URL, echo=False)
-# echo=True would print every SQL statement SQLAlchemy runs — useful for debugging
+_is_postgres = DATABASE_URL.startswith("postgresql") or DATABASE_URL.startswith("postgres")
 
-# sessionmaker creates a factory for database sessions
-# a session is like a "unit of work" — you make changes, then commit them all at once
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    # pool_pre_ping detects stale connections after a Postgres restart
+    pool_pre_ping=_is_postgres,
+)
+
 SessionLocal = sessionmaker(bind=engine)
+
 
 def init_db():
     """Create all tables if they don't exist yet."""
     Base.metadata.create_all(engine)
+
 
 def get_session():
     """Get a database session. Always close it when done."""

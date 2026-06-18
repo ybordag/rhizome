@@ -1,16 +1,17 @@
 # Core agent framework
 langgraph
 langgraph-checkpoint-sqlite
+langgraph-checkpoint-postgres
 langchain
 langchain-google-genai
 
 # Environment
 python-dotenv
 
-# Database — SQLite (Steps 2-9)
+# Database — SQLite (dev/test)
 sqlalchemy
 
-# Database — Postgres + vector search (Step 10)
+# Database — Postgres
 psycopg2-binary
 pgvector
 
