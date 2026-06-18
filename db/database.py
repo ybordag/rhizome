@@ -1,7 +1,14 @@
 # db/database.py
+from contextvars import ContextVar
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from db.models import Base
+
+# Holds the authenticated user's ID for the current execution context.
+# Set once in session_context_intake at the start of every graph run.
+# Tools read this instead of hardcoding a user ID.
+current_user_id: ContextVar[int] = ContextVar("current_user_id", default=1)
 
 # this is the connection string — for SQLite it's just a file path
 # the /// means relative path, so this creates rhizome.db in your project root

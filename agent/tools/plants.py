@@ -14,7 +14,7 @@ from agent.activity_log import (
 )
 from typing import Optional
 from datetime import datetime, timezone
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import GardenProfile, GardeningProject, Bed, Container, Plant, PlantBatch, ProjectPlant
 
 VALID_PLANT_STATUSES = {
@@ -141,7 +141,7 @@ def add_plant(
             return error
 
         profile = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
         if not profile:
             return "Error: no garden profile found."
@@ -172,7 +172,7 @@ def add_plant(
             parsed_transplant = now
 
         plant = Plant(
-            user_id=1,
+            user_id=current_user_id.get(),
             garden_profile_id=profile.id,
             batch_id=batch_id,
             name=name,
@@ -406,7 +406,7 @@ def list_plants(
         if error:
             return error
 
-        query = session.query(Plant).filter(Plant.user_id == 1)
+        query = session.query(Plant).filter(Plant.user_id == current_user_id.get())
 
         if project_id:
             query = query.join(
@@ -512,7 +512,7 @@ def batch_add_plant_type(
             return error
 
         profile = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
         if not profile:
             return "Error: no garden profile found."
@@ -547,7 +547,7 @@ def batch_add_plant_type(
 
         # create batch record
         batch = PlantBatch(
-            user_id=1,
+            user_id=current_user_id.get(),
             garden_profile_id=profile.id,
             project_id=project_id,
             name=batch_name or f"{name} {variety or ''} {now.strftime('%B %Y')}".strip(),
@@ -580,7 +580,7 @@ def batch_add_plant_type(
         created = []
         for _ in range(quantity):
             plant = Plant(
-                user_id=1,
+                user_id=current_user_id.get(),
                 garden_profile_id=profile.id,
                 batch_id=batch.id,
                 name=name,
@@ -717,7 +717,7 @@ def batch_update_plants(
                 return error
 
         query = session.query(Plant).filter(
-            Plant.user_id == 1,
+            Plant.user_id == current_user_id.get(),
             Plant.name.ilike(f"%{name}%"),
             Plant.status != "removed"
         )
@@ -915,7 +915,7 @@ def batch_remove_plants(
                 return error
 
         query = session.query(Plant).filter(
-            Plant.user_id == 1,
+            Plant.user_id == current_user_id.get(),
             Plant.name.ilike(f"%{name}%"),
             Plant.status != "removed"
         )
@@ -1040,7 +1040,7 @@ def list_batches(project_id: Optional[str] = None) -> str:
     session = SessionLocal()
     try:
         query = session.query(PlantBatch).filter(
-            PlantBatch.user_id == 1
+            PlantBatch.user_id == current_user_id.get()
         )
         if project_id:
             query = query.filter(PlantBatch.project_id == project_id)

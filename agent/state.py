@@ -11,3 +11,4 @@ class GardenState(MessagesState):
     pending_interaction: Optional[dict[str, Any]]
     interaction_history: Optional[list[dict[str, Any]]]
     skip_tool_node: Optional[bool]
+    user_id: Optional[int]

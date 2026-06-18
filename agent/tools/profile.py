@@ -5,7 +5,7 @@ Tools must return strings — the LLM reads tool output as text.
 """
 
 from langchain.tools import tool
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import GardenProfile
 from typing import Optional, List
 
@@ -21,7 +21,7 @@ def get_garden_profile(detailed: bool = False) -> str:
     session = SessionLocal()
     try:
         profile = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
         if not profile:
             return "No garden profile found."
@@ -67,7 +67,7 @@ def update_garden_profile(
     session = SessionLocal()
     try:
         profile = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
         if not profile:
             return "Error: no garden profile found."

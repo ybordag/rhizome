@@ -3,7 +3,7 @@
 Search tools for finding garden entities by name, location, or other attributes.
 """
 from langchain.tools import tool
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import Plant, Bed, Container, ProjectPlant
 from typing import Optional
 
@@ -34,7 +34,7 @@ def search_garden(
         # search beds
         if entity_type in (None, "bed"):
             bed_query = session.query(Bed).filter(
-                Bed.user_id == 1,
+                Bed.user_id == current_user_id.get(),
                 Bed.name.ilike(search)
             )
             if location:
@@ -46,7 +46,7 @@ def search_garden(
         # search containers
         if entity_type in (None, "container"):
             container_query = session.query(Container).filter(
-                Container.user_id == 1,
+                Container.user_id == current_user_id.get(),
                 Container.name.ilike(search)
             )
             if location:
@@ -60,7 +60,7 @@ def search_garden(
         # search plants
         if entity_type in (None, "plant"):
             plant_query = session.query(Plant).filter(
-                Plant.user_id == 1,
+                Plant.user_id == current_user_id.get(),
                 Plant.status != "removed",
                 (Plant.name.ilike(search) | Plant.variety.ilike(search))
             )
@@ -139,7 +139,7 @@ def list_by_location(location: str) -> str:
 
         # beds
         beds = session.query(Bed).filter(
-            Bed.user_id == 1,
+            Bed.user_id == current_user_id.get(),
             Bed.location.ilike(loc)
         ).all()
         if beds:
@@ -149,7 +149,7 @@ def list_by_location(location: str) -> str:
 
         # containers
         containers = session.query(Container).filter(
-            Container.user_id == 1,
+            Container.user_id == current_user_id.get(),
             Container.location.ilike(loc)
         ).all()
         if containers:
@@ -163,7 +163,7 @@ def list_by_location(location: str) -> str:
 
         if container_ids or bed_ids:
             plants = session.query(Plant).filter(
-                Plant.user_id == 1,
+                Plant.user_id == current_user_id.get(),
                 Plant.status != "removed",
                 (Plant.container_id.in_(container_ids)) |
                 (Plant.bed_id.in_(bed_ids))

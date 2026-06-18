@@ -19,8 +19,10 @@ from agent.interactions import (
     resolve_interaction_record,
     stable_confirmation_source_id,
 )
+from langchain_core.runnables import RunnableConfig
 from agent.model import get_model
 from agent.telemetry import emit_state_snapshot, emit_tool_completed, emit_tool_started, start_span
+from db.database import current_user_id
 from agent.state import GardenState
 from agent.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
 from agent.triage import build_triage_snapshot, format_triage_snapshot
@@ -109,7 +111,10 @@ def _message_text(message) -> str:
     return str(content)
 
 
-def session_context_intake(state: GardenState):
+def session_context_intake(state: GardenState, config: RunnableConfig):
+    uid = int((config.get("configurable") or {}).get("user_id", 1))
+    current_user_id.set(uid)
+
     opener = ""
     for message in reversed(state["messages"]):
         if isinstance(message, HumanMessage):
@@ -126,6 +131,7 @@ def session_context_intake(state: GardenState):
             "temporal_context": temporal_context,
             "session_context": session_context,
             "skip_tool_node": False,
+            "user_id": uid,
         }
     finally:
         session.close()
@@ -250,7 +256,7 @@ def llm_call(state: GardenState):
     session = SessionLocal()
     try:
         profile_obj = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
     except Exception as e:
         print(f"[DEBUG] Failed to load garden profile: {e}")

@@ -81,3 +81,11 @@ def fresh_test_graph(monkeypatch, session_factory, test_checkpointer, fake_bound
 @pytest.fixture
 def seed_garden_profile(db_session, patched_sessionlocal):
     return make_profile(db_session)
+
+
+@pytest.fixture(autouse=True)
+def reset_user_id():
+    """Reset current_user_id to 1 before each test."""
+    from db.database import current_user_id
+    current_user_id.set(1)
+    yield

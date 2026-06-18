@@ -14,7 +14,7 @@ from agent.activity_log import (
     record_update_event,
     snapshot_model,
 )
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import (
     GardenProfile, GardeningProject, Bed, Container, 
     Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant
@@ -72,14 +72,14 @@ def create_project(
 
         # look up the garden profile for this user
         profile = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
 
         if not profile:
             return "Error: no garden profile found. Please set up your garden profile first."
 
         project = GardeningProject(
-            user_id=1,
+            user_id=current_user_id.get(),
             garden_profile_id=profile.id,   # ← was missing
             name=name,
             goal=goal,
@@ -318,7 +318,7 @@ def list_projects(status: Optional[str] = None) -> str:
                 return error
 
         query = session.query(GardeningProject).filter(
-            GardeningProject.user_id == 1
+            GardeningProject.user_id == current_user_id.get()
         )
         if status:
             query = query.filter(GardeningProject.status == status)

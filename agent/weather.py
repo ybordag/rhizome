@@ -8,6 +8,7 @@ from urllib.request import urlopen
 
 from agent.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_create_event, record_update_event, snapshot_model
 from agent.temporal import DEFAULT_TIMEZONE, profile_weather_location
+from db.database import current_user_id
 from db.models import (
     GardenProfile,
     GardeningProject,
@@ -139,7 +140,7 @@ def refresh_weather_snapshot(
     timezone: str = DEFAULT_TIMEZONE,
     fetcher=fetch_open_meteo_forecast,
 ) -> WeatherSnapshot:
-    profile = session.query(GardenProfile).filter(GardenProfile.user_id == 1).first()
+    profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
     location = profile_weather_location(profile)
     if not location:
         raise ValueError("Garden profile is missing latitude/longitude. Update the weather location first.")

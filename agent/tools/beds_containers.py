@@ -12,7 +12,7 @@ from agent.activity_log import (
     record_update_event,
     snapshot_model,
 )
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import GardenProfile, Plant, Bed, Container, ProjectBed, ProjectContainer
 from typing import Optional
 
@@ -106,7 +106,7 @@ def list_beds() -> str:
     """
     session = SessionLocal()
     try:
-        beds = session.query(Bed).filter(Bed.user_id == 1).all()
+        beds = session.query(Bed).filter(Bed.user_id == current_user_id.get()).all()
         if not beds:
             return "No beds found."
         results = []
@@ -148,13 +148,13 @@ def add_container(
             return error
 
         profile = session.query(GardenProfile).filter(
-            GardenProfile.user_id == 1
+            GardenProfile.user_id == current_user_id.get()
         ).first()
         if not profile:
             return "Error: no garden profile found."
 
         container = Container(
-            user_id=1,
+            user_id=current_user_id.get(),
             garden_profile_id=profile.id,
             name=name,
             container_type=container_type,
@@ -311,7 +311,7 @@ def list_containers() -> str:
     """
     session = SessionLocal()
     try:
-        containers = session.query(Container).filter(Container.user_id == 1).all()
+        containers = session.query(Container).filter(Container.user_id == current_user_id.get()).all()
         if not containers:
             return "No containers found."
         result = []
