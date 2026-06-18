@@ -1,7 +1,7 @@
 # Rhizome Long-Term Roadmap
 
 **Status:** Canonical roadmap  
-**Last updated:** April 29th, 2026
+**Last updated:** 2026-06
 
 ---
 
@@ -31,26 +31,22 @@ explicitly say so.
 
 ## Current status
 
-Rhizome has completed the first five foundational implementation phases:
+Rhizome has completed five foundational phases plus a substantial API readiness pass:
 
 1. **Phase 1:** Activity log foundation
 2. **Phase 2:** Project planner foundation
 3. **Phase 3:** Task tracker foundation
 4. **Phase 4:** Operational triage, weather context, and reactive care
 5. **Phase 5:** Structured interaction layer and CLI app simulation
+6. **API readiness (2026-06):** 93 tools, task priority scoring, daily work list endpoint, action history, N+1 query fixes, schema hardening, 310 tests
 
 What this means in practice:
 
-- persistent garden, project, planning, task, triage, weather, incident, and
-  interaction state now exists
-- the core loop of **plan -> task -> triage -> action -> history** exists
-- manual UX testing is possible in the CLI
-- future work should now be organized around **product epics**, not around the
-  original step-by-step bootstrapping plan
-
-Reference implementation record:
-
-- [activity_log_task_system_plan.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/archive/current_work/activity_log_task_system_plan.md)
+- persistent garden, project, planning, task, triage, weather, incident, interaction, and activity state all exist
+- the full loop **plan → task → triage → action → history** works in the CLI
+- the backend API surface is complete — every planned Cambium endpoint has a backing tool
+- **Cambium** (Go API gateway) is now in active development and will sit between Verdant and Rhizome
+- future Rhizome work is focused on: Postgres migration, multi-tenancy, FastAPI internal interface for Cambium, and model provider abstraction
 
 ---
 
@@ -238,15 +234,18 @@ and task execution state.
 
 **Current status**
 
-- mostly complete at the foundational level
+- complete at the foundational level; enhanced with priority scoring
 
 **What already exists**
 
-- `Task`
+- `Task` (with `priority` field: critical/high/normal/low)
 - `TaskDependency`
 - `TaskSeries`
 - `TaskGenerationRun`
-- generation, lifecycle, query, and blocker tools
+- generation, lifecycle, query, blocker, and daily priority tools
+- `get_daily_priority_tasks` — deterministic scoring across urgency, type, priority, triage alignment, blocking count
+- `cascade_defer_to_dependents` — deferred task pushes dependents' `earliest_start` forward
+- status transition guards on complete/skip/defer (rejects done/superseded targets)
 
 **Main dependencies**
 
@@ -458,15 +457,26 @@ app, rather than only a CLI simulation.
 
 **Current status**
 
-- backend foundation complete, app not started
+- **Backend API surface complete.** All planned endpoints have backing tools.
+  Cambium (Go API gateway) is in active development and will expose the surface
+  to Verdant. Verdant (React frontend) not yet started.
 
 **What already exists**
 
-- `InteractionEnvelope`
-- `InteractionRecord`
+- `InteractionEnvelope`, `InteractionRecord`
 - structured review and approval flows
 - CLI simulation renderer
-- app-facing interaction query/resolve APIs
+- 93 tools covering all planned `/api/v1` endpoints
+- action history tools (`get_task_activity`, `list_project_activity`, etc.)
+- `interaction_resolved` events recorded on every user decision
+- **Cambium** (separate repo) — Go gateway handling JWT auth, bcrypt hashing, refresh token rotation, and `/api/v1` proxy
+
+**What remains**
+
+- Cambium Phase 2–4: auth endpoints, Rhizome proxy, full API surface
+- Rhizome FastAPI internal interface (Cambium → Rhizome internal HTTP)
+- Verdant frontend app
+- Media upload (Epic 2 dependency)
 
 **Main dependencies**
 
@@ -631,38 +641,35 @@ These epics are not blocked by missing foundational work:
 
 ## Current recommended focus
 
-The top immediate epics are:
+### Active now
 
-1. **Epic 9: App-Facing Interaction and Frontend Experience**
-2. **Epic 2: Visual Garden Understanding**
-3. **Epic 6: Reactive Monitoring and Alerting**
+1. **Cambium (Epic 9 gateway layer)** — Go API gateway. Phase 1 (skeleton + Postgres connection) → Phase 2 (JWT auth endpoints) → Phase 3 (Rhizome proxy) → Phase 4 (full API surface). See `../cambium/CLAUDE.md`.
 
-These three should be the main near-term focus for planning.
+2. **Rhizome internal HTTP interface** — FastAPI layer that Cambium calls over HTTP. Small addition to the Rhizome repo once Cambium Phase 3 starts.
 
-Why:
+3. **Postgres migration** — prerequisite for multi-tenancy, proper FK enforcement, and HA deployment.
 
-- Epic 9 turns the backend interaction model into a real product surface
-- Epic 2 is one of the most differentiated features in the original product
-  vision
-- Epic 6 makes Rhizome more proactive and operationally useful
+### After Cambium Phase 2 (auth) is live
 
-Secondary near-term epic:
+4. **Multi-tenancy** — thread `user_id` from the verified JWT through all tool queries and DB lookups. ~15 files need touching.
 
-4. **Epic 3: Project Planning and Negotiation**
+5. **Verdant (Epic 9 frontend)** — React app consuming the Cambium API. Start once Cambium Phase 2 is stable enough to authenticate against.
 
-That epic is important, but the current planner foundation is already usable,
-while Epic 9 and Epic 2 represent larger user-visible capability jumps.
+### Medium term
+
+6. **Epic 2: Visual Garden Understanding** — image upload, plant identification, visual condition assessment. Requires the media upload API (Cambium Phase 4) first.
+
+7. **Epic 6: Reactive Monitoring and Alerting** — scheduled weather refresh, external alert ingestion.
+
+8. **Model provider abstraction (Phase 2)** — env-var switch for Gemini / Claude / OpenAI / local Fairlead endpoint. `agent/core/model.py` is already the single seam.
 
 ---
 
-## Immediate epic plans
+## Epic plan documents
 
-The following separate epic plan documents should be used for immediate
-planning work:
-
-- [epic_09_app_frontend_experience.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/epic_09_app_frontend_experience.md)
-- [epic_02_visual_garden_understanding.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/epic_02_visual_garden_understanding.md)
-- [epic_06_reactive_monitoring_and_alerting.md](/Users/yashi/Documents/Work/Code/Gardening%20Agent/rhizome/docs/roadmap/epic_06_reactive_monitoring_and_alerting.md)
+- [epic_09_app_frontend_experience.md](epic_09_app_frontend_experience.md) — detailed endpoint inventory and payload shapes
+- [epic_02_visual_garden_understanding.md](epic_02_visual_garden_understanding.md)
+- [epic_06_reactive_monitoring_and_alerting.md](epic_06_reactive_monitoring_and_alerting.md)
 
 ---
 
