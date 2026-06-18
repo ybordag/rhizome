@@ -26,7 +26,7 @@
 - [Epic 6: Reactive Monitoring and Alerting](roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)
 
 ## Design Reference
-- [Original Design Document](design/garden_agent_design.md) — original problem statement and design vision
+- [Original Design Document](design/garden_agent_design.md) — original problem statement and design vision (2026, partially stale)
 
 ## Archive
-- [Historical Implementation Plans](archive/) — completed phase plans, now for reference only
+- [Archive Index](archive/README.md) — completed phase plans and superseded docs, now for historical reference only

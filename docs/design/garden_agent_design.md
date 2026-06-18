@@ -76,7 +76,6 @@ These aren't independent problems — they are deeply interdependent. A decision
 
 - Automated purchasing or e-commerce integration
 - IoT sensor integration (soil moisture, weather stations)
-- Computer vision–based autonomous pest diagnosis without user confirmation
 - Multi-user / shared garden management
 - Professional or commercial-scale farming
 
