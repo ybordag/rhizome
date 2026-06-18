@@ -14,10 +14,10 @@ from datetime import datetime, timedelta
 import pytest
 
 from agent.tracker import cascade_defer_to_dependents, get_daily_priority_tasks
-from agent.tools.incidents import get_incident, list_incidents
-from agent.tools.planning import get_project_proposal
-from agent.tools.projects import get_project_progress
-from agent.tools.tracker import (
+from agent.tools.operations.incidents import get_incident, list_incidents
+from agent.tools.projects.planning import get_project_proposal
+from agent.tools.projects.projects import get_project_progress
+from agent.tools.projects.tracker import (
     defer_task,
     get_daily_priority_tasks as get_daily_priority_tasks_tool,
     generate_project_tasks,
@@ -39,7 +39,7 @@ from tests.support.factories import (
     make_treatment_plan,
     make_triage_snapshot,
 )
-from tests.tools.test_task_tracker_tools import _accept_plan
+from tests.tools.projects.test_task_tracker_tools import _accept_plan
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -545,7 +545,7 @@ def test_get_project_progress_not_found(db_session, patched_sessionlocal):
 
 @pytest.mark.integration
 def test_get_project_progress_completion_increases_after_task_done(db_session, patched_sessionlocal):
-    from agent.tools.tracker import complete_task
+    from agent.tools.projects.tracker import complete_task
 
     project = _accept_plan(db_session, patched_sessionlocal, propagation_method="nursery")
     generate_project_tasks.invoke({"project_id": project.id})

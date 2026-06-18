@@ -1,6 +1,6 @@
 import pytest
 
-from agent.tools.plants import (
+from agent.tools.garden.plants import (
     add_plant,
     batch_add_plant_type,
     batch_remove_plants,

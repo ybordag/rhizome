@@ -15,8 +15,8 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError
 
-from agent.tools.projects import get_project, list_projects
-from agent.tools.search import list_by_location, search_garden
+from agent.tools.projects.projects import get_project, list_projects
+from agent.tools.garden.search import list_by_location, search_garden
 from db.models import (
     ActivityEvent,
     GardeningProject,

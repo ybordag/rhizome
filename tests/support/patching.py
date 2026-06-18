@@ -6,7 +6,9 @@ from langgraph.graph import END, START, StateGraph
 def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
     from agent import nodes
     from agent import triage as triage_runtime
-    from agent.tools import activity, beds_containers, care, incidents, interactions, planning, plants, profile, projects, search, tracker, triage, weather
+    from agent.tools.operations import activity, care, incidents, interactions, triage, weather
+    from agent.tools.garden import beds_containers, plants, profile, search
+    from agent.tools.projects import planning, projects, tracker
 
     monkeypatch.setattr(nodes, "SessionLocal", session_factory)
     monkeypatch.setattr(activity, "SessionLocal", session_factory)

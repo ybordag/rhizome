@@ -1,6 +1,6 @@
 import pytest
 
-from agent.tools.projects import (
+from agent.tools.projects.projects import (
     add_plant_to_project,
     assign_bed_to_project,
     assign_container_to_project,

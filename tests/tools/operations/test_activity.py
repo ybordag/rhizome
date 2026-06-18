@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agent.tools.activity import (
+from agent.tools.operations.activity import (
     get_batch_activity,
     get_bed_activity,
     get_container_activity,
@@ -10,8 +10,8 @@ from agent.tools.activity import (
     get_project_activity,
     list_recent_activity,
 )
-from agent.tools.beds_containers import add_container, delete_bed, remove_container, update_bed, update_container
-from agent.tools.plants import (
+from agent.tools.garden.beds_containers import add_container, delete_bed, remove_container, update_bed, update_container
+from agent.tools.garden.plants import (
     add_plant,
     batch_add_plant_type,
     batch_remove_plants,
@@ -21,7 +21,7 @@ from agent.tools.plants import (
     remove_plant,
     update_plant,
 )
-from agent.tools.projects import (
+from agent.tools.projects.projects import (
     add_plant_to_project,
     assign_bed_to_project,
     assign_container_to_project,

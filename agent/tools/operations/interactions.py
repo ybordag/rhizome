@@ -37,7 +37,7 @@ def _resolve_proposal_review(record: InteractionRecord, action_id: str, inputs: 
     metadata = record.record_metadata or {}
     context = metadata.get("context") or {}
     if action_id == "accept_proposal":
-        from agent.tools.planning import accept_project_proposal
+        from agent.tools.projects.planning import accept_project_proposal
 
         return accept_project_proposal.invoke(
             {"project_id": context["project_id"], "proposal_id": context["proposal_id"]}
@@ -51,7 +51,7 @@ def _resolve_proposal_review(record: InteractionRecord, action_id: str, inputs: 
 def _resolve_treatment_review(record: InteractionRecord, action_id: str, inputs: dict[str, Any]) -> str:
     treatment_plan_id = ((record.record_metadata or {}).get("context") or {}).get("treatment_plan_id")
     if action_id == "approve_treatment_plan":
-        from agent.tools.incidents import approve_treatment_plan
+        from agent.tools.operations.incidents import approve_treatment_plan
 
         return approve_treatment_plan.invoke({"treatment_plan_id": treatment_plan_id})
     if action_id == "revise_treatment_plan":
@@ -63,14 +63,14 @@ def _resolve_treatment_review(record: InteractionRecord, action_id: str, inputs:
 def _resolve_weather_review(record: InteractionRecord, action_id: str) -> str:
     change_set_id = ((record.record_metadata or {}).get("context") or {}).get("change_set_id")
     if action_id == "approve_changes":
-        from agent.tools.weather import approve_weather_task_changes
+        from agent.tools.operations.weather import approve_weather_task_changes
 
         return approve_weather_task_changes.invoke({"change_set_id": change_set_id})
     return f"Dismissed weather task changes for change set {change_set_id}."
 
 
 def _resolve_triage(record: InteractionRecord, action_id: str, inputs: dict[str, Any]) -> str:
-    from agent.tools.tracker import get_task, start_task
+    from agent.tools.projects.tracker import get_task, start_task
 
     metadata = record.record_metadata or {}
     context = metadata.get("context") or {}

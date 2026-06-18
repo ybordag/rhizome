@@ -1,23 +1,23 @@
 # agent/tools/__init__.py
-from agent.tools.profile import get_garden_profile, update_garden_profile
-from agent.tools.projects import (
+from agent.tools.garden.profile import get_garden_profile, update_garden_profile
+from agent.tools.projects.projects import (
     create_project, update_project, get_project, list_projects,
     assign_bed_to_project, assign_container_to_project,
     assign_beds_to_project, assign_containers_to_project,
     unassign_bed_from_project, unassign_container_from_project,
     add_plant_to_project, remove_plant_from_project, delete_project,
     get_project_progress)
-from agent.tools.beds_containers import (
+from agent.tools.garden.beds_containers import (
     list_beds, update_bed,
     list_containers, add_container, update_container, remove_container,
     delete_bed
 )
-from agent.tools.plants import (
+from agent.tools.garden.plants import (
     add_plant, update_plant, remove_plant, list_plants,
     batch_add_plant_type, batch_update_plants, batch_remove_plants, list_batches,
     delete_plant, delete_batch)
-from agent.tools.search import search_garden, list_by_location
-from agent.tools.activity import (
+from agent.tools.garden.search import search_garden, list_by_location
+from agent.tools.operations.activity import (
     get_project_activity,
     get_plant_activity,
     get_bed_activity,
@@ -25,7 +25,7 @@ from agent.tools.activity import (
     get_batch_activity,
     list_recent_activity,
 )
-from agent.tools.planning import (
+from agent.tools.projects.planning import (
     get_or_create_project_brief,
     update_project_brief,
     get_project_brief,
@@ -39,7 +39,7 @@ from agent.tools.planning import (
     accept_project_proposal,
     preview_project_schedule,
 )
-from agent.tools.tracker import (
+from agent.tools.projects.tracker import (
     generate_project_tasks,
     regenerate_project_tasks,
     materialize_recurring_tasks,
@@ -57,23 +57,23 @@ from agent.tools.tracker import (
     update_task_series,
     get_daily_priority_tasks,
 )
-from agent.tools.weather import (
+from agent.tools.operations.weather import (
     refresh_weather_snapshot,
     get_latest_weather_snapshot,
     list_weather_impacted_tasks,
     draft_weather_task_changes,
     approve_weather_task_changes,
 )
-from agent.tools.triage import (
+from agent.tools.operations.triage import (
     run_daily_triage,
     get_latest_triage_snapshot,
     list_triage_recommendations,
 )
-from agent.tools.care import (
+from agent.tools.operations.care import (
     get_current_care_state,
     get_recent_care_history,
 )
-from agent.tools.incidents import (
+from agent.tools.operations.incidents import (
     list_incidents,
     get_incident,
     report_incident,
@@ -82,7 +82,7 @@ from agent.tools.incidents import (
     approve_treatment_plan,
     resolve_incident,
 )
-from agent.tools.interactions import (
+from agent.tools.operations.interactions import (
     get_pending_interaction,
     list_recent_interactions,
     get_interaction_record,

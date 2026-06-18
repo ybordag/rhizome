@@ -1,6 +1,6 @@
 import pytest
 
-from agent.tools.profile import get_garden_profile, update_garden_profile
+from agent.tools.garden.profile import get_garden_profile, update_garden_profile
 from db.models import GardenProfile
 
 

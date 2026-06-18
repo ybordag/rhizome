@@ -4,9 +4,9 @@ from datetime import date, timedelta
 
 import pytest
 
-from agent.tools.activity import get_project_activity
-from agent.tools.planning import accept_project_proposal, save_project_proposal, update_project_brief
-from agent.tools.tracker import (
+from agent.tools.operations.activity import get_project_activity
+from agent.tools.projects.planning import accept_project_proposal, save_project_proposal, update_project_brief
+from agent.tools.projects.tracker import (
     complete_task,
     defer_task,
     explain_task_blockers,

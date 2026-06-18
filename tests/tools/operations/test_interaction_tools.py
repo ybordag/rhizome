@@ -6,13 +6,13 @@ from agent.interactions import (
     build_triage_view_interaction,
     record_interaction_summary,
 )
-from agent.tools.interactions import (
+from agent.tools.operations.interactions import (
     get_interaction_record,
     get_pending_interaction,
     list_recent_interactions,
     resolve_interaction,
 )
-from agent.tools.planning import save_project_proposal, update_project_brief
+from agent.tools.projects.planning import save_project_proposal, update_project_brief
 from db.models import InteractionRecord, ProjectProposal, TriageSnapshot
 from tests.support.factories import (
     make_profile,

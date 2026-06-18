@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent.tools.beds_containers import delete_bed, remove_container
-from agent.tools.projects import delete_project
-from agent.tools.tracker import (
+from agent.tools.garden.beds_containers import delete_bed, remove_container
+from agent.tools.projects.projects import delete_project
+from agent.tools.projects.tracker import (
     complete_task,
     defer_task,
     skip_task,
@@ -41,8 +41,8 @@ from tests.support.factories import (
     make_task,
     make_task_generation_run,
 )
-from tests.tools.test_task_tracker_tools import _accept_plan
-from agent.tools.tracker import generate_project_tasks
+from tests.tools.projects.test_task_tracker_tools import _accept_plan
+from agent.tools.projects.tracker import generate_project_tasks
 
 
 # ─── Status transition guards ─────────────────────────────────────────────────
@@ -276,7 +276,7 @@ def test_delete_project_succeeds_when_all_tasks_superseded(db_session, patched_s
     generate_project_tasks.invoke({"project_id": project.id})
 
     # Supersede all tasks via regeneration
-    from agent.tools.tracker import regenerate_project_tasks
+    from agent.tools.projects.tracker import regenerate_project_tasks
     regenerate_project_tasks.invoke({"project_id": project.id, "reason": "test cleanup"})
 
     # Now supersede the new tasks too (mark directly)

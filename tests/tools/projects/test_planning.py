@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from agent.tools.activity import get_project_activity
-from agent.tools.planning import (
+from agent.tools.operations.activity import get_project_activity
+from agent.tools.projects.planning import (
     accept_project_proposal,
     assemble_planning_context,
     check_blocking_unknowns,

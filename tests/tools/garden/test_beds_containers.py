@@ -1,6 +1,6 @@
 import pytest
 
-from agent.tools.beds_containers import (
+from agent.tools.garden.beds_containers import (
     add_container,
     delete_bed,
     list_beds,

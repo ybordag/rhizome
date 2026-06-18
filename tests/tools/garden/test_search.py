@@ -1,6 +1,6 @@
 import pytest
 
-from agent.tools.search import list_by_location, search_garden
+from agent.tools.garden.search import list_by_location, search_garden
 from tests.support.factories import (
     link_plant_to_project,
     make_bed,

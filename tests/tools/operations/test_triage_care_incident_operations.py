@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from agent.tools.incidents import (
+from agent.tools.operations.incidents import (
     approve_treatment_plan,
     draft_treatment_plan,
     report_incident,
 )
-from agent.tools.care import get_current_care_state, get_recent_care_history
-from agent.tools.tracker import complete_task
-from agent.tools.triage import get_latest_triage_snapshot, run_daily_triage
-from agent.tools.weather import (
+from agent.tools.operations.care import get_current_care_state, get_recent_care_history
+from agent.tools.projects.tracker import complete_task
+from agent.tools.operations.triage import get_latest_triage_snapshot, run_daily_triage
+from agent.tools.operations.weather import (
     approve_weather_task_changes,
     draft_weather_task_changes,
     list_weather_impacted_tasks,
@@ -29,8 +29,8 @@ from tests.support.factories import (
     make_task_generation_run,
     make_weather_snapshot,
 )
-from tests.tools.test_task_tracker_tools import _accept_plan
-from agent.tools.tracker import generate_project_tasks
+from tests.tools.projects.test_task_tracker_tools import _accept_plan
+from agent.tools.projects.tracker import generate_project_tasks
 
 
 @pytest.mark.integration

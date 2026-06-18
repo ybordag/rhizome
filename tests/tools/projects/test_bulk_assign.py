@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.tools.projects import assign_beds_to_project, assign_containers_to_project
+from agent.tools.projects.projects import assign_beds_to_project, assign_containers_to_project
 from db.models import ActivityEvent, ProjectBed, ProjectContainer
 from tests.support.factories import (
     link_bed_to_project,

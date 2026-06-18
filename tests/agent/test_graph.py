@@ -2,8 +2,8 @@ import pytest
 from langchain.messages import HumanMessage
 from langgraph.types import Command
 
-from agent.tools.incidents import approve_treatment_plan, draft_treatment_plan, report_incident
-from agent.tools.planning import save_project_proposal, update_project_brief
+from agent.tools.operations.incidents import approve_treatment_plan, draft_treatment_plan, report_incident
+from agent.tools.projects.planning import save_project_proposal, update_project_brief
 from db.models import GardeningProject, ProjectProposal, Task, TreatmentPlan
 from tests.support.fakes import make_ai_message, make_tool_call_message
 
@@ -289,8 +289,8 @@ def test_treatment_plan_approval_interrupt_executes_and_creates_tasks(
         .filter(ProjectProposal.project_id == project.id)
         .scalar()
     )
-    from agent.tools.planning import accept_project_proposal
-    from agent.tools.tracker import generate_project_tasks
+    from agent.tools.projects.planning import accept_project_proposal
+    from agent.tools.projects.tracker import generate_project_tasks
 
     accept_project_proposal.invoke({"project_id": project.id, "proposal_id": proposal_id})
     generate_project_tasks.invoke({"project_id": project.id})
