@@ -6,7 +6,7 @@ Tools must return strings — the LLM reads tool output as text.
 
 from langchain.tools import tool
 from sqlalchemy import func
-from agent.activity_log import (
+from agent.domain.activity_log import (
     DEFAULT_ACTOR_LABEL,
     DEFAULT_ACTOR_TYPE,
     record_activity_event,
@@ -1088,7 +1088,7 @@ def get_project_progress(project_id: str) -> str:
                 lines.append(f"Budget: ${estimated_cost:.0f} estimated of ${budget_cap:.0f} cap ({round(estimated_cost / budget_cap * 100)}% of budget)")
 
         blocker_tasks = [t for t in leaf_tasks if t.status not in {"done", "skipped", "superseded", "deferred"}]
-        from agent.tracker import compute_task_urgency
+        from agent.domain.tracker import compute_task_urgency
         critical_tasks = [
             t for t in blocker_tasks
             if compute_task_urgency(t, now) == "blocker"

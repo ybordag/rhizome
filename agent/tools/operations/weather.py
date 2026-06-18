@@ -4,7 +4,7 @@ from typing import Optional
 
 from langchain.tools import tool
 
-from agent.weather import (
+from agent.domain.weather import (
     approve_weather_task_changes as approve_weather_task_changes_data,
     draft_weather_task_changes as draft_weather_task_changes_data,
     evaluate_weather_task_impacts,

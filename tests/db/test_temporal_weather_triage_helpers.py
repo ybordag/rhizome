@@ -4,8 +4,8 @@ from datetime import datetime
 
 import pytest
 
-from agent.temporal import build_temporal_context, infer_session_context
-from agent.weather import derive_weather_impacts, evaluate_weather_task_impacts
+from agent.core.temporal import build_temporal_context, infer_session_context
+from agent.domain.weather import derive_weather_impacts, evaluate_weather_task_impacts
 from tests.support.factories import (
     make_profile,
     make_project,

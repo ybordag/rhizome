@@ -1,8 +1,8 @@
 # main.py
 from datetime import datetime, timezone
 
-from agent.graph import agent
-from agent.telemetry import configure_from_env, emit_message, emit_state_snapshot, start_span
+from agent.core.graph import agent
+from agent.core.telemetry import configure_from_env, emit_message, emit_state_snapshot, start_span
 from agent.tools.operations.interactions import resolve_interaction
 from langchain.messages import HumanMessage, ToolMessage
 from langgraph.types import Command

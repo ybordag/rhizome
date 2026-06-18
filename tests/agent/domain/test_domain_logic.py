@@ -13,9 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.care import CARE_ACTIONS, _resolve_subjects, infer_care_action
-from agent.planner import estimate_plan_cost, estimate_plan_effort, estimate_plan_timeline
-from agent.tracker import compute_task_blocked_state
+from agent.domain.care import CARE_ACTIONS, _resolve_subjects, infer_care_action
+from agent.domain.planner import estimate_plan_cost, estimate_plan_effort, estimate_plan_timeline
+from agent.domain.tracker import compute_task_blocked_state
 from db.models import Plant, Task
 from tests.support.factories import (
     link_plant_to_project,

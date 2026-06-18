@@ -1,6 +1,6 @@
 import pytest
 
-from agent import telemetry
+from agent.core import telemetry
 
 
 class RecordingObserver:

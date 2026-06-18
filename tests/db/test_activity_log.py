@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from agent.activity_log import (
+from agent.domain.activity_log import (
     compute_changed_fields,
     record_activity_event,
     record_create_event,

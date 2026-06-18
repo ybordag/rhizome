@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone as dt_timezone
 from typing import Any, Optional
 
-from agent.activity_log import record_create_event
-from agent.model import get_triage_model
-from agent.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
-from agent.tracker import build_due_task_view, compute_task_urgency
-from agent.weather import evaluate_weather_task_impacts, get_latest_weather_snapshot
+from agent.domain.activity_log import record_create_event
+from agent.core.model import get_triage_model
+from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
+from agent.domain.tracker import build_due_task_view, compute_task_urgency
+from agent.domain.weather import evaluate_weather_task_impacts, get_latest_weather_snapshot
 from db.models import Task, TriageSnapshot
 from langchain.messages import HumanMessage, SystemMessage
 

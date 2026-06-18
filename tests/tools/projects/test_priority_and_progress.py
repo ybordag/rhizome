@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from agent.tracker import cascade_defer_to_dependents, get_daily_priority_tasks
+from agent.domain.tracker import cascade_defer_to_dependents, get_daily_priority_tasks
 from agent.tools.operations.incidents import get_incident, list_incidents
 from agent.tools.projects.planning import get_project_proposal
 from agent.tools.projects.projects import get_project_progress

@@ -9,9 +9,9 @@ from typing import Optional
 
 from langchain.tools import tool
 
-from agent.activity_log import record_update_event, snapshot_model
-from agent.care import apply_task_completion_side_effects
-from agent.tracker import (
+from agent.domain.activity_log import record_update_event, snapshot_model
+from agent.domain.care import apply_task_completion_side_effects
+from agent.domain.tracker import (
     VALID_TASK_PRIORITIES,
     VALID_TASK_STATUSES,
     build_due_task_view,

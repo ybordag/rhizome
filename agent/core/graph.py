@@ -2,8 +2,8 @@
 import sqlite3
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
-from agent.state import GardenState
-from agent.nodes import (
+from agent.core.state import GardenState
+from agent.core.nodes import (
     interaction_node,
     llm_call,
     session_context_intake,

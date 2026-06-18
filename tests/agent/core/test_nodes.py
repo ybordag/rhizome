@@ -1,7 +1,7 @@
 import pytest
 from langgraph.graph import END
 
-from agent import nodes
+from agent.core import nodes
 from langchain.messages import ToolMessage
 from tests.support.fakes import FakeTool, make_ai_message, make_tool_call_message
 from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan

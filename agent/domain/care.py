@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from agent.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_activity_event
+from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_activity_event
 from db.models import Bed, Container, Plant, ProjectPlant, Task, TaskSeries
 
 

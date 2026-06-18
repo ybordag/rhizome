@@ -6,7 +6,7 @@ from typing import Optional
 
 from langchain.tools import tool
 
-from agent.activity_log import (
+from agent.domain.activity_log import (
     format_activity_feed,
     get_activity_for_subject,
     list_recent_activity_entries,

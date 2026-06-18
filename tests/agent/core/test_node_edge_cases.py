@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent import nodes
-from agent.interactions import normalize_resolution
+from agent.core import nodes
+from agent.domain.interactions import normalize_resolution
 from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
 from tests.support.fakes import make_tool_call_message
 

@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from langchain.tools import tool
 
-from agent.activity_log import (
+from agent.domain.activity_log import (
     DEFAULT_ACTOR_LABEL,
     DEFAULT_ACTOR_TYPE,
     record_activity_event,
@@ -16,7 +16,7 @@ from agent.activity_log import (
     record_update_event,
     snapshot_model,
 )
-from agent.planner import (
+from agent.domain.planner import (
     VALID_BRIEF_STATUSES,
     assemble_planning_context_data,
     build_execution_spec_payload,

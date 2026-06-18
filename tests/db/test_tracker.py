@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from agent.tracker import (
+from agent.domain.tracker import (
     build_due_task_view,
     compute_task_blocked_state,
     compute_task_urgency,

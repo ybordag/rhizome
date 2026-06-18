@@ -4,7 +4,7 @@ Tools must return strings — the LLM reads tool output as text.
 """
 
 from langchain.tools import tool
-from agent.activity_log import (
+from agent.domain.activity_log import (
     DEFAULT_ACTOR_LABEL,
     DEFAULT_ACTOR_TYPE,
     record_create_event,

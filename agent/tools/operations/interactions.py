@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from langchain.tools import tool
 
-from agent.interactions import (
+from agent.domain.interactions import (
     format_interaction_record,
     get_pending_interaction_record,
     list_recent_interaction_records,

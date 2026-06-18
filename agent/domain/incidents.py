@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from agent.activity_log import record_create_event, record_update_event, snapshot_model
+from agent.domain.activity_log import record_create_event, record_update_event, snapshot_model
 from db.models import (
     IncidentReport,
     IncidentSubject,

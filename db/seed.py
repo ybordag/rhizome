@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.incidents import create_incident_report, draft_treatment_plan
-from agent.interactions import (
+from agent.domain.incidents import create_incident_report, draft_treatment_plan
+from agent.domain.interactions import (
     build_proposal_review_interaction,
     build_treatment_plan_review_interaction,
     build_triage_view_interaction,
@@ -18,7 +18,7 @@ from agent.interactions import (
     find_pending_interaction_record,
     record_interaction_summary,
 )
-from agent.planner import (
+from agent.domain.planner import (
     build_execution_spec_payload,
     build_plan_input,
     check_plan_feasibility,
@@ -27,9 +27,9 @@ from agent.planner import (
     estimate_plan_timeline,
     get_or_create_brief,
 )
-from agent.tracker import generate_tasks_for_revision
-from agent.triage import build_triage_snapshot
-from agent.weather import draft_weather_task_changes, refresh_weather_snapshot
+from agent.domain.tracker import generate_tasks_for_revision
+from agent.domain.triage import build_triage_snapshot
+from agent.domain.weather import draft_weather_task_changes, refresh_weather_snapshot
 from db.database import SessionLocal, init_db
 from db.models import (
     Bed,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.interactions import (
+from agent.domain.interactions import (
     build_confirmation_interaction,
     build_proposal_review_interaction,
     build_triage_view_interaction,

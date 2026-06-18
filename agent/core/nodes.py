@@ -6,7 +6,7 @@ from langgraph.graph import END
 from langgraph.types import interrupt
 from langchain.messages import AIMessage
 
-from agent.interactions import (
+from agent.domain.interactions import (
     build_confirmation_interaction,
     build_proposal_review_interaction,
     find_pending_interaction_record,
@@ -20,14 +20,14 @@ from agent.interactions import (
     stable_confirmation_source_id,
 )
 from langchain_core.runnables import RunnableConfig
-from agent.model import get_model
-from agent.telemetry import emit_state_snapshot, emit_tool_completed, emit_tool_started, start_span
+from agent.core.model import get_model
+from agent.core.telemetry import emit_state_snapshot, emit_tool_completed, emit_tool_started, start_span
 from db.database import current_user_id
-from agent.state import GardenState
-from agent.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
-from agent.triage import build_triage_snapshot, format_triage_snapshot
+from agent.core.state import GardenState
+from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
+from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
-from agent.weather import get_latest_weather_snapshot
+from agent.domain.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
 from db.models import GardenProfile, InteractionRecord, TreatmentPlan
 

@@ -6,8 +6,8 @@ from typing import Any, Optional
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from agent.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_create_event, record_update_event, snapshot_model
-from agent.temporal import DEFAULT_TIMEZONE, profile_weather_location
+from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_create_event, record_update_event, snapshot_model
+from agent.core.temporal import DEFAULT_TIMEZONE, profile_weather_location
 from db.database import current_user_id
 from db.models import (
     GardenProfile,

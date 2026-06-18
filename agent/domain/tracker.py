@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from agent.activity_log import (
+from agent.domain.activity_log import (
     DEFAULT_ACTOR_LABEL,
     DEFAULT_ACTOR_TYPE,
     record_activity_event,
@@ -11,7 +11,7 @@ from agent.activity_log import (
     record_update_event,
     snapshot_model,
 )
-from agent.planner import DEFAULT_PLANT_RULES
+from agent.domain.planner import DEFAULT_PLANT_RULES
 from db.models import (
     ActivityEvent,
     ActivitySubject,

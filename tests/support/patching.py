@@ -4,8 +4,8 @@ from langgraph.graph import END, START, StateGraph
 
 
 def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
-    from agent import nodes
-    from agent import triage as triage_runtime
+    from agent.core import nodes
+    from agent.domain import triage as triage_runtime
     from agent.tools.operations import activity, care, incidents, interactions, triage, weather
     from agent.tools.garden import beds_containers, plants, profile, search
     from agent.tools.projects import planning, projects, tracker
@@ -28,8 +28,8 @@ def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
 
 
 def build_test_agent(monkeypatch, fake_model, session_factory, checkpointer):
-    from agent import nodes
-    from agent.state import GardenState
+    from agent.core import nodes
+    from agent.core.state import GardenState
 
     patch_all_sessionlocals(monkeypatch, session_factory)
     monkeypatch.setattr(nodes, "model_with_tools", fake_model)

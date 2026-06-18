@@ -5,7 +5,7 @@ from typing import Optional
 
 from langchain.tools import tool
 
-from agent.incidents import (
+from agent.domain.incidents import (
     approve_treatment_plan as approve_treatment_plan_data,
     create_incident_report,
     draft_treatment_plan as draft_treatment_plan_data,
