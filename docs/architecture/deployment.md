@@ -1,6 +1,6 @@
 # Deployment Architecture
 
-How Rhizome is deployed, why instances are stateless, and how horizontal scaling works.
+How Rhizome is deployed, why instances are stateless, how horizontal scaling works, and the tooling stack from local dev to production.
 
 ---
 
@@ -157,3 +157,77 @@ The current architecture is Temporal-compatible. The mapping would be:
 | LangGraph checkpointer | Temporal's built-in event history |
 
 This migration is not warranted at 2-node scale. It would make sense if the project needed to handle background long-running operations, complex retry logic, or multi-step workflows that span multiple agent calls over time.
+
+---
+
+## Tooling stack
+
+### The four tools and what each one does
+
+| Tool | Layer | Does |
+|---|---|---|
+| **Docker** | Container build + local runtime | Builds images from Dockerfiles; runs containers locally |
+| **Docker Compose** | Local orchestration | Defines and starts all services together on one machine |
+| **k3s** | Production orchestration | Manages containers across Thor + Loki; schedules, restarts, scales |
+| **Helm** | K8s package manager | Installs third-party software (Postgres, Redis) onto k3s with one command |
+
+These are complementary layers, not alternatives. Docker builds the images. Docker Compose runs them locally. k3s runs them in production. Helm installs pre-packaged third-party services onto k3s.
+
+### `kubectl` — the k3s remote control
+
+`kubectl` is a CLI client that sends commands to the k3s API server. It does no containerization — it's analogous to `psql` for Postgres. Having `kubectl` installed without a cluster to point it at does nothing.
+
+k3s uses **containerd** as its container runtime (not Docker). Docker is not required on the production nodes — only on the dev machine for building images.
+
+### Local dev workflow (Mac)
+
+```
+docker build -t ghcr.io/ybordag/rhizome:latest .   # build image
+docker compose up                                   # run full stack locally
+docker compose down                                 # tear down
+```
+
+`docker-compose.yml` defines all services — Postgres, Rhizome ×2, Cambium — and their environment variables. Service names (`postgres`, `rhizome`) become hostnames inside Docker's internal network.
+
+### Production workflow (Thor + Loki)
+
+```
+Your Mac  →  docker build + push to GHCR  →  GitHub Container Registry
+                                                        │
+Thor + Loki  ←  k3s pulls image from GHCR  ←──────────┘
+```
+
+The registry is the handoff point. You never copy images directly between machines.
+
+**Cluster topology:**
+
+| Node | Role | Runs |
+|---|---|---|
+| **Thor** | Control plane + worker | k3s API server, scheduler, etcd; Cambium, Verdant, Rhizome #1 |
+| **Loki** | Worker | Postgres, Rhizome #2 |
+
+Postgres on Loki means Rhizome #2 has local DB access. Thor does control-plane overhead so heavier workloads are preferentially scheduled on Loki.
+
+### Helm for third-party services
+
+Raw K8s manifests for a single service like Postgres require ~5 YAML files (Deployment, Service, PersistentVolumeClaim, Secret, ConfigMap). Helm bundles these into a single installable package with a `values.yaml` for configuration.
+
+```bash
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm install rhizome-db bitnami/postgresql \
+  --set auth.postgresPassword=secret \
+  --set primary.persistence.size=20Gi
+```
+
+**Rule of thumb:** use Helm charts for third-party software (Postgres, nginx, Prometheus); write raw K8s manifests for your own services (Rhizome, Cambium, Verdant).
+
+### Docker Compose vs Helm chart — same idea, different target
+
+Both describe "which services exist and how they connect." The difference is the runtime they target:
+
+```
+docker-compose.yml   →  Docker (local dev, one machine)
+Helm chart / K8s     →  k3s (production, cluster)
+```
+
+`kompose` can convert a Compose file to K8s manifests as a starting point, though the output usually needs cleanup. In practice you maintain both: Compose for fast local iteration, K8s manifests for production.
