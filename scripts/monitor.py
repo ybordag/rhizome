@@ -28,8 +28,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dotenv import load_dotenv
 load_dotenv()
 
+from datetime import timedelta
+
 from db.database import SessionLocal
-from db.models import MonitorRun
+from db.models import MonitorAlert, MonitorRun
 
 
 def _now() -> datetime:
@@ -55,6 +57,32 @@ def _fail_run(session, run: MonitorRun, error: str) -> None:
     run.completed_at = _now()
     run.error = error
     session.commit()
+
+
+def _write_alert(
+    session,
+    *,
+    user_id: int,
+    alert_type: str,
+    severity: str,
+    title: str,
+    body: str,
+    source_type: str = None,
+    source_id: str = None,
+    ttl_hours: int = 24,
+) -> MonitorAlert:
+    alert = MonitorAlert(
+        expires_at=_now() + timedelta(hours=ttl_hours),
+        user_id=user_id,
+        alert_type=alert_type,
+        severity=severity,
+        title=title,
+        body=body,
+        source_type=source_type,
+        source_id=source_id,
+    )
+    session.add(alert)
+    return alert
 
 
 def weather_job(session, user_id: int) -> str:
@@ -109,29 +137,70 @@ def weather_job(session, user_id: int) -> str:
 
 
 def triage_job(session, user_id: int) -> str:
-    """Placeholder — Phase 4 wires in triage snapshot generation."""
+    """
+    Build a triage snapshot and write a MonitorAlert when urgent tasks exist.
+    The alert surfaces at the next session start via session_context_intake.
+    """
+    from agent.core.temporal import DEFAULT_TIMEZONE
+    from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
+    from db.database import current_user_id
+    current_user_id.set(user_id)
+
     run = _start_run(session, "triage", user_id)
     try:
-        # Phase 4: build_triage_snapshot + MonitorAlert for urgent tasks
-        summary = "triage_job: not yet implemented (Phase 4)"
+        snapshot = build_triage_snapshot(session, opener="", timezone=DEFAULT_TIMEZONE)
+        session.commit()
+
+        urgent_count = len(snapshot.urgent_task_ids or [])
+        if urgent_count > 0:
+            _write_alert(
+                session,
+                user_id=user_id,
+                alert_type="triage",
+                severity="high",
+                title=f"{urgent_count} urgent task(s) need attention today",
+                body=format_triage_snapshot(session, snapshot),
+                source_type="triage_snapshot",
+                source_id=snapshot.id,
+                ttl_hours=20,
+            )
+            session.commit()
+
+        summary = (
+            f"Triage snapshot built. "
+            f"Urgent: {urgent_count}, "
+            f"routine: {len(snapshot.routine_task_ids or [])}, "
+            f"project: {len(snapshot.project_task_ids or [])}."
+        )
         print(f"  [triage] {summary}")
         _finish_run(session, run, summary)
         return summary
     except Exception as exc:
+        session.rollback()
         _fail_run(session, run, str(exc))
         raise
 
 
 def series_job(session, user_id: int) -> str:
-    """Placeholder — Phase 4 wires in recurring task series materialization."""
+    """
+    Materialize any recurring task series whose next_generation_date has
+    entered the rolling 14-day horizon. Idempotent: existing task dates are
+    skipped by materialize_task_series().
+    """
+    from agent.domain.tracker import materialize_task_series
+    from db.database import current_user_id
+    current_user_id.set(user_id)
+
     run = _start_run(session, "series_materialization", user_id)
     try:
-        # Phase 4: list_materializable_series + materialize_task_series
-        summary = "series_job: not yet implemented (Phase 4)"
+        created = materialize_task_series(session)
+        session.commit()
+        summary = f"Materialized {len(created)} recurring task(s) from active series."
         print(f"  [series] {summary}")
         _finish_run(session, run, summary)
         return summary
     except Exception as exc:
+        session.rollback()
         _fail_run(session, run, str(exc))
         raise
 
