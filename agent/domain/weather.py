@@ -12,6 +12,7 @@ from db.database import current_user_id
 from db.models import (
     GardenProfile,
     GardeningProject,
+    MonitorAlert,
     ProjectRevision,
     Task,
     TaskGenerationRun,
@@ -21,9 +22,13 @@ from db.models import (
 
 
 WEATHER_FRESHNESS_HOURS = 12
+MONITOR_FRESHNESS_HOURS = 6  # tighter freshness check when called from cron
 VALID_CHANGESET_STATUSES = {"draft", "approved", "dismissed"}
 RISK_IMPACT_TYPES = {"heat", "frost", "heavy_rain", "storm"}
 OPPORTUNITY_IMPACT_TYPES = {"good_planting_window"}
+WINDOW_IMPACT_TYPES = {"unsafe_outdoor_window", "safe_outdoor_window"}
+# Impact types that trigger auto-apply (no user approval) when detected by the monitor
+_CRITICAL_IMPACT_TYPES = frozenset({"storm", "frost", "heat"})
 
 
 def _task_intents(task: Task) -> set[str]:
@@ -126,7 +131,52 @@ def derive_weather_impacts(payload: dict[str, Any]) -> tuple[list[dict[str, Any]
             impacts.append({"date": day, "impact_type": "good_planting_window", "severity": "low", "summary": "Good planting conditions."})
             actions.append({"date": day, "action": "Good window for planting or transplanting."})
 
-    alerts = [impact["summary"] + f" ({impact['date']})" for impact in impacts if impact["impact_type"] != "good_planting_window"]
+        # Working window advisories — one per day, most severe condition wins.
+        # These do not change tasks; they surface as MonitorAlert working_window records.
+        unsafe_reason = None
+        unsafe_severity = None
+        timing_advice = None
+        if wind_speed >= 35:
+            unsafe_reason, unsafe_severity = "storm", "high"
+            timing_advice = "Avoid all outdoor work until storm passes."
+        elif max_temp is not None and max_temp >= 35:
+            unsafe_reason, unsafe_severity = "extreme_heat", "high"
+            timing_advice = "Work in early morning or evening only; avoid midday through late afternoon."
+        elif rain >= 25:
+            unsafe_reason, unsafe_severity = "heavy_rain", "medium"
+            timing_advice = "Plan indoor tasks or wait for a break in rain."
+        elif min_temp is not None and min_temp <= 0:
+            unsafe_reason, unsafe_severity = "frost", "medium"
+            timing_advice = "Avoid early morning outdoor work; check plant protection."
+
+        if unsafe_reason:
+            _labels = {"storm": "High winds", "extreme_heat": "Extreme heat", "heavy_rain": "Heavy rain", "frost": "Frost risk"}
+            impacts.append({
+                "date": day,
+                "impact_type": "unsafe_outdoor_window",
+                "severity": unsafe_severity,
+                "summary": f"{_labels[unsafe_reason]} on {day}. {timing_advice}",
+                "reason": unsafe_reason,
+                "timing_advice": timing_advice,
+            })
+        elif (
+            max_temp is not None
+            and 10 <= max_temp <= 28
+            and (min_temp is None or min_temp >= 4)
+            and rain < 8
+            and wind_speed < 22
+        ):
+            impacts.append({
+                "date": day,
+                "impact_type": "safe_outdoor_window",
+                "severity": "low",
+                "summary": f"Comfortable conditions on {day}. Good day for garden work.",
+                "reason": "pleasant_conditions",
+                "timing_advice": "Comfortable for outdoor work throughout the day.",
+            })
+
+    non_advisory = {"good_planting_window", "safe_outdoor_window"}
+    alerts = [impact["summary"] + f" ({impact['date']})" for impact in impacts if impact["impact_type"] not in non_advisory]
     return impacts, actions, "\n".join(summaries[:3]), "\n".join(alerts) if alerts else "No significant weather alerts."
 
 
@@ -257,15 +307,13 @@ def evaluate_weather_task_impacts(
     return impacts
 
 
-def draft_weather_task_changes(
+def _create_changeset(
     session,
-    *,
+    snapshot: WeatherSnapshot,
+    impacts: list[dict[str, Any]],
     project_id: Optional[str] = None,
 ) -> WeatherTaskChangeSet:
-    snapshot = get_latest_weather_snapshot(session)
-    if not snapshot:
-        raise ValueError("No weather snapshot found. Refresh weather first.")
-    impacts = evaluate_weather_task_impacts(session, project_id=project_id, weather_snapshot=snapshot)
+    """Create, flush, and log a WeatherTaskChangeSet from a pre-computed impact list."""
     summary = (
         f"Drafted {len(impacts)} weather-aware task recommendations."
         if impacts
@@ -291,6 +339,138 @@ def draft_weather_task_changes(
         subjects=[{"subject_type": "weather_task_change_set", "subject_id": change_set.id, "role": "primary"}],
     )
     return change_set
+
+
+def _is_critical_task_impact(impact: dict) -> bool:
+    """True for task impacts that should be auto-applied without user review."""
+    return impact.get("impact_type") in _CRITICAL_IMPACT_TYPES
+
+
+def _write_monitor_alert(
+    session,
+    *,
+    user_id: int,
+    alert_type: str,
+    severity: str,
+    title: str,
+    body: str,
+    source_type: Optional[str] = None,
+    source_id: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    ttl_hours: int = 24,
+) -> MonitorAlert:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    alert = MonitorAlert(
+        expires_at=now + timedelta(hours=ttl_hours),
+        user_id=user_id,
+        alert_type=alert_type,
+        severity=severity,
+        title=title,
+        body=body,
+        source_type=source_type,
+        source_id=source_id,
+        alert_metadata=metadata,
+    )
+    session.add(alert)
+    return alert
+
+
+def draft_weather_task_changes(
+    session,
+    *,
+    project_id: Optional[str] = None,
+) -> WeatherTaskChangeSet:
+    snapshot = get_latest_weather_snapshot(session)
+    if not snapshot:
+        raise ValueError("No weather snapshot found. Refresh weather first.")
+    impacts = evaluate_weather_task_impacts(session, project_id=project_id, weather_snapshot=snapshot)
+    return _create_changeset(session, snapshot, impacts, project_id)
+
+
+def apply_weather_impacts(
+    session,
+    *,
+    snapshot: WeatherSnapshot,
+    user_id: int,
+) -> dict[str, Any]:
+    """
+    Auto-apply critical weather impacts and queue moderate ones for user review.
+    Writes MonitorAlert records for all impact categories. Called by the monitor script.
+
+    Critical (storm, frost, heat): changeset is created and immediately approved.
+    Advisory (heavy_rain, etc.): changeset left as draft for user approval.
+    Working window: no task changes; advisory MonitorAlert only.
+
+    Returns a summary dict with counts of what was done.
+    """
+    current_user_id.set(user_id)
+
+    # Working window advisories come from the snapshot's derived_impacts directly.
+    # They do not create or modify tasks.
+    window_impacts = [
+        imp for imp in (snapshot.derived_impacts or [])
+        if imp.get("impact_type") in WINDOW_IMPACT_TYPES
+    ]
+    for imp in window_impacts:
+        _write_monitor_alert(
+            session,
+            user_id=user_id,
+            alert_type="working_window",
+            severity=imp.get("severity", "medium"),
+            title=imp["summary"].split(".")[0],
+            body=imp.get("timing_advice", imp["summary"]),
+            source_type="weather_snapshot",
+            source_id=snapshot.id,
+            metadata={"impact_type": imp["impact_type"], "date": imp["date"], "reason": imp.get("reason")},
+            ttl_hours=18,
+        )
+
+    # Task-level impacts — split by criticality
+    task_impacts = evaluate_weather_task_impacts(session, weather_snapshot=snapshot)
+    critical = [i for i in task_impacts if _is_critical_task_impact(i)]
+    advisory = [i for i in task_impacts if not _is_critical_task_impact(i)]
+
+    if critical:
+        cs = _create_changeset(session, snapshot, critical)
+        approve_weather_task_changes(session, cs.id)
+        impact_types = sorted({i["impact_type"] for i in critical})
+        tasks_affected = len({i["task_id"] for i in critical})
+        _write_monitor_alert(
+            session,
+            user_id=user_id,
+            alert_type="weather_critical",
+            severity="critical",
+            title=f"{', '.join(t.title() for t in impact_types)} warning — {tasks_affected} task(s) auto-deferred",
+            body="\n".join(f"• {i['summary']}" for i in critical[:10]),
+            source_type="weather_snapshot",
+            source_id=snapshot.id,
+            metadata={"impact_types": impact_types, "tasks_affected": tasks_affected, "change_set_id": cs.id},
+            ttl_hours=48,
+        )
+
+    if advisory:
+        cs = _create_changeset(session, snapshot, advisory)
+        impact_types = sorted({i["impact_type"] for i in advisory})
+        tasks_affected = len({i["task_id"] for i in advisory})
+        _write_monitor_alert(
+            session,
+            user_id=user_id,
+            alert_type="weather_advisory",
+            severity="medium",
+            title=f"Weather advisory — {tasks_affected} task(s) may need attention",
+            body="\n".join(f"• {i['summary']}" for i in advisory[:10]),
+            source_type="weather_snapshot",
+            source_id=snapshot.id,
+            metadata={"impact_types": impact_types, "tasks_affected": tasks_affected, "change_set_id": cs.id},
+            ttl_hours=24,
+        )
+
+    session.flush()
+    return {
+        "critical_applied": len(critical),
+        "advisory_queued": len(advisory),
+        "window_alerts": len(window_impacts),
+    }
 
 
 def _event_followup_run(session, *, project_id: str, revision_id: str, summary: str) -> TaskGenerationRun:

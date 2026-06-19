@@ -58,15 +58,52 @@ def _fail_run(session, run: MonitorRun, error: str) -> None:
 
 
 def weather_job(session, user_id: int) -> str:
-    """Placeholder — Phase 2 wires in weather refresh and alert writing."""
+    """
+    Refresh the weather snapshot if stale, then auto-apply critical impacts
+    and queue advisory ones. Writes MonitorAlert records for all categories.
+    Only processes impacts when a fresh snapshot was created this run.
+    """
+    from agent.domain.weather import (
+        MONITOR_FRESHNESS_HOURS,
+        apply_weather_impacts,
+        get_latest_weather_snapshot,
+        load_or_refresh_weather_snapshot,
+    )
+    from db.database import current_user_id
+    current_user_id.set(user_id)
+
     run = _start_run(session, "weather", user_id)
     try:
-        # Phase 2: refresh_weather_snapshot + apply_weather_impacts
-        summary = "weather_job: not yet implemented (Phase 2)"
+        existing = get_latest_weather_snapshot(session)
+        snapshot = load_or_refresh_weather_snapshot(
+            session, freshness_hours=MONITOR_FRESHNESS_HOURS
+        )
+        if snapshot is None:
+            summary = "No weather snapshot available (garden profile may be missing location)."
+            print(f"  [weather] {summary}")
+            _finish_run(session, run, summary)
+            return summary
+
+        is_new = existing is None or snapshot.id != existing.id
+        if not is_new:
+            summary = f"Snapshot {snapshot.id} is still fresh; skipping impact evaluation."
+            print(f"  [weather] {summary}")
+            _finish_run(session, run, summary)
+            return summary
+
+        result = apply_weather_impacts(session, snapshot=snapshot, user_id=user_id)
+        session.commit()
+        summary = (
+            f"Snapshot refreshed. "
+            f"Critical auto-applied: {result['critical_applied']}, "
+            f"advisory queued: {result['advisory_queued']}, "
+            f"window alerts: {result['window_alerts']}."
+        )
         print(f"  [weather] {summary}")
         _finish_run(session, run, summary)
         return summary
     except Exception as exc:
+        session.rollback()
         _fail_run(session, run, str(exc))
         raise
 
