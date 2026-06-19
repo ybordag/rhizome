@@ -1,7 +1,8 @@
 # Epic 6 Plan: Reactive Monitoring and Alerting
 
-**Epic status:** Ready to start  
-**Last updated:** April 29th, 2026
+**Epic status:** In progress — branch `calendula`  
+**Last updated:** 2026-06-18  
+**Implementation plan:** [docs/current_work/calendula_reactive_monitoring.md](../../current_work/calendula_reactive_monitoring.md)
 
 ---
 
@@ -138,11 +139,11 @@ This epic should be considered complete when:
 
 ---
 
-## Open questions to resolve inside this epic
+## Open questions — resolved
 
-- what alert persistence model should we use?
-- should weather and pest alerts share one monitoring abstraction or stay
-  separate at first?
-- when should an alert create a new task versus only escalating urgency on an
-  existing task?
-- when should an alert trigger a plan amendment rather than a task adjustment?
+| Question | Decision |
+|----------|----------|
+| Alert persistence model? | New `MonitorAlert` model, queryable by API without a user session |
+| Shared or separate model for weather vs pest alerts? | Shared `MonitorAlert` with `alert_type` discriminator |
+| New task vs urgency escalation? | Critical severity (storm, severe frost, high heat): auto-apply task changes. Moderate: queue for approval. Working window: advisory only, no task changes. |
+| Plan amendment vs task adjustment? | Plan amendments remain user-initiated; alerts only touch tasks |

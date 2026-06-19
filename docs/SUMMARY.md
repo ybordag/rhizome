@@ -20,6 +20,9 @@
 - [Code Organization](development/code-organization.md) — directory guide, module responsibilities, how to add tools
 - [Testing Guide](development/testing.md) — test structure, patterns, writing new tests
 
+## Current Work
+- [Calendula: Reactive Monitoring and Alerting](current_work/calendula_reactive_monitoring.md) — cron runner, MonitorAlert model, auto-apply weather policy, iNaturalist pest monitoring
+
 ## Roadmap
 - [Roadmap Overview](roadmap/overview.md) — epics, current status, what's next
 - [Epic 9: App Frontend Experience](roadmap/epics/epic_09_app_frontend_experience.md)

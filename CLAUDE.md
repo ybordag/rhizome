@@ -136,6 +136,19 @@ main.py             — CLI entrypoint
 - Proxies all `/api/v1/*` to Rhizome's internal HTTP interface
 - See `../cambium/CLAUDE.md` for Cambium's build plan and invariants
 
+**Active work — `calendula` branch (reactive monitoring):**
+- Scheduled cron runner (`scripts/monitor.py`) for weather refresh, triage, series materialization
+- `MonitorAlert` + `MonitorRun` models — alert persistence queryable without a session
+- Auto-apply critical weather changes (storm, severe frost, high heat); queue moderate for approval
+- Safe/unsafe outdoor working window advisory alerts
+- Session-start delivery via `session_context_intake` + `llm_call` system prompt injection
+- Phase 5: iNaturalist pest monitoring (later)
+- See `docs/current_work/calendula_reactive_monitoring.md` for full plan
+
+**Active work — `iris` branch (image modality):**
+- Image input to Rhizome agent (multimodal `HumanMessage` handling)
+- Branch created, plan not yet started
+
 **Next in Rhizome:**
 - Postgres migration (prerequisite for multi-instance deployment and FK enforcement)
 - Multi-tenancy: thread `user_id` from JWT (via Cambium) into every tool query
