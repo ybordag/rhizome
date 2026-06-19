@@ -99,6 +99,19 @@ This gives two Rhizome workers across two nodes. Postgres on Spark B means Rhizo
 
 With multiple Rhizome instances, each runs its own SQLAlchemy connection pool. At 2–4 instances, the default pool size (5 connections per instance) is well within Postgres's default limit (100). If the instance count grows, add PgBouncer as a connection pooler in front of Postgres.
 
+### Schema and migrations
+
+All Rhizome domain tables live in the **`rhizome` schema**. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome`. The `cambium` schema (users, refresh_tokens) is owned by Cambium and never queried by Rhizome.
+
+**Alembic** manages schema migrations. Before deploying a Rhizome update that includes model changes:
+
+```bash
+# On the deployment host (or in a migration job/init container):
+alembic upgrade head
+```
+
+This is safe to run before the new Rhizome processes start — migrations are idempotent and run against the live Postgres without downtime for simple column additions. For destructive changes (DROP COLUMN), coordinate with a blue/green deploy.
+
 ---
 
 ## Thread routing

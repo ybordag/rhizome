@@ -222,4 +222,23 @@ Conversation state lives in the LangGraph PostgresSaver checkpoint store, keyed 
 
 `user_id` flows through `graph.config["configurable"]["user_id"]` and is set into the `current_user_id` ContextVar by `session_context_intake` at the start of every turn. All tool queries use `current_user_id.get()` — never a hardcoded value.
 
-This migration is required before: multi-instance deployment, FK enforcement (SQLite ignores FKs at runtime), and pgvector for embeddings.
+---
+
+## Schema and migrations
+
+All domain tables live in the **`rhizome` schema** in Postgres. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome` so queries and `create_all()` target the correct schema.
+
+**Alembic** manages schema migrations in staging and production:
+
+```bash
+# Apply pending migrations before starting the server
+alembic upgrade head
+
+# After changing db/models.py — generate and apply a new migration
+alembic revision --autogenerate -m "describe the change"
+alembic upgrade head
+```
+
+`alembic/versions/` contains the migration history. `alembic.ini` and `alembic/env.py` configure the connection (reads `DATABASE_URL` from environment) and target schema.
+
+Tests use `init_db()` with in-memory SQLite — they never run Alembic. `init_db()` remains as a safety net for fresh installs only.
