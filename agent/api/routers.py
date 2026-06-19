@@ -15,7 +15,9 @@ from agent.api.models import (
     AgentRequest,
     AgentResponse,
     AssignLocationsRequest,
+    CreateBedRequest,
     CreateProjectRequest,
+    CreateTaskRequest,
     CreateThreadRequest,
     DeferTaskRequest,
     ReportIncidentRequest,
@@ -29,7 +31,11 @@ from agent.api.models import (
 )
 from agent.core.graph import agent
 from db.database import SessionLocal, current_user_id
-from db.models import MonitorAlert
+from db.models import (
+    Bed, Container, GardenProfile, GardeningProject, MonitorAlert, Plant,
+    PlantBatch, ProjectBed, ProjectContainer, ProjectPlant, Task,
+)
+from sqlalchemy import func
 
 # ---------------------------------------------------------------------------
 # Agent router
@@ -267,24 +273,160 @@ def dismiss_alert(alert_id: str, user_id: str):
 # --- Tasks ---
 
 @data_router.get("/tasks")
-def list_tasks(user_id: str, project_id: str = None, status: str = None):
+def list_tasks(
+    user_id: str, project_id: str = None, status: str = None,
+    type: str = None, subject_type: str = None, subject_id: str = None,
+):
     _set_user(user_id)
-    from agent.tools.projects.tracker import list_project_tasks
-    return {"result": list_project_tasks.invoke({"project_id": project_id or "", "status": status})}
+    session = SessionLocal()
+    try:
+        user_pids = [pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == user_id).all()]
+        query = session.query(Task).filter(Task.project_id.in_(user_pids))
+        if project_id:
+            query = query.filter(Task.project_id == project_id)
+        if status:
+            query = query.filter(Task.status == status)
+        else:
+            query = query.filter(Task.status != "superseded")
+        if type:
+            query = query.filter(Task.type == type)
+        tasks = query.order_by(Task.deadline.asc(), Task.scheduled_date.asc()).all()
+        # linked_subjects is JSON — filter in Python to stay cross-DB compatible
+        if subject_type or subject_id:
+            def _matches(t):
+                for s in (t.linked_subjects or []):
+                    if subject_type and s.get("subject_type") != subject_type:
+                        continue
+                    if subject_id and s.get("subject_id") != subject_id:
+                        continue
+                    return True
+                return False
+            tasks = [t for t in tasks if _matches(t)]
+        return [t.to_summary_view() for t in tasks]
+    finally:
+        session.close()
+
+
+@data_router.post("/tasks")
+def create_task(user_id: str, body: CreateTaskRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == body.project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        from datetime import datetime as _dt
+        def _parse_date(s):
+            return _dt.fromisoformat(s) if s else None
+        task = Task(
+            project_id=body.project_id,
+            source_type="user",
+            generator_key="user_direct",
+            is_user_modified=True,
+            title=body.title,
+            type=body.type,
+            priority=body.priority or "normal",
+            scheduled_date=_parse_date(body.scheduled_date),
+            earliest_start=_parse_date(body.earliest_start),
+            window_start=_parse_date(body.window_start),
+            window_end=_parse_date(body.window_end),
+            deadline=_parse_date(body.deadline),
+            estimated_minutes=body.estimated_minutes or 0,
+            notes=body.notes,
+            linked_subjects=body.linked_subjects or [],
+            reversible=body.reversible if body.reversible is not None else True,
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+        return task.to_detail_view()
+    finally:
+        session.close()
+
+
+@data_router.delete("/tasks/{task_id}")
+def delete_task(task_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == user_id).all()}
+        task = session.query(Task).filter(Task.id == task_id).first()
+        if not task or task.project_id not in user_pids:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.status == "in_progress":
+            raise HTTPException(status_code=400, detail="Cannot delete a task that is in progress. Complete or skip it first.")
+        session.delete(task)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
 
 
 @data_router.get("/tasks/daily")
 def daily_tasks(user_id: str, limit: int = 10, project_id: str = None):
     _set_user(user_id)
-    from agent.tools.projects.tracker import get_daily_priority_tasks
-    return {"result": get_daily_priority_tasks.invoke({"limit": limit, "project_id": project_id})}
+    from agent.domain.tracker import get_daily_priority_tasks as _domain_daily
+    session = SessionLocal()
+    try:
+        scored = _domain_daily(session, limit=limit, project_id=project_id)
+        return [
+            row["task"].to_summary_view(
+                urgency=row["urgency"],
+                blocked=row["blocked"],
+                due_date=row["due_date"],
+                score=row["score"],
+            )
+            for row in scored
+        ]
+    finally:
+        session.close()
+
+
+@data_router.get("/tasks/due")
+def list_due_tasks(user_id: str, project_id: str = None, days_ahead: int = 7):
+    _set_user(user_id)
+    from agent.domain.tracker import build_due_task_view as _domain_due
+    session = SessionLocal()
+    try:
+        rows = _domain_due(session, project_id=project_id, days_ahead=days_ahead)
+        return [
+            row["task"].to_summary_view(
+                urgency=row["urgency"],
+                blocked=row["blocked"],
+                due_date=row["due_date"],
+            )
+            for row in rows
+        ]
+    finally:
+        session.close()
+
+
+@data_router.get("/tasks/blocked")
+def list_blocked_tasks(user_id: str, project_id: str = None):
+    _set_user(user_id)
+    from agent.tools.projects.tracker import list_blocked_tasks as _list_blocked_tasks
+    return {"result": _list_blocked_tasks.invoke({"project_id": project_id})}
 
 
 @data_router.get("/tasks/{task_id}")
 def get_task(task_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.tracker import get_task as _get_task
-    return _result_or_404(_get_task.invoke({"task_id": task_id}))
+    session = SessionLocal()
+    try:
+        task = session.query(Task).filter(Task.id == task_id).first()
+        if not task or task.project_id not in [
+            pid for (pid,) in session.query(GardeningProject.id).filter(
+                GardeningProject.user_id == user_id).all()
+        ]:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return task.to_detail_view()
+    finally:
+        session.close()
 
 
 @data_router.post("/tasks/{task_id}/complete")
@@ -325,20 +467,6 @@ def update_task(task_id: str, user_id: str, body: UpdateTaskRequest = None):
     return _result_or_404(_update_task.invoke(params))
 
 
-@data_router.get("/tasks/due")
-def list_due_tasks(user_id: str, project_id: str = None, days_ahead: int = 7):
-    _set_user(user_id)
-    from agent.tools.projects.tracker import list_due_tasks as _list_due_tasks
-    return {"result": _list_due_tasks.invoke({"project_id": project_id, "days_ahead": days_ahead})}
-
-
-@data_router.get("/tasks/blocked")
-def list_blocked_tasks(user_id: str, project_id: str = None):
-    _set_user(user_id)
-    from agent.tools.projects.tracker import list_blocked_tasks as _list_blocked_tasks
-    return {"result": _list_blocked_tasks.invoke({"project_id": project_id})}
-
-
 @data_router.get("/tasks/{task_id}/blockers")
 def explain_task_blockers(task_id: str, user_id: str):
     _set_user(user_id)
@@ -375,15 +503,61 @@ def update_task_series(series_id: str, user_id: str, body: UpdateTaskSeriesReque
 @data_router.get("/projects")
 def list_projects(user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.projects import list_projects as _list_projects
-    return {"result": _list_projects.invoke({})}
+    session = SessionLocal()
+    try:
+        projects = session.query(GardeningProject).filter(
+            GardeningProject.user_id == user_id
+        ).order_by(GardeningProject.created_at.desc()).all()
+        if not projects:
+            return []
+        pids = [p.id for p in projects]
+        plant_counts = dict(session.query(ProjectPlant.project_id, func.count(ProjectPlant.id))
+            .filter(ProjectPlant.project_id.in_(pids), ProjectPlant.removed_at == None)
+            .group_by(ProjectPlant.project_id).all())
+        bed_counts = dict(session.query(ProjectBed.project_id, func.count(ProjectBed.id))
+            .filter(ProjectBed.project_id.in_(pids))
+            .group_by(ProjectBed.project_id).all())
+        container_counts = dict(session.query(ProjectContainer.project_id, func.count(ProjectContainer.id))
+            .filter(ProjectContainer.project_id.in_(pids))
+            .group_by(ProjectContainer.project_id).all())
+        batch_counts = dict(session.query(PlantBatch.project_id, func.count(PlantBatch.id))
+            .filter(PlantBatch.project_id.in_(pids))
+            .group_by(PlantBatch.project_id).all())
+        return [p.to_summary_view(
+            plant_count=plant_counts.get(p.id, 0),
+            bed_count=bed_counts.get(p.id, 0),
+            container_count=container_counts.get(p.id, 0),
+            batch_count=batch_counts.get(p.id, 0),
+        ) for p in projects]
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}")
 def get_project(project_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.projects import get_project as _get_project
-    return _result_or_404(_get_project.invoke({"project_id": project_id}))
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        plant_count = session.query(func.count(ProjectPlant.id)).filter(
+            ProjectPlant.project_id == project_id, ProjectPlant.removed_at == None).scalar() or 0
+        bed_count = session.query(func.count(ProjectBed.id)).filter(
+            ProjectBed.project_id == project_id).scalar() or 0
+        container_count = session.query(func.count(ProjectContainer.id)).filter(
+            ProjectContainer.project_id == project_id).scalar() or 0
+        batch_count = session.query(func.count(PlantBatch.id)).filter(
+            PlantBatch.project_id == project_id).scalar() or 0
+        return project.to_detail_view(
+            plant_count=plant_count, bed_count=bed_count,
+            container_count=container_count, batch_count=batch_count,
+        )
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/progress")
@@ -396,8 +570,23 @@ def get_project_progress(project_id: str, user_id: str):
 @data_router.get("/projects/{project_id}/tasks")
 def get_project_tasks(project_id: str, user_id: str, status: str = None):
     _set_user(user_id)
-    from agent.tools.projects.tracker import list_project_tasks
-    return {"result": list_project_tasks.invoke({"project_id": project_id, "status": status})}
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        query = session.query(Task).filter(Task.project_id == project_id)
+        if status:
+            query = query.filter(Task.status == status)
+        else:
+            query = query.filter(Task.status != "superseded")
+        tasks = query.order_by(Task.parent_task_id.asc(), Task.deadline.asc(), Task.scheduled_date.asc()).all()
+        return [t.to_summary_view() for t in tasks]
+    finally:
+        session.close()
 
 
 @data_router.post("/projects")
@@ -467,6 +656,54 @@ def list_project_series(project_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.tracker import list_task_series
     return {"result": list_task_series.invoke({"project_id": project_id})}
+
+
+@data_router.get("/projects/{project_id}/beds")
+def list_project_beds(project_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        beds = session.query(Bed).join(ProjectBed, Bed.id == ProjectBed.bed_id).filter(
+            ProjectBed.project_id == project_id).all()
+        # Determine availability: not in any OTHER active/maintaining project
+        busy_bed_ids = {bid for (bid,) in session.query(ProjectBed.bed_id).join(
+            GardeningProject, ProjectBed.project_id == GardeningProject.id
+        ).filter(
+            GardeningProject.user_id == user_id,
+            GardeningProject.status.in_(["active", "maintaining"]),
+            GardeningProject.id != project_id,
+        ).all()}
+        return [b.to_view(available=b.id not in busy_bed_ids) for b in beds]
+    finally:
+        session.close()
+
+
+@data_router.get("/projects/{project_id}/containers")
+def list_project_containers(project_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        containers = session.query(Container).join(
+            ProjectContainer, Container.id == ProjectContainer.container_id
+        ).filter(ProjectContainer.project_id == project_id).all()
+        busy_ids = {cid for (cid,) in session.query(ProjectContainer.container_id).join(
+            GardeningProject, ProjectContainer.project_id == GardeningProject.id
+        ).filter(
+            GardeningProject.user_id == user_id,
+            GardeningProject.status.in_(["active", "maintaining"]),
+            GardeningProject.id != project_id,
+        ).all()}
+        return [c.to_view(available=c.id not in busy_ids) for c in containers]
+    finally:
+        session.close()
 
 
 @data_router.post("/projects/{project_id}/beds/{bed_id}")
@@ -601,8 +838,14 @@ def get_monitor_run(run_id: str, user_id: str):
 @data_router.get("/garden/profile")
 def get_garden_profile(user_id: str):
     _set_user(user_id)
-    from agent.tools.garden.profile import get_garden_profile as _get
-    return {"result": _get.invoke({})}
+    session = SessionLocal()
+    try:
+        profile = session.query(GardenProfile).filter(GardenProfile.user_id == user_id).first()
+        if not profile:
+            raise HTTPException(status_code=404, detail="Garden profile not found")
+        return profile.to_view()
+    finally:
+        session.close()
 
 
 @data_router.patch("/garden/profile")
@@ -617,10 +860,67 @@ def update_garden_profile(user_id: str, body: dict = None):
 # ---------------------------------------------------------------------------
 
 @data_router.get("/garden/beds")
-def list_beds(user_id: str):
+def list_beds(user_id: str, available: str = None):
     _set_user(user_id)
-    from agent.tools.garden.beds_containers import list_beds as _list
-    return {"result": _list.invoke({})}
+    session = SessionLocal()
+    try:
+        query = session.query(Bed).filter(Bed.user_id == user_id)
+        if available == "true":
+            busy_bed_ids = {bid for (bid,) in session.query(ProjectBed.bed_id).join(
+                GardeningProject, ProjectBed.project_id == GardeningProject.id
+            ).filter(
+                GardeningProject.user_id == user_id,
+                GardeningProject.status.in_(["active", "maintaining"]),
+            ).all()}
+            query = query.filter(~Bed.id.in_(busy_bed_ids))
+        return [b.to_view() for b in query.all()]
+    finally:
+        session.close()
+
+
+@data_router.post("/garden/beds")
+def create_bed(user_id: str, body: CreateBedRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        profile = session.query(GardenProfile).filter(GardenProfile.user_id == user_id).first()
+        if not profile:
+            raise HTTPException(status_code=404, detail="Garden profile not found")
+        import re
+        sqft = None
+        if body.size:
+            m = re.search(r"([\d.]+)", body.size)
+            if m:
+                sqft = float(m.group(1))
+        bed = Bed(
+            user_id=user_id,
+            garden_profile_id=profile.id,
+            name=body.name,
+            location=body.location,
+            dimensions_sqft=sqft,
+            sunlight=body.sunlight,
+            soil_type=body.soil_type,
+            notes=body.notes,
+        )
+        session.add(bed)
+        session.commit()
+        session.refresh(bed)
+        return bed.to_view()
+    finally:
+        session.close()
+
+
+@data_router.get("/garden/beds/{bed_id}")
+def get_bed(bed_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        bed = session.query(Bed).filter(Bed.id == bed_id, Bed.user_id == user_id).first()
+        if not bed:
+            raise HTTPException(status_code=404, detail="Bed not found")
+        return bed.to_view()
+    finally:
+        session.close()
 
 
 @data_router.patch("/garden/beds/{bed_id}")
@@ -640,8 +940,14 @@ def delete_bed(bed_id: str, user_id: str):
 @data_router.get("/garden/beds/{bed_id}/care/state")
 def get_bed_care_state(bed_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.care import get_current_care_state
-    return {"result": get_current_care_state.invoke({"subject_type": "bed", "subject_id": bed_id})}
+    session = SessionLocal()
+    try:
+        bed = session.query(Bed).filter(Bed.id == bed_id, Bed.user_id == user_id).first()
+        if not bed:
+            raise HTTPException(status_code=404, detail="Bed not found")
+        return bed.to_care_state_view()
+    finally:
+        session.close()
 
 
 @data_router.get("/garden/beds/{bed_id}/care/history")
@@ -663,10 +969,36 @@ def get_bed_activity(bed_id: str, user_id: str, limit: int = 20):
 # ---------------------------------------------------------------------------
 
 @data_router.get("/garden/containers")
-def list_containers(user_id: str):
+def list_containers(user_id: str, available: str = None):
     _set_user(user_id)
-    from agent.tools.garden.beds_containers import list_containers as _list
-    return {"result": _list.invoke({})}
+    session = SessionLocal()
+    try:
+        query = session.query(Container).filter(Container.user_id == user_id)
+        if available == "true":
+            busy_ids = {cid for (cid,) in session.query(ProjectContainer.container_id).join(
+                GardeningProject, ProjectContainer.project_id == GardeningProject.id
+            ).filter(
+                GardeningProject.user_id == user_id,
+                GardeningProject.status.in_(["active", "maintaining"]),
+            ).all()}
+            query = query.filter(~Container.id.in_(busy_ids))
+        return [c.to_view() for c in query.all()]
+    finally:
+        session.close()
+
+
+@data_router.get("/garden/containers/{container_id}")
+def get_container(container_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.id == container_id, Container.user_id == user_id).first()
+        if not container:
+            raise HTTPException(status_code=404, detail="Container not found")
+        return container.to_view()
+    finally:
+        session.close()
 
 
 @data_router.post("/garden/containers")
@@ -694,8 +1026,15 @@ def remove_container(container_id: str, user_id: str):
 @data_router.get("/garden/containers/{container_id}/care/state")
 def get_container_care_state(container_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.care import get_current_care_state
-    return {"result": get_current_care_state.invoke({"subject_type": "container", "subject_id": container_id})}
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.id == container_id, Container.user_id == user_id).first()
+        if not container:
+            raise HTTPException(status_code=404, detail="Container not found")
+        return container.to_care_state_view()
+    finally:
+        session.close()
 
 
 @data_router.get("/garden/containers/{container_id}/care/history")
@@ -717,10 +1056,76 @@ def get_container_activity(container_id: str, user_id: str, limit: int = 20):
 # ---------------------------------------------------------------------------
 
 @data_router.get("/garden/plants")
-def list_plants(user_id: str, status: str = None, project_id: str = None, batch_id: str = None):
+def list_plants(
+    user_id: str, status: str = None, project_id: str = None, batch_id: str = None,
+    bed_id: str = None, container_id: str = None, location: str = None,
+):
     _set_user(user_id)
-    from agent.tools.garden.plants import list_plants as _list
-    return {"result": _list.invoke({"status": status, "project_id": project_id, "batch_id": batch_id})}
+    session = SessionLocal()
+    try:
+        query = session.query(Plant).filter(Plant.user_id == user_id)
+        if status:
+            query = query.filter(Plant.status == status)
+        else:
+            query = query.filter(Plant.status != "removed")
+        if batch_id:
+            query = query.filter(Plant.batch_id == batch_id)
+        if bed_id:
+            query = query.filter(Plant.bed_id == bed_id)
+        if container_id:
+            query = query.filter(Plant.container_id == container_id)
+        if project_id:
+            query = query.join(ProjectPlant, Plant.id == ProjectPlant.plant_id).filter(
+                ProjectPlant.project_id == project_id, ProjectPlant.removed_at == None)
+        if location:
+            # Filter plants whose bed or container is at the given location
+            location_bed_ids = {bid for (bid,) in session.query(Bed.id).filter(
+                Bed.user_id == user_id, Bed.location == location).all()}
+            location_container_ids = {cid for (cid,) in session.query(Container.id).filter(
+                Container.user_id == user_id, Container.location == location).all()}
+            from sqlalchemy import or_
+            query = query.filter(or_(
+                Plant.bed_id.in_(location_bed_ids),
+                Plant.container_id.in_(location_container_ids),
+            ))
+        plants = query.all()
+        # Bulk-fetch location names to avoid N+1
+        bed_ids_set = {p.bed_id for p in plants if p.bed_id}
+        container_ids_set = {p.container_id for p in plants if p.container_id}
+        bed_names = {b.id: b.name for b in session.query(Bed).filter(Bed.id.in_(bed_ids_set)).all()} if bed_ids_set else {}
+        container_names = {c.id: c.name for c in session.query(Container).filter(
+            Container.id.in_(container_ids_set)).all()} if container_ids_set else {}
+        def _location_name(p):
+            if p.bed_id:
+                return bed_names.get(p.bed_id)
+            if p.container_id:
+                return container_names.get(p.container_id)
+            return None
+        return [p.to_summary_view(location_name=_location_name(p)) for p in plants]
+    finally:
+        session.close()
+
+
+@data_router.get("/garden/plants/{plant_id}")
+def get_plant(plant_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        plant = session.query(Plant).filter(Plant.id == plant_id, Plant.user_id == user_id).first()
+        if not plant:
+            raise HTTPException(status_code=404, detail="Plant not found")
+        bed_name = None
+        container_name = None
+        if plant.bed_id:
+            bed = session.query(Bed).filter(Bed.id == plant.bed_id).first()
+            bed_name = bed.name if bed else None
+        elif plant.container_id:
+            container = session.query(Container).filter(Container.id == plant.container_id).first()
+            container_name = container.name if container else None
+        location_name = bed_name or container_name
+        return plant.to_detail_view(location_name=location_name)
+    finally:
+        session.close()
 
 
 @data_router.post("/garden/plants")
@@ -778,8 +1183,14 @@ def batch_remove_plants(user_id: str, body: dict):
 @data_router.get("/garden/plants/{plant_id}/care/state")
 def get_plant_care_state(plant_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.care import get_current_care_state
-    return {"result": get_current_care_state.invoke({"subject_type": "plant", "subject_id": plant_id})}
+    session = SessionLocal()
+    try:
+        plant = session.query(Plant).filter(Plant.id == plant_id, Plant.user_id == user_id).first()
+        if not plant:
+            raise HTTPException(status_code=404, detail="Plant not found")
+        return plant.to_care_state_view()
+    finally:
+        session.close()
 
 
 @data_router.get("/garden/plants/{plant_id}/care/history")
@@ -1105,11 +1516,42 @@ def delete_thread(thread_id: str, user_id: str):
 def list_recent_activity(
     user_id: str,
     category: str = None, event_type: str = None,
+    project_id: str = None, subject_type: str = None,
     since: str = None, before_timestamp: str = None, limit: int = 20,
 ):
     _set_user(user_id)
     from agent.tools.operations.activity import list_recent_activity as _list
     return {"result": _list.invoke({
         "category": category, "event_type": event_type,
+        "project_id": project_id, "subject_type": subject_type,
         "since": since, "before_timestamp": before_timestamp, "limit": limit,
     })}
+
+
+@data_router.get("/activity/stats")
+def get_activity_stats(
+    user_id: str,
+    since: str,
+    before: str = None,
+    event_types: str = None,
+    project_id: str = None,
+    group_by: str = "day",
+):
+    _set_user(user_id)
+    from datetime import datetime
+    from agent.domain.activity_log import get_activity_stats as _stats
+    since_dt = datetime.fromisoformat(since)
+    before_dt = datetime.fromisoformat(before) if before else None
+    event_types_list = [e.strip() for e in event_types.split(",")] if event_types else None
+    session = SessionLocal()
+    try:
+        return _stats(
+            session,
+            since=since_dt,
+            before=before_dt,
+            event_types=event_types_list,
+            project_id=project_id,
+            group_by=group_by,
+        )
+    finally:
+        session.close()

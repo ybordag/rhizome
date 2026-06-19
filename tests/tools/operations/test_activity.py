@@ -185,6 +185,7 @@ def test_project_activity_event_type_filtering_returns_only_matching_events(
 def test_activity_feeds_are_newest_first(db_session, patched_sessionlocal, seed_garden_profile):
     project = make_project(db_session, seed_garden_profile)
     older = ActivityEvent(
+        user_id="1",
         actor_type="agent",
         actor_label="rhizome_tool",
         event_type="project_updated",
@@ -195,6 +196,7 @@ def test_activity_feeds_are_newest_first(db_session, patched_sessionlocal, seed_
         event_metadata={},
     )
     newer = ActivityEvent(
+        user_id="1",
         actor_type="agent",
         actor_label="rhizome_tool",
         event_type="project_status_changed",

@@ -193,6 +193,7 @@ def test_event_anchor_generation_creates_follow_up_task_when_anchor_event_exists
         ],
     )
     event = ActivityEvent(
+        user_id="1",
         actor_type="agent",
         actor_label="rhizome_tool",
         event_type="plant_germinated",

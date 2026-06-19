@@ -455,3 +455,131 @@ def test_resolve_interaction_record_null_project_id_still_records(db_session, pa
         ActivityEvent.event_type == "interaction_resolved"
     ).all()
     assert len(events) == 1
+
+
+# ─── Multi-tenancy regression ─────────────────────────────────────────────────
+
+@pytest.mark.integration
+def test_list_recent_activity_entries_excludes_other_user(db_session, patched_sessionlocal):
+    """Events written by user '2' must not appear when querying as user '1'."""
+    from db.database import current_user_id
+
+    profile, project, revision, run = _base(db_session)
+
+    # Write two events as user '1' (default from reset_user_id fixture).
+    _record_event(db_session, project.id, "task_created", "task", "task", "t-user1-a")
+    _record_event(db_session, project.id, "task_started", "task", "task", "t-user1-b")
+
+    # Write one event as user '2'.
+    current_user_id.set("2")
+    _record_event(db_session, project.id, "task_completed", "task", "task", "t-user2")
+    current_user_id.set("1")
+
+    results = list_recent_activity_entries(db_session)
+
+    event_types = [e.event_type for e in results]
+    assert "task_created" in event_types
+    assert "task_started" in event_types
+    assert "task_completed" not in event_types, "user '2' event leaked into user '1' feed"
+
+
+@pytest.mark.integration
+def test_record_activity_event_stamps_current_user_id(db_session, patched_sessionlocal):
+    """Every event written via record_activity_event carries the current user_id."""
+    profile, project, revision, run = _base(db_session)
+    event = _record_event(db_session, project.id, "task_created", "task", "task", "t1")
+    assert event.user_id == "1"
+
+
+# ─── Activity stats ───────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+def test_get_activity_stats_totals_and_by_day(db_session, patched_sessionlocal):
+    from datetime import date, timedelta
+    from agent.domain.activity_log import get_activity_stats
+
+    profile, project, revision, run = _base(db_session)
+    base = datetime(2026, 6, 10, 12, 0, 0)
+
+    e1 = _record_event(db_session, project.id, "task_completed", "task", "task", "t1")
+    e1.created_at = base
+    e2 = _record_event(db_session, project.id, "task_completed", "task", "task", "t2")
+    e2.created_at = base
+    e3 = _record_event(db_session, project.id, "task_deferred", "task", "task", "t3")
+    e3.created_at = base + timedelta(days=1)
+    db_session.flush()
+
+    stats = get_activity_stats(
+        db_session,
+        since=datetime(2026, 6, 9),
+        before=datetime(2026, 6, 12),
+    )
+
+    assert stats["totals"]["task_completed"] == 2
+    assert stats["totals"]["task_deferred"] == 1
+    assert len(stats["by_day"]) == 2
+    day1 = next(d for d in stats["by_day"] if d["date"] == "2026-06-10")
+    day2 = next(d for d in stats["by_day"] if d["date"] == "2026-06-11")
+    assert day1["task_completed"] == 2
+    assert day2["task_deferred"] == 1
+
+
+@pytest.mark.integration
+def test_get_activity_stats_event_type_filter(db_session, patched_sessionlocal):
+    from agent.domain.activity_log import get_activity_stats
+
+    profile, project, revision, run = _base(db_session)
+    base = datetime(2026, 6, 10, 12, 0, 0)
+
+    e1 = _record_event(db_session, project.id, "task_completed", "task", "task", "t1")
+    e1.created_at = base
+    e2 = _record_event(db_session, project.id, "task_deferred", "task", "task", "t2")
+    e2.created_at = base
+    db_session.flush()
+
+    stats = get_activity_stats(
+        db_session,
+        since=datetime(2026, 6, 9),
+        event_types=["task_completed"],
+    )
+
+    assert "task_completed" in stats["totals"]
+    assert "task_deferred" not in stats["totals"]
+
+
+@pytest.mark.integration
+def test_get_activity_stats_empty_range_returns_zero_totals(db_session, patched_sessionlocal):
+    from agent.domain.activity_log import get_activity_stats
+
+    _base(db_session)
+    stats = get_activity_stats(
+        db_session,
+        since=datetime(2026, 1, 1),
+        before=datetime(2026, 1, 2),
+    )
+
+    assert stats["totals"] == {}
+    assert stats["by_day"] == []
+
+
+@pytest.mark.integration
+def test_get_activity_stats_excludes_other_user(db_session, patched_sessionlocal):
+    """Stats must not include events from a different user."""
+    from db.database import current_user_id
+    from agent.domain.activity_log import get_activity_stats
+
+    profile, project, revision, run = _base(db_session)
+    base = datetime(2026, 6, 10, 12, 0, 0)
+
+    e1 = _record_event(db_session, project.id, "task_completed", "task", "task", "t-u1")
+    e1.created_at = base
+
+    current_user_id.set("2")
+    e2 = _record_event(db_session, project.id, "task_completed", "task", "task", "t-u2")
+    e2.created_at = base
+    current_user_id.set("1")
+    db_session.flush()
+
+    stats = get_activity_stats(db_session, since=datetime(2026, 6, 9))
+
+    assert stats["totals"].get("task_completed", 0) == 1, "user '2' event must not appear in user '1' stats"

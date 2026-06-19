@@ -334,6 +334,7 @@ def test_activity_event_revision_id_nullable_is_allowed(db_session, patched_sess
     project = make_project(db_session, profile)
 
     event = ActivityEvent(
+        user_id="1",
         actor_type="agent",
         actor_label="test",
         event_type="test_event",
@@ -358,6 +359,7 @@ def test_activity_event_revision_id_accepts_valid_revision(db_session, patched_s
     revision = make_project_revision(db_session, project, proposal)
 
     event = ActivityEvent(
+        user_id="1",
         actor_type="agent",
         actor_label="test",
         event_type="test_event",

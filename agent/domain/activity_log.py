@@ -358,7 +358,9 @@ def record_activity_event(
     metadata: Optional[dict[str, Any]] = None,
     subjects: Optional[Iterable[dict[str, Any]]] = None,
 ) -> ActivityEvent:
+    from db.database import current_user_id
     event = ActivityEvent(
+        user_id=current_user_id.get(),
         actor_type=actor_type,
         actor_label=actor_label,
         event_type=event_type,
@@ -538,7 +540,8 @@ def list_recent_activity_entries(
     before_timestamp: Optional[datetime] = None,
     limit: int = 50,
 ):
-    query = session.query(ActivityEvent)
+    from db.database import current_user_id
+    query = session.query(ActivityEvent).filter(ActivityEvent.user_id == current_user_id.get())
     if project_id:
         query = query.filter(ActivityEvent.project_id == project_id)
     if subject_type:
@@ -556,6 +559,75 @@ def list_recent_activity_entries(
     if before_timestamp:
         query = query.filter(ActivityEvent.created_at < before_timestamp)
     return query.order_by(ActivityEvent.created_at.desc()).limit(limit).all()
+
+
+def get_activity_stats(
+    session,
+    *,
+    since: datetime,
+    before: Optional[datetime] = None,
+    event_types: Optional[list] = None,
+    project_id: Optional[str] = None,
+    group_by: str = "day",
+) -> dict:
+    from datetime import date, timedelta
+    from sqlalchemy import func
+    from db.database import current_user_id
+
+    if before is None:
+        from datetime import timezone
+        before = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    query = (
+        session.query(
+            func.date(ActivityEvent.created_at).label("day"),
+            ActivityEvent.event_type,
+            func.count(ActivityEvent.id).label("count"),
+        )
+        .filter(
+            ActivityEvent.user_id == current_user_id.get(),
+            ActivityEvent.created_at >= since,
+            ActivityEvent.created_at < before,
+        )
+    )
+    if event_types:
+        query = query.filter(ActivityEvent.event_type.in_(event_types))
+    if project_id:
+        query = query.filter(ActivityEvent.project_id == project_id)
+
+    rows = (
+        query
+        .group_by(func.date(ActivityEvent.created_at), ActivityEvent.event_type)
+        .order_by(func.date(ActivityEvent.created_at))
+        .all()
+    )
+
+    totals: dict = {}
+    days_map: dict = {}
+
+    for row in rows:
+        day_str = str(row.day)
+        et = row.event_type
+        cnt = row.count
+        totals[et] = totals.get(et, 0) + cnt
+        if day_str not in days_map:
+            days_map[day_str] = {}
+        days_map[day_str][et] = days_map[day_str].get(et, 0) + cnt
+
+    if group_by == "week":
+        weeks_map: dict = {}
+        for day_str, counts in days_map.items():
+            d = date.fromisoformat(day_str)
+            week_start = (d - timedelta(days=d.weekday())).isoformat()
+            if week_start not in weeks_map:
+                weeks_map[week_start] = {}
+            for et, cnt in counts.items():
+                weeks_map[week_start][et] = weeks_map[week_start].get(et, 0) + cnt
+        grouped = [{"date": k, **v} for k, v in sorted(weeks_map.items())]
+    else:
+        grouped = [{"date": k, **v} for k, v in sorted(days_map.items())]
+
+    return {"totals": totals, "by_day": grouped}
 
 
 def get_activity_for_subject_in_project(

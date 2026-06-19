@@ -56,6 +56,25 @@ class GardenProfile(Base):
             + f"\n  Log:\n{self.notes or '  none'}"
         )
 
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "climate_zone": self.climate_zone,
+            "frost_date_last_spring": self.frost_date_last_spring,
+            "frost_date_first_fall": self.frost_date_first_fall,
+            "soil_type": self.soil_type,
+            "tray_capacity": self.tray_capacity,
+            "tray_indoor_capacity": self.tray_indoor_capacity,
+            "location_label": self.location_label,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "hard_constraints": self.hard_constraints,
+            "soft_preferences": self.soft_preferences,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
 
 class GardeningProject(Base):
     __tablename__ = "gardening_project"
@@ -116,6 +135,40 @@ class GardeningProject(Base):
             f"  Updated at: {_fmt_date(self.updated_at)}\n"
             f"  Notes: {self.notes or 'none'}"
         )
+
+    def to_summary_view(
+        self,
+        plant_count: int = 0,
+        bed_count: int = 0,
+        container_count: int = 0,
+        batch_count: int = 0,
+    ) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "goal": self.goal,
+            "status": self.status,
+            "tray_slots": self.tray_slots,
+            "budget_ceiling": self.budget_ceiling,
+            "notes": self.notes,
+            "plant_count": plant_count,
+            "bed_count": bed_count,
+            "container_count": container_count,
+            "batch_count": batch_count,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def to_detail_view(
+        self,
+        plant_count: int = 0,
+        bed_count: int = 0,
+        container_count: int = 0,
+        batch_count: int = 0,
+    ) -> dict:
+        d = self.to_summary_view(plant_count, bed_count, container_count, batch_count)
+        d["approved_plan"] = self.approved_plan
+        return d
 
 
 class ProjectBrief(Base):
@@ -298,8 +351,8 @@ class Task(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
-    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=False)
-    generation_run_id = Column(String, ForeignKey("task_generation_run.id"), nullable=False)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=True)
+    generation_run_id = Column(String, ForeignKey("task_generation_run.id"), nullable=True)
     parent_task_id = Column(String, ForeignKey("task.id"), nullable=True)
     series_id = Column(String, ForeignKey("task_series.id", use_alter=True), nullable=True)
     source_type = Column(String, nullable=False, default="generated")
@@ -344,6 +397,59 @@ class Task(Base):
             f"  Timing: {timing}\n"
             f"  Estimated: {self.estimated_minutes} minutes"
         )
+
+    def to_summary_view(
+        self,
+        urgency: str | None = None,
+        blocked: bool | None = None,
+        due_date=None,
+        score: int | None = None,
+    ) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "title": self.title,
+            "type": self.type,
+            "status": self.status,
+            "priority": self.priority,
+            "scheduled_date": self.scheduled_date,
+            "earliest_start": self.earliest_start,
+            "window_start": self.window_start,
+            "window_end": self.window_end,
+            "deadline": self.deadline,
+            "estimated_minutes": self.estimated_minutes,
+            "is_user_modified": self.is_user_modified,
+            "created_at": self.created_at,
+            "urgency": urgency,
+            "blocked": blocked,
+            "due_date": due_date,
+            "score": score,
+        }
+
+    def to_detail_view(
+        self,
+        urgency: str | None = None,
+        blocked: bool | None = None,
+        due_date=None,
+        score: int | None = None,
+    ) -> dict:
+        d = self.to_summary_view(urgency=urgency, blocked=blocked, due_date=due_date, score=score)
+        d.update({
+            "description": self.description,
+            "series_id": self.series_id,
+            "source_type": self.source_type,
+            "generator_key": self.generator_key,
+            "completed_at": self.completed_at,
+            "deferred_until": self.deferred_until,
+            "actual_minutes": self.actual_minutes,
+            "reversible": self.reversible,
+            "what_happens_if_skipped": self.what_happens_if_skipped,
+            "what_happens_if_delayed": self.what_happens_if_delayed,
+            "linked_subjects": self.linked_subjects or [],
+            "notes": self.notes,
+            "updated_at": self.updated_at,
+        })
+        return d
 
 
 class TaskDependency(Base):
@@ -446,6 +552,38 @@ class Bed(Base):
             f"\n  Notes: {self.notes or 'none'}"
         )
 
+    def to_view(self, available: bool | None = None) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "location": self.location,
+            "sunlight": self.sunlight,
+            "soil_type": self.soil_type,
+            "dimensions_sqft": self.dimensions_sqft,
+            "last_watered_at": self.last_watered_at,
+            "last_fertilized_at": self.last_fertilized_at,
+            "last_amended_at": self.last_amended_at,
+            "last_inspected_at": self.last_inspected_at,
+            "care_state_notes": self.care_state_notes,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "available": available,
+        }
+
+    def to_care_state_view(self) -> dict:
+        return {
+            "subject_type": "bed",
+            "subject_id": self.id,
+            "last_watered_at": self.last_watered_at,
+            "last_fertilized_at": self.last_fertilized_at,
+            "last_amended_at": self.last_amended_at,
+            "last_inspected_at": self.last_inspected_at,
+            "last_treated_at": None,
+            "last_pruned_at": None,
+            "care_state_notes": self.care_state_notes,
+        }
+
 
 class Container(Base):
     __tablename__ = "container"
@@ -491,6 +629,38 @@ class Container(Base):
             + f"\n  Updated at: {_fmt_date(self.updated_at)}\n"
             f"  Notes: {self.notes or 'none'}"
         )
+
+    def to_view(self, available: bool | None = None) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "container_type": self.container_type,
+            "size_gallons": self.size_gallons,
+            "location": self.location,
+            "is_mobile": self.is_mobile,
+            "last_watered_at": self.last_watered_at,
+            "last_fertilized_at": self.last_fertilized_at,
+            "last_amended_at": self.last_amended_at,
+            "last_inspected_at": self.last_inspected_at,
+            "care_state_notes": self.care_state_notes,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "available": available,
+        }
+
+    def to_care_state_view(self) -> dict:
+        return {
+            "subject_type": "container",
+            "subject_id": self.id,
+            "last_watered_at": self.last_watered_at,
+            "last_fertilized_at": self.last_fertilized_at,
+            "last_amended_at": self.last_amended_at,
+            "last_inspected_at": self.last_inspected_at,
+            "last_treated_at": None,
+            "last_pruned_at": None,
+            "care_state_notes": self.care_state_notes,
+        }
 
 
 class ProjectBed(Base):
@@ -618,6 +788,56 @@ class Plant(Base):
             f"  Updated: {_fmt_date(self.updated_at)}"
         )
 
+    def to_summary_view(self, location_name: Optional[str] = None) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "variety": self.variety,
+            "quantity": self.quantity,
+            "status": self.status,
+            "source": self.source,
+            "bed_id": self.bed_id,
+            "container_id": self.container_id,
+            "batch_id": self.batch_id,
+            "location_name": location_name,
+            "is_flowering": self.is_flowering,
+            "is_fruiting": self.is_fruiting,
+            "sow_date": self.sow_date,
+            "transplant_date": self.transplant_date,
+            "created_at": self.created_at,
+        }
+
+    def to_detail_view(self, location_name: Optional[str] = None) -> dict:
+        d = self.to_summary_view(location_name)
+        d.update({
+            "propagated_from": self.propagated_from,
+            "red_cup_date": self.red_cup_date,
+            "fertilizing_schedule": self.fertilizing_schedule,
+            "special_instructions": self.special_instructions,
+            "last_watered_at": self.last_watered_at,
+            "last_fertilized_at": self.last_fertilized_at,
+            "last_inspected_at": self.last_inspected_at,
+            "last_treated_at": self.last_treated_at,
+            "last_pruned_at": self.last_pruned_at,
+            "care_state_notes": self.care_state_notes,
+            "notes": self.notes,
+            "updated_at": self.updated_at,
+        })
+        return d
+
+    def to_care_state_view(self) -> dict:
+        return {
+            "subject_type": "plant",
+            "subject_id": self.id,
+            "last_watered_at": self.last_watered_at,
+            "last_fertilized_at": self.last_fertilized_at,
+            "last_amended_at": None,
+            "last_inspected_at": self.last_inspected_at,
+            "last_treated_at": self.last_treated_at,
+            "last_pruned_at": self.last_pruned_at,
+            "care_state_notes": self.care_state_notes,
+        }
+
 
 class PlantBatch(Base):
     __tablename__ = "plant_batch"
@@ -710,10 +930,12 @@ class ActivityEvent(Base):
         Index("ix_activity_event_project_id", "project_id"),
         Index("ix_activity_event_event_type", "event_type"),
         Index("ix_activity_event_revision_id", "revision_id"),
+        Index("ix_activity_event_user_id", "user_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    user_id = Column(String, nullable=True)
 
     actor_type = Column(String, nullable=False)
     actor_label = Column(String, nullable=True)
