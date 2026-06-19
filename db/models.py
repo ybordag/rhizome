@@ -887,3 +887,56 @@ class TreatmentPlan(Base):
     monitoring_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     approved_at = Column(DateTime, nullable=True)
+
+
+class MonitorRun(Base):
+    """Audit trail for cron executions. One row per job run."""
+    __tablename__ = "monitor_run"
+    __table_args__ = (
+        Index("ix_monitor_run_created_at", "created_at"),
+        Index("ix_monitor_run_user_id", "user_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    # 'weather' | 'triage' | 'series_materialization'
+    run_type = Column(String, nullable=False)
+    # 'started' | 'completed' | 'failed'
+    status = Column(String, nullable=False, default="started")
+    summary = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    user_id = Column(Integer, nullable=True)
+
+
+class MonitorAlert(Base):
+    """
+    Persistent alert written by the background monitor. Queryable without a
+    user session — the future GET /api/v1/alerts endpoint serves this directly.
+    Also surfaced at session start for critical/high severity alerts.
+    """
+    __tablename__ = "monitor_alert"
+    __table_args__ = (
+        Index("ix_monitor_alert_created_at", "created_at"),
+        Index("ix_monitor_alert_user_id", "user_id"),
+        Index("ix_monitor_alert_status", "status"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    # critical: 48h TTL; advisory/working_window: 24h TTL
+    expires_at = Column(DateTime, nullable=False)
+    user_id = Column(Integer, nullable=False)
+    # 'weather_critical' | 'weather_advisory' | 'working_window' | 'triage' | 'pest'
+    alert_type = Column(String, nullable=False)
+    # 'critical' | 'high' | 'medium' | 'low'
+    severity = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    # 'pending' | 'dismissed'
+    status = Column(String, nullable=False, default="pending")
+    dismissed_at = Column(DateTime, nullable=True)
+    # 'weather_snapshot' | 'triage_snapshot' | 'monitor_run'
+    source_type = Column(String, nullable=True)
+    source_id = Column(String, nullable=True)
+    alert_metadata = Column("metadata", JSON, nullable=True)
