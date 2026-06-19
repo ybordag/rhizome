@@ -137,11 +137,19 @@ main.py             — CLI entrypoint
 - `gemini-2.0-flash` was retired by Google; updated default and `.env` to `gemini-2.5-flash`
 - Added `langchain-openai` and `langchain-anthropic` to `requirements.txt`
 
+**FastAPI internal layer complete (narcissus → main, 2026-06):**
+- `agent/api/app.py`: FastAPI app with two routers + `/health`
+- `agent/api/routers.py`: ~80 data endpoints across all domains (garden, projects, tasks,
+  operations, activity) + agent endpoints (streaming + non-streaming + resume)
+- `server.py`: uvicorn entry point (`PORT` env var, default 8001)
+- Multi-tenancy: `_set_user()` sets `current_user_id` ContextVar before every data endpoint;
+  agent endpoint passes `user_id` via `config["configurable"]`
+- 408 tests passing; streaming tests in DEFERRED_TESTS.md
+
 **Active work — Cambium (Go API gateway):**
-- Cambium sits between Verdant (React frontend) and Rhizome
-- Handles JWT auth, bcrypt password hashing, refresh token rotation
-- Proxies all `/api/v1/*` to Rhizome's internal HTTP interface
-- See `../cambium/CLAUDE.md` for Cambium's build plan and invariants
+- Phases 1–3 complete (auth, key management, Rhizome proxy, SSE streaming)
+- Phase 4 in progress (periderm branch): wiring remaining proxy routes + AI triggers + thread management
+- See `../cambium/CLAUDE.md` for full build plan and invariants
 
 **Reactive monitoring complete (calendula, 2026-06):**
 - `MonitorAlert` + `MonitorRun` models; `scripts/monitor.py` cron runner (weather, triage, series jobs)
@@ -167,9 +175,11 @@ main.py             — CLI entrypoint
 - `pgvector` extension not yet enabled — needed for RAG (future epic)
 
 **Next in Rhizome:**
-- FastAPI layer for internal HTTP interface (Cambium → Rhizome)
-- Multi-tenancy: thread `user_id` from JWT into every tool query
-- Pest intelligence epic (deferred from calendula Phase 5): iNaturalist + image-based pest ID + RAG knowledge base — best built after iris and RAG are in place
+- Thread/conversation management (narcissus branch): `POST /internal/data/threads`,
+  `GET /internal/data/threads`, `GET /internal/data/threads/{id}` — needed for
+  Verdant's conversation history view and Cambium's thread management endpoints
+- Multi-tenancy: thread `user_id` from JWT into every tool query (after Cambium Phase 4)
+- Pest intelligence epic (deferred from calendula Phase 5): iNaturalist + image-based pest ID + RAG knowledge base — best built after visual garden understanding and RAG are in place
 
 ## Known issues
 - `user_id == 1` hardcoded in ~15 files across `agent/core/nodes.py` and `agent/tools/` — will be fixed in the multi-tenancy workstream
