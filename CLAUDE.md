@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **501 tests** — unit + integration + graph + API
+- Total (excluding E2E): **529 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -204,12 +204,20 @@ main.py             — CLI entrypoint
 - Calendar CRUD, expense CRUD + budget summary, shopping CRUD + purchase action
 - `Task.revision_id` and `generation_run_id` nullable (user-created tasks); same for `TaskSeries`
 
+**Group B complete (2026-06-19):**
+- Quick care recording: POST /garden/{plants|beds|containers}/{id}/care — single endpoint
+  collapses find-existing-task + complete (or direct care timestamp update) into one call.
+  Validates care_type per subject type. _CARE_TYPE_MAP + _record_care() shared helper.
+- Incident CRUD gaps: PATCH/DELETE /incidents/{id}, GET /incidents with 6 new filters
+  (severity, incident_type, since, before, subject_type, subject_id), POST /incidents/{id}/treatment/manual
+  (returns 409 on duplicate draft), PATCH/DELETE /treatment-plans/{id} (blocked if approved).
+  _get_incident_for_user() ownership helper for all write endpoints.
+- 529 tests passing; test_groupb_endpoints.py has 28 tests.
+
 **Next in Rhizome:**
 - Unified entity search (`#126`)
 - Thread pinned context (`#127`)
-- Quick care recording (`#128`)
 - Notification SSE via Postgres LISTEN/NOTIFY (`#130`)
-- Incident CRUD gaps (`#129`)
 - Pest intelligence (deferred from calendula Phase 5): iNaturalist + image-based pest ID + RAG
 
 ## Known issues

@@ -84,6 +84,13 @@ Current care timestamps. **Response:** `CareStateView`
 ### `GET /api/v1/garden/beds/{id}/care/history`
 Care event history. **Query params:** `limit`
 
+### `POST /api/v1/garden/beds/{id}/care`
+Quick care recording — find-or-create + complete in one call.
+**Body:** `{ care_type: watered|fertilized|amended|inspected|treated, notes?, recorded_at? }`  
+`pruned` is not valid for beds (plant-only). `recorded_at` (ISO datetime) sets the exact care timestamp; defaults to now.  
+If a pending/in_progress task linked to this bed matches the care type, it is completed. Otherwise the care timestamp is applied directly.  
+**Response:** `{ task: TaskSummaryView | null, care_state: CareStateView }`
+
 ### `GET /api/v1/garden/beds/{id}/activity`
 Full bed activity log. **Query params:** `limit`
 
@@ -112,6 +119,12 @@ Hard delete.
 
 ### `GET /api/v1/garden/containers/{id}/care/history`
 **Query params:** `limit`
+
+### `POST /api/v1/garden/containers/{id}/care`
+Quick care recording. Same behaviour as beds.
+**Body:** `{ care_type: watered|fertilized|amended|inspected|treated, notes?, recorded_at? }`  
+`pruned` invalid for containers.  
+**Response:** `{ task: TaskSummaryView | null, care_state: CareStateView }`
 
 ### `GET /api/v1/garden/containers/{id}/activity`
 **Query params:** `limit`
@@ -154,6 +167,12 @@ Batch soft delete.
 
 ### `GET /api/v1/garden/plants/{id}/care/history`
 **Query params:** `limit`
+
+### `POST /api/v1/garden/plants/{id}/care`
+Quick care recording. All six care types valid for plants.
+**Body:** `{ care_type: watered|fertilized|inspected|treated|pruned, notes?, recorded_at? }`  
+`amended` is not valid for plants (beds/containers only).  
+**Response:** `{ task: TaskSummaryView | null, care_state: CareStateView }`
 
 ### `GET /api/v1/garden/plants/{id}/activity`
 **Query params:** `limit`
@@ -406,8 +425,8 @@ Resolve a pending interaction. **Body:** `{ action_id, inputs? }`
 ## Incidents
 
 ### `GET /api/v1/incidents`
-**Query params:** `project_id`, `status`, `limit`
-**Response:** `IncidentView[]`
+**Query params:** `project_id`, `status`, `severity`, `incident_type`, `since` (ISO datetime), `before` (ISO datetime), `subject_type` + `subject_id` (filter by affected entity)  
+**Response:** `IncidentView[]` — structured JSON array, scoped to the authenticated user's projects.
 
 ### `POST /api/v1/incidents`
 Report a new incident.
@@ -416,6 +435,12 @@ Report a new incident.
 ### `GET /api/v1/incidents/{id}`
 Incident detail including subjects and treatment plan status.
 **Response:** `IncidentDetailView`
+
+### `PATCH /api/v1/incidents/{id}`
+Partial update. **Body:** `{ summary?, severity?, notes?, incident_type? }`
+
+### `DELETE /api/v1/incidents/{id}`
+Hard delete. Returns 400 if an approved treatment plan exists.
 
 ### `GET /api/v1/incidents/{id}/activity`
 Incident history. **Query params:** `limit`
@@ -430,6 +455,18 @@ Treatment plan for an incident.
 
 ### `POST /api/v1/incidents/{id}/treatment`
 AI trigger — draft a treatment plan.
+
+### `POST /api/v1/incidents/{id}/treatment/manual`
+Create a user-authored treatment plan (no LLM call).
+**Body:** `{ approach_summary, recommended_steps: [{title, task_type, estimated_minutes, days_from_approval}][], follow_up_strategy? }`  
+Returns 409 if a draft plan already exists.
+
+### `PATCH /api/v1/treatment-plans/{id}`
+Edit a draft treatment plan. Returns 400 if the plan is already approved.
+**Body:** `{ approach_summary?, recommended_steps?, follow_up_strategy? }`
+
+### `DELETE /api/v1/treatment-plans/{id}`
+Delete a draft plan. Returns 400 if approved.
 
 ### `PATCH /api/v1/treatment-plans/{id}/approve`
 Approve a treatment plan and auto-generate tasks.
