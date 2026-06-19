@@ -12,11 +12,11 @@ Infrastructure that everything else depends on.
 
 | Initiative | Status | Scope |
 |---|---|---|
-| FastAPI internal layer | **in progress** | `/internal/agent` (LangGraph) + `/internal/data/...` (direct CRUD) routers for Cambium |
-| Cambium proxy (phloem branch) | **in progress** | Cambium Phase 3 — HTTP client, provider key injection, all `/api/v1` routes |
-| Multi-tenancy | pending | Thread real `user_id` from Cambium JWT into all ~15 tool files (currently hardcoded to 1) |
+| FastAPI internal layer | **complete** (narcissus → main) | `/internal/agent` (LangGraph) + `/internal/data/...` (~80 endpoints); SSE streaming; `server.py` entry point |
+| Thread management | **complete** (narcissus) | `Thread` model; botanical name generation in Cambium; conversation list, history, delete endpoints |
+| Cambium proxy + full API | **complete** (phloem + periderm → main) | Cambium Phases 1–4: auth, key management, proxy, all ~95 routes wired |
+| Multi-tenancy | pending | Audit all tool queries to confirm `user_id` scoping; harden against any remaining hardcoded `1` |
 | k3s deployment | pending | Thor + Loki cluster setup, Helm for Postgres, raw manifests for Rhizome/Cambium/Verdant |
-| Cambium full API surface | pending | Cambium Phase 4 — all planned endpoints fully wired |
 
 ---
 
@@ -52,7 +52,7 @@ See [calendula plan](../current_work/calendula_reactive_monitoring.md) and [visu
 
 | Initiative | Status | Scope |
 |---|---|---|
-| Verdant | not started | React app — dashboard, alert banners, task list, project view, chat interface |
+| Verdant | not started | React app — dashboard, alert banners, task list, project view, chat interface, conversation history |
 
 See [Verdant initiative plan](initiatives/app_frontend_experience.md).
 
@@ -72,8 +72,9 @@ See [Fairlead design doc](../../../fairlead/design.md).
 
 ```
 FastAPI internal layer ──┐
-Multi-tenancy            ├──► Cambium full API ──► Verdant
-Cambium proxy ───────────┘
+Thread management        │
+Multi-tenancy            ├──► Verdant (frontend)
+Cambium full API ────────┘
 
 Google Search ───────────┐
 RAG ─────────────────────┼──► Richer planning, care recommendations, incident analysis
