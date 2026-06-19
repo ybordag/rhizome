@@ -3,9 +3,11 @@ Agent router  — POST /internal/agent
 Data router   — CRUD endpoints under /internal/data/
 """
 
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
@@ -13,6 +15,7 @@ from agent.api.models import (
     AgentRequest,
     AgentResponse,
     DeferTaskRequest,
+    ResumeRequest,
     TaskActionRequest,
 )
 from agent.core.graph import agent
@@ -71,31 +74,93 @@ def run_agent(req: AgentRequest):
 
 
 @agent_router.post("/agent/resume", response_model=AgentResponse)
-def resume_agent(thread_id: str, user_id: str, resolution: str):
-    """
-    Resume a paused graph after user interaction resolution.
-    """
-    config = {
-        "configurable": {
-            "thread_id": thread_id,
-            "user_id": int(user_id),
-        }
-    }
-
-    agent.invoke(Command(resume=resolution), config=config)
-
+def resume_agent(req: ResumeRequest):
+    """Resume a paused graph after user interaction resolution."""
+    config = {"configurable": {"thread_id": req.thread_id, "user_id": int(req.user_id)}}
+    agent.invoke(Command(resume=req.resolution), config=config)
     state = agent.get_state(config)
     ai_messages = [
         m for m in state.values.get("messages", [])
         if hasattr(m, "type") and m.type == "ai"
     ]
     response_text = ai_messages[-1].content if ai_messages else ""
+    return AgentResponse(thread_id=req.thread_id, response=response_text, interaction=None)
 
-    return AgentResponse(
-        thread_id=thread_id,
-        response=response_text,
-        interaction=None,
-    )
+
+@agent_router.post("/agent/stream")
+async def stream_agent(req: AgentRequest):
+    """
+    Stream a LangGraph agent turn via SSE.
+
+    Emits a sequence of typed events:
+      data: {"type": "token",       "content": "The "}
+      data: {"type": "interaction", "payload": {...}}   # when graph pauses
+      data: {"type": "done"}
+
+    Cambium proxies this stream directly to Verdant (text/event-stream).
+    Verdant reads tokens with fetch + ReadableStream.
+    """
+    config = {
+        "configurable": {
+            "thread_id": req.thread_id,
+            "user_id": int(req.user_id),
+            **({"provider": req.provider} if req.provider else {}),
+            **({"provider_key": req.provider_key} if req.provider_key else {}),
+            **({"model": req.model} if req.model else {}),
+        }
+    }
+
+    async def generate():
+        async for event in agent.astream_events(
+            {"messages": [HumanMessage(content=req.message)]},
+            config=config,
+            version="v2",
+        ):
+            if event["event"] == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+
+        # After stream ends, check for a graph interrupt (interaction node)
+        state = agent.get_state(config)
+        if state.next:
+            interrupts = [i for task in state.tasks for i in task.interrupts]
+            if interrupts and isinstance(interrupts[0].value, dict):
+                yield f"data: {json.dumps({'type': 'interaction', 'payload': interrupts[0].value})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@agent_router.post("/agent/resume/stream")
+async def resume_agent_stream(req: ResumeRequest):
+    """
+    Resume a paused graph with SSE streaming.
+    Same event format as /agent/stream.
+    """
+    config = {"configurable": {"thread_id": req.thread_id, "user_id": int(req.user_id)}}
+
+    async def generate():
+        async for event in agent.astream_events(
+            Command(resume=req.resolution),
+            config=config,
+            version="v2",
+        ):
+            if event["event"] == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+
+        state = agent.get_state(config)
+        if state.next:
+            interrupts = [i for task in state.tasks for i in task.interrupts]
+            if interrupts and isinstance(interrupts[0].value, dict):
+                yield f"data: {json.dumps({'type': 'interaction', 'payload': interrupts[0].value})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------

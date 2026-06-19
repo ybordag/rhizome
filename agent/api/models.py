@@ -20,6 +20,12 @@ class AgentResponse(BaseModel):
     interaction: Optional[dict] = None
 
 
+class ResumeRequest(BaseModel):
+    user_id: str
+    thread_id: str
+    resolution: str
+
+
 class DismissAlertRequest(BaseModel):
     pass
 
