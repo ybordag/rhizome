@@ -27,7 +27,7 @@ spec:
       # Safe to run concurrently — Alembic uses advisory locks in Postgres.
       initContainers:
       - name: migrate
-        image: ghcr.io/ybordag/rhizome:latest
+        image: docker.io/library/rhizome:latest
         command: ["alembic", "upgrade", "head"]
         envFrom:
         - secretRef:
@@ -35,8 +35,8 @@ spec:
 
       containers:
       - name: rhizome
-        image: ghcr.io/ybordag/rhizome:latest
-        imagePullPolicy: Always
+        image: docker.io/library/rhizome:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8001
 

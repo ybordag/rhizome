@@ -10,9 +10,9 @@ auth:
   database: postgres      # main database name
 
 primary:
-  # Pin Postgres to Loki so the PVC stays on one node
-  nodeSelector:
-    kubernetes.io/hostname: loki
+  # nodeSelector removed for initial deployment — add back once stable
+  # nodeSelector:
+  #   kubernetes.io/hostname: loki
 
   persistence:
     enabled: true
