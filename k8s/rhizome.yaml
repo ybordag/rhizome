@@ -28,6 +28,7 @@ spec:
       initContainers:
       - name: migrate
         image: docker.io/library/rhizome:latest
+        imagePullPolicy: IfNotPresent
         command: ["alembic", "upgrade", "head"]
         envFrom:
         - secretRef:
