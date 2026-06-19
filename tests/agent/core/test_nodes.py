@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from langgraph.graph import END
 
 from agent.core import nodes
 from langchain.messages import ToolMessage
+from db.models import MonitorAlert
 from tests.support.fakes import FakeTool, make_ai_message, make_tool_call_message
 from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
 
@@ -160,6 +163,98 @@ def test_confirmation_node_allows_affirmative_responses(monkeypatch, patched_ses
     result = nodes.confirmation_node(state)
 
     assert result["interaction_history"][0]["resolution_action"] == "confirm"
+
+
+# ---------------------------------------------------------------------------
+# _monitor_alerts_text
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_monitor_alerts_text_formats_critical_and_high():
+    state = {
+        "monitor_alerts": [
+            {"severity": "critical", "title": "Frost warning", "body": "3 tasks auto-deferred."},
+            {"severity": "high", "title": "Storm incoming", "body": "Secure supports."},
+        ]
+    }
+    text = nodes._monitor_alerts_text(state)
+    assert "⚠ CRITICAL: Frost warning" in text
+    assert "3 tasks auto-deferred." in text
+    assert "⚠ HIGH: Storm incoming" in text
+
+
+@pytest.mark.unit
+def test_monitor_alerts_text_empty_when_no_alerts():
+    assert nodes._monitor_alerts_text({"monitor_alerts": []}) == ""
+    assert nodes._monitor_alerts_text({}) == ""
+
+
+# ---------------------------------------------------------------------------
+# session_context_intake — monitor_alerts injection
+# ---------------------------------------------------------------------------
+
+def _make_alert(db_session, *, user_id=1, severity="critical", status="pending",
+                hours_until_expiry=24, alert_type="weather_critical"):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    alert = MonitorAlert(
+        expires_at=now + timedelta(hours=hours_until_expiry),
+        user_id=user_id,
+        alert_type=alert_type,
+        severity=severity,
+        title=f"{severity} alert",
+        body="Test body.",
+        status=status,
+        dismissed_at=now if status == "dismissed" else None,
+    )
+    db_session.add(alert)
+    db_session.commit()
+    return alert
+
+
+@pytest.mark.integration
+def test_session_context_intake_returns_pending_monitor_alerts(db_session, patched_sessionlocal):
+    _make_alert(db_session, severity="critical")
+    result = nodes.session_context_intake({"messages": []}, {"configurable": {"user_id": "1"}})
+    assert len(result["monitor_alerts"]) == 1
+    assert result["monitor_alerts"][0]["severity"] == "critical"
+    assert result["monitor_alerts"][0]["title"] == "critical alert"
+
+
+@pytest.mark.integration
+def test_session_context_intake_excludes_dismissed_alerts(db_session, patched_sessionlocal):
+    _make_alert(db_session, severity="critical", status="dismissed")
+    result = nodes.session_context_intake({"messages": []}, {"configurable": {"user_id": "1"}})
+    assert result["monitor_alerts"] == []
+
+
+@pytest.mark.integration
+def test_session_context_intake_excludes_expired_alerts(db_session, patched_sessionlocal):
+    _make_alert(db_session, severity="critical", hours_until_expiry=-1)
+    result = nodes.session_context_intake({"messages": []}, {"configurable": {"user_id": "1"}})
+    assert result["monitor_alerts"] == []
+
+
+@pytest.mark.integration
+def test_session_context_intake_excludes_medium_and_low_severity(db_session, patched_sessionlocal):
+    _make_alert(db_session, severity="medium", alert_type="working_window")
+    _make_alert(db_session, severity="low", alert_type="working_window")
+    _make_alert(db_session, severity="critical", alert_type="weather_critical")
+    result = nodes.session_context_intake({"messages": []}, {"configurable": {"user_id": "1"}})
+    assert len(result["monitor_alerts"]) == 1
+    assert result["monitor_alerts"][0]["severity"] == "critical"
+
+
+@pytest.mark.integration
+def test_session_context_intake_excludes_other_users_alerts(db_session, patched_sessionlocal):
+    _make_alert(db_session, user_id=2, severity="critical")
+    result = nodes.session_context_intake({"messages": []}, {"configurable": {"user_id": "1"}})
+    assert result["monitor_alerts"] == []
+
+
+@pytest.mark.integration
+def test_session_context_intake_returns_empty_list_when_no_alerts(db_session, patched_sessionlocal):
+    result = nodes.session_context_intake({"messages": []}, {"configurable": {"user_id": "1"}})
+    assert result["monitor_alerts"] == []
 
 
 @pytest.mark.graph

@@ -1,4 +1,5 @@
 # nodes.py
+from datetime import datetime, timezone as dt_timezone
 from typing import Any
 
 from langchain.messages import HumanMessage, SystemMessage, ToolMessage
@@ -29,7 +30,7 @@ from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
 from agent.domain.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
-from db.models import GardenProfile, InteractionRecord, TreatmentPlan
+from db.models import GardenProfile, InteractionRecord, MonitorAlert, TreatmentPlan
 
 # None at module level — tests patch this directly; production builds it lazily in llm_call
 model_with_tools = None
@@ -53,7 +54,7 @@ You know this specific garden well:
 Session time context:
 {temporal_context}
 
-Latest weather:
+{alert_section}Latest weather:
 {weather_context}
 
 Latest triage:
@@ -83,6 +84,14 @@ Guidelines:
   exact task id returned by task-listing tools. Do not pass a task title as task_id unless the tool explicitly says that
   exact-title fallback is supported.
 """
+
+
+def _monitor_alerts_text(state: GardenState) -> str:
+    alerts = state.get("monitor_alerts") or []
+    if not alerts:
+        return ""
+    lines = [f"⚠ {a['severity'].upper()}: {a['title']}\n  {a['body']}" for a in alerts]
+    return "\n".join(lines)
 
 
 def _interaction_context_text(state: GardenState) -> str:
@@ -128,11 +137,36 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
     try:
         temporal_context = build_temporal_context(session, timezone=DEFAULT_TIMEZONE)
         session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
+        now = datetime.now(dt_timezone.utc).replace(tzinfo=None)
+        alert_rows = (
+            session.query(MonitorAlert)
+            .filter(
+                MonitorAlert.user_id == uid,
+                MonitorAlert.status == "pending",
+                MonitorAlert.expires_at > now,
+                MonitorAlert.severity.in_(["critical", "high"]),
+            )
+            .order_by(MonitorAlert.created_at.desc())
+            .limit(5)
+            .all()
+        )
+        monitor_alerts = [
+            {
+                "id": a.id,
+                "alert_type": a.alert_type,
+                "severity": a.severity,
+                "title": a.title,
+                "body": a.body,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in alert_rows
+        ]
         return {
             "temporal_context": temporal_context,
             "session_context": session_context,
             "skip_tool_node": False,
             "user_id": uid,
+            "monitor_alerts": monitor_alerts,
         }
     finally:
         session.close()
@@ -269,9 +303,12 @@ def llm_call(state: GardenState, config: RunnableConfig):
     weather_text = state.get("weather_context") or {"alerts_summary": "No weather snapshot available."}
     triage_text = (state.get("triage_snapshot") or {}).get("formatted") or "No triage snapshot available."
     interaction_text = _interaction_context_text(state)
+    alerts_text = _monitor_alerts_text(state)
+    alert_section = f"⚠ Active monitor alerts:\n{alerts_text}\n\n" if alerts_text else ""
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         garden_profile=profile_text,
         temporal_context=temporal_text,
+        alert_section=alert_section,
         weather_context=weather_text,
         triage_context=triage_text,
         interaction_context=interaction_text,
