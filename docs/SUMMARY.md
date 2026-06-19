@@ -14,17 +14,20 @@
 - [Data Model](architecture/data-model.md) — all models, lifecycle, relationships
 - [Deployment](architecture/deployment.md) — instance topology, stateless scaling, Postgres checkpointer, Temporal future
 - [API Reference](architecture/api-reference.md) — complete `/api/v1` endpoint reference
-- [Tools Reference](architecture/tools-reference.md) — all 93 tools by domain
+- [Tools Reference](architecture/tools-reference.md) — all 95 tools by domain
 
 ## Development
 - [Code Organization](development/code-organization.md) — directory guide, module responsibilities, how to add tools
 - [Testing Guide](development/testing.md) — test structure, patterns, writing new tests
 
+## Current Work
+- [Calendula: Reactive Monitoring and Alerting](current_work/calendula_reactive_monitoring.md) — cron runner, MonitorAlert model, auto-apply weather policy, triage + series jobs
+
 ## Roadmap
-- [Roadmap Overview](roadmap/overview.md) — epics, current status, what's next
-- [Epic 9: App Frontend Experience](roadmap/epics/epic_09_app_frontend_experience.md)
-- [Epic 2: Visual Garden Understanding](roadmap/epics/epic_02_visual_garden_understanding.md)
-- [Epic 6: Reactive Monitoring and Alerting](roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)
+- [Roadmap Overview](roadmap/overview.md) — tracks, current status, dependency map
+- [Intelligence: Google Search, RAG, full-text search](roadmap/initiatives/intelligence.md)
+- [Visual Garden Understanding](roadmap/initiatives/visual_garden_understanding.md)
+- [App Frontend Experience (Verdant)](roadmap/initiatives/app_frontend_experience.md)
 
 ## Design Reference
 - [Original Design Document](design/garden_agent_design.md) — original problem statement and design vision (2026, partially stale)

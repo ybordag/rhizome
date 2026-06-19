@@ -1,13 +1,13 @@
 # Rhizome — Claude Code Memory
 
 ## Branch
-Active development is on `geranium`. `main` is behind — do not treat it as current or merge until intentionally reconciled.
+`geranium` merged into `main`. Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done, pending merge). `iris` deleted — image modality work not yet started.
 
 ## Build and test
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (325 tests)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (~369 tests)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -49,7 +49,7 @@ agent/
     triage.py       — triage snapshot builder; secondary LLM call at session start
     weather.py      — Open-Meteo integration and weather impact derivation
 
-  tools/            — 93 tools, all registered in tools/__init__.py
+  tools/            — 95 tools, all registered in tools/__init__.py
     garden/
       beds_containers.py  — bed and container CRUD
       plants.py           — plant and batch CRUD, status lifecycle
@@ -76,16 +76,22 @@ db/
                       ProjectProposal → ProjectRevision → ProjectExecutionSpec →
                       TaskGenerationRun → Task (with Task.priority, TaskDependency, TaskSeries)
                       Plus: ActivityEvent/ActivitySubject, IncidentReport/TreatmentPlan,
-                      InteractionRecord, WeatherSnapshot, TriageSnapshot
-  database.py       — SQLite session factory and current_user_id ContextVar
+                      InteractionRecord, WeatherSnapshot, TriageSnapshot,
+                      MonitorRun, MonitorAlert
+  database.py       — SQLAlchemy engine (SQLite in dev/test, Postgres in staging/prod via
+                      DATABASE_URL); current_user_id ContextVar; init_db(), get_session()
   seed.py           — dev seed data
+
+scripts/
+  monitor.py        — standalone cron runner: weather_job, triage_job, series_job
+                      (--job weather|triage|series|all, --user-id)
 
 tests/
   agent/
-    core/           — test_graph, test_nodes, test_node_edge_cases, test_telemetry,
-                      test_model (15 unit tests), test_model_live (live endpoint smoke tests)
+    core/           — test_graph, test_nodes (incl. monitor alert injection), test_node_edge_cases,
+                      test_telemetry, test_model (15 unit), test_model_live (live smoke tests)
     domain/         — test_domain_logic (compute_task_blocked_state, planner estimates,
-                      infer_care_action, _resolve_subjects)
+                      infer_care_action, _resolve_subjects), test_weather_monitor
   tools/
     garden/         — test_plants, test_beds_containers, test_profile, test_search
     projects/       — test_projects, test_planning, test_task_tracker_tools,
@@ -93,7 +99,8 @@ tests/
     operations/     — test_triage_care_incident_operations, test_activity, test_interaction_tools,
                       test_status_and_orphans, test_activity_history
   db/               — test_activity_log, test_interactions, test_planner, test_tracker,
-                      test_temporal_weather_triage_helpers
+                      test_temporal_weather_triage_helpers, test_monitor_models,
+                      test_monitor_jobs
   support/          — factories.py, fakes.py, patching.py
   DEFERRED_TESTS.md — consciously deferred test areas with rationale and re-enable criteria
 
@@ -116,7 +123,7 @@ main.py             — CLI entrypoint
 - N+1 query fixes in `list_projects`, `get_project`, `search_garden`, `list_by_location`
 - DB schema: user_id indexes on Plant/Bed/Container/PlantBatch, unique constraints on ProjectBed/ProjectContainer, ActivityEvent.revision_id FK
 - Action history: `get_task_activity`, `get_incident_activity`, `list_project_activity`, enhanced `list_recent_activity` with DB-level filtering and cursor pagination; `interaction_resolved` events now recorded by `resolve_interaction_record`
-- 325 tests, 0 failures; `tests/DEFERRED_TESTS.md` documents 11 consciously deferred areas
+- ~326 tests, 0 failures; `tests/DEFERRED_TESTS.md` documents 11 consciously deferred areas
 
 **Model provider abstraction complete (geranium, 2026-06):**
 - `agent/core/model.py` rewritten as a multi-provider factory: `google_genai`, `openai`, `anthropic`
@@ -136,15 +143,38 @@ main.py             — CLI entrypoint
 - Proxies all `/api/v1/*` to Rhizome's internal HTTP interface
 - See `../cambium/CLAUDE.md` for Cambium's build plan and invariants
 
+**Reactive monitoring complete (calendula, 2026-06):**
+- `MonitorAlert` + `MonitorRun` models; `scripts/monitor.py` cron runner (weather, triage, series jobs)
+- `apply_weather_impacts()`: critical weather auto-applied, moderate queued, working window advisories written
+- `unsafe_outdoor_window` / `safe_outdoor_window` impact types in `derive_weather_impacts()`
+- `GardenState.monitor_alerts`; session-start alert injection into system prompt
+- `triage_job()` writes triage alert when urgent tasks exist; `series_job()` materialises recurring tasks
+- 43 new tests (13 model, 14 weather monitor, 7 node, 9 job)
+- Phase 5 (iNaturalist pest ingestion) deferred — see planning note below
+- See `docs/current_work/calendula_reactive_monitoring.md` for full implementation record
+
+**Upcoming — visual garden understanding (image modality):**
+- Image input to Rhizome agent (multimodal `HumanMessage` handling)
+- Plant/disease/pest identification from photos
+- See `docs/roadmap/initiatives/visual_garden_understanding.md`
+
+**Postgres migration complete:**
+- `db/database.py` switches on `DATABASE_URL`: SQLite for dev/test, Postgres for staging/prod
+- `agent/core/graph.py` checkpointer switches between `SqliteSaver` and `PostgresSaver`
+- `.env` already points at `postgresql+psycopg2://postgres:dev@localhost:5432/postgres`
+- `psycopg2-binary` + `langgraph-checkpoint-postgres` in `requirements.txt`
+- Schema uses `Base.metadata.create_all(engine)` — no Alembic yet; fine for fresh installs
+- `pgvector` extension not yet enabled — needed for RAG (future epic)
+
 **Next in Rhizome:**
-- Postgres migration (prerequisite for multi-instance deployment and FK enforcement)
-- Multi-tenancy: thread `user_id` from JWT (via Cambium) into every tool query
 - FastAPI layer for internal HTTP interface (Cambium → Rhizome)
+- Multi-tenancy: thread `user_id` from JWT into every tool query
+- Pest intelligence epic (deferred from calendula Phase 5): iNaturalist + image-based pest ID + RAG knowledge base — best built after iris and RAG are in place
 
 ## Known issues
-- `user_id == 1` hardcoded in ~15 files across `agent/core/nodes.py` and `agent/tools/` — Phase 1 work (multi-tenancy)
-- `ActivityEvent.revision_id` FK is defined in the model but SQLite does not enforce it at runtime; enforcement lands with Postgres migration
-- SQLite `ProjectBed`/`ProjectContainer` unique constraints are enforced by the DB for new inserts but cannot be added retroactively to an existing SQLite DB without a migration script
+- `user_id == 1` hardcoded in ~15 files across `agent/core/nodes.py` and `agent/tools/` — will be fixed in the multi-tenancy workstream
+- `ActivityEvent.revision_id` FK is defined in the model but only enforced in Postgres (not SQLite dev); Postgres is now in use for staging/prod so enforcement is active there
+- No Alembic migration tooling yet — schema changes require manual `ALTER TABLE` on live Postgres or a full re-create; acceptable for now, needed before the first production schema change
 
 ## Invariants — never violate
 - **Model access only through `agent/core/model.py`.** Never instantiate a model client directly or at import time anywhere else.
@@ -156,10 +186,11 @@ main.py             — CLI entrypoint
 - **`delete_project` requires no active tasks.** The tool blocks if non-superseded tasks exist. Use `update_project(status='complete')` for finished projects.
 - **Tests required for every new feature.** `python -m pytest` must be green before any task is done.
 
-## Postgres migration notes
-`requirements.txt` includes `psycopg2-binary` and `pgvector`. When migrating:
-- Swap `langgraph-checkpoint-sqlite` → `langgraph-checkpoint-postgres` in requirements
-- Update `db/database.py` engine and session factory
-- LangGraph's Postgres checkpointer is a drop-in for SqliteSaver
-- Run Postgres with streaming replication for HA (Patroni or pg_auto_failover)
-- This migration is a prerequisite for multi-instance deployment and proper FK enforcement
+## Postgres notes
+Migration is complete. `DATABASE_URL` drives the backend — unset/SQLite for local dev and tests, `postgresql://` for staging/prod. The LangGraph checkpointer follows the same env var.
+
+When adding schema changes: run `Base.metadata.create_all(engine)` for fresh installs. For live Postgres with existing data, write a manual migration script until Alembic is in place.
+
+For HA: run Postgres with streaming replication (Patroni or pg_auto_failover). `pool_pre_ping=True` is already set on the Postgres engine to handle restarts gracefully.
+
+**pgvector** is in `requirements.txt` but not yet enabled or used. It will be needed for the RAG / pest intelligence epic.
