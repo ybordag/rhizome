@@ -169,6 +169,84 @@ GET /api/v1/search?q=drip+irrigation&types=tasks,plants
 
 ---
 
+## iNaturalist
+
+### Why
+
+iNaturalist is a crowdsourced species observation platform with a public API
+covering millions of plant, insect, and wildlife observations worldwide. For a
+gardening agent, it provides two things no other source does: hyperlocal pest
+observation data and real-world species identification grounded in actual
+sightings near the user's garden.
+
+### What it enables
+
+- "Have there been spotted lanternfly sightings near me this season?" — proactive
+  risk awareness before a pest appears in the user's garden
+- Cross-referencing a pest identified from a photo against local iNaturalist
+  observations — strengthens an incident recommendation with real evidence
+- Cataloging beneficial organisms: "what pollinators are common in my area right
+  now?" — grounds companion planting and habitat recommendations
+- Feeding into the reactive monitoring pipeline as a second signal source
+  alongside weather — when local pest pressure is high, urgency on vulnerable
+  plants can be escalated automatically
+
+### Design
+
+A `search_inaturalist(query, radius_km, days_back)` tool calls the
+iNaturalist Observations API. No API key is required for read access — the
+endpoint is public.
+
+```python
+# agent/tools/operations/search.py
+def search_inaturalist(
+    taxon_query: str,
+    radius_km: float = 25.0,
+    days_back: int = 30,
+    limit: int = 10,
+) -> str:
+    """
+    Search recent iNaturalist observations near the user's garden location.
+    taxon_query: common or scientific name (e.g. 'aphid', 'Aphis gossypii').
+    Returns recent local observations with dates, locations, and photo links.
+    """
+```
+
+The tool reads `lat`/`lng` from the user's `GardenProfile`. If location is not
+set, the tool returns an error instructing the user to update their profile.
+
+**API endpoint:**
+```
+GET https://api.inaturalist.org/v1/observations
+    ?lat=LAT&lng=LNG&radius=RADIUS_KM
+    &q=TAXON_QUERY
+    &d1=START_DATE
+    &per_page=10
+    &order=desc&order_by=observed_on
+```
+
+**No API key required** for read-only access. Rate limit: 100 requests/minute.
+
+### Relationship to visual garden understanding
+
+iNaturalist is most powerful when paired with the visual sighting catalog. When
+a user photographs a pest and the agent identifies it, iNaturalist can immediately
+confirm whether that pest has been observed locally — turning an isolated
+identification into a grounded risk assessment. Building this after visual garden
+understanding is recommended but not required; the tool works independently for
+text-based queries too.
+
+### Integration with reactive monitoring
+
+Once iNaturalist is in place, the monitoring system (`scripts/monitor.py`) can
+run a `pest_job()` alongside the existing weather job: query iNaturalist for
+known pest taxa near the garden, cross-reference against active projects and
+current plant inventory, and generate `MonitorAlert` records when pressure is
+high. This closes the loop between community observation data and proactive
+task urgency.
+
+---
+
 ## Phases
 
 ### Phase 1 — Google Search
@@ -183,7 +261,14 @@ GET /api/v1/search?q=drip+irrigation&types=tasks,plants
 - Cambium `GET /api/v1/search` endpoint (data proxy)
 - Tests: keyword search returns relevant results; empty query returns error
 
-### Phase 3 — RAG
+### Phase 3 — iNaturalist
+
+- `search_inaturalist()` tool in `agent/tools/operations/search.py`
+- Register in `agent/tools/__init__.py`
+- Tests: tool returns observations near a known lat/lon; handles missing location gracefully
+- Optional: `pest_job()` in `scripts/monitor.py` for background iNaturalist monitoring
+
+### Phase 4 — RAG
 - Enable `pgvector` extension
 - `KnowledgeChunk` model + embedding pipeline (`scripts/embed_knowledge.py`)
 - `agent/tools/operations/search.py`: `search_knowledge_base()` tool

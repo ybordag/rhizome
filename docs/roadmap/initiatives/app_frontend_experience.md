@@ -72,7 +72,7 @@ This epic is also a major enabler for:
 - a manual product-testing loop that primarily happens through the app instead
   of the CLI
 
-The first complete user-facing slice should cover:
+The first complete user-facing phase should cover:
 
 - login/session
 - startup triage
@@ -82,7 +82,7 @@ The first complete user-facing slice should cover:
 - weather snapshot and weather-change review
 
 Proposal UI is part of the epic, but it can follow shortly after the core
-operations slice.
+operations phase.
 
 ---
 
@@ -273,16 +273,16 @@ Define stable JSON DTOs for:
 - approval-gated flows should be represented as **interactions**, not
   frontend-local confirmation logic
 - human-readable summary fields are helpful, but not the primary API surface
-- polling is acceptable in the first slice for:
+- polling is acceptable in the first phase for:
   - pending interactions
   - latest triage
   - task changes
 
 ---
 
-## Proposed implementation slices
+## Implementation phases
 
-### Slice 1: Rhizome backend contract
+### Phase 1: Rhizome backend contract
 
 In the Rhizome repo:
 
@@ -293,7 +293,7 @@ In the Rhizome repo:
 - add API tests for auth, triage, interactions, tasks, incidents, weather, and
   media
 
-### Slice 2: Frontend core operations app
+### Phase 2: Frontend core operations app
 
 In the frontend repo:
 
@@ -304,7 +304,7 @@ In the frontend repo:
 - incident list/detail and treatment-plan review
 - weather snapshot and weather-change review
 
-### Slice 3: Proposal and history surfaces
+### Phase 3: Proposal and history surfaces
 
 Backend:
 
@@ -317,7 +317,7 @@ Frontend:
 - interaction history screen
 - richer task/project navigation
 
-### Slice 4: Media-ready app boundary
+### Phase 4: Media-ready app boundary
 
 Backend:
 
@@ -328,7 +328,7 @@ Frontend:
 
 - add upload UX and attachment display for supported entities
 
-This slice is the direct handoff point into **Epic 2**.
+This phase is the direct handoff point into **Epic 2**.
 
 ---
 
@@ -409,5 +409,5 @@ This epic should be considered complete when:
 - where uploaded media should live on disk and how stable access URLs should be
 - what app history surface should expose from interaction records vs activity
   log
-- how far proposal UI should go in the first shipped frontend slice versus the
+- how far proposal UI should go in the first shipped frontend phase versus the
   second
