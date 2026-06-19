@@ -708,11 +708,20 @@ def update_plant(plant_id: str, user_id: str, body: dict = None):
     return {"result": _update.invoke({"plant_id": plant_id, **(body or {})})}
 
 
-@data_router.delete("/garden/plants/{plant_id}")
+@data_router.patch("/garden/plants/{plant_id}/remove")
 def remove_plant(plant_id: str, user_id: str, reason: str = None):
+    """Soft delete — marks plant as removed (died, harvested, rehomed). Keeps the record."""
     _set_user(user_id)
     from agent.tools.garden.plants import remove_plant as _remove
     return {"result": _remove.invoke({"plant_id": plant_id, "reason": reason or "removed via API"})}
+
+
+@data_router.delete("/garden/plants/{plant_id}")
+def delete_plant(plant_id: str, user_id: str):
+    """Hard delete — permanently removes the plant record. Use for data entry mistakes only."""
+    _set_user(user_id)
+    from agent.tools.garden.plants import delete_plant as _delete
+    return {"result": _delete.invoke({"plant_id": plant_id})}
 
 
 @data_router.post("/garden/plants/batch")
@@ -727,6 +736,14 @@ def batch_update_plants(user_id: str, body: dict):
     _set_user(user_id)
     from agent.tools.garden.plants import batch_update_plants as _batch_update
     return {"result": _batch_update.invoke(body)}
+
+
+@data_router.patch("/garden/plants/batch/remove")
+def batch_remove_plants(user_id: str, body: dict):
+    """Soft delete for multiple plants — marks all as removed with a required reason."""
+    _set_user(user_id)
+    from agent.tools.garden.plants import batch_remove_plants as _batch_remove
+    return {"result": _batch_remove.invoke(body)}
 
 
 @data_router.get("/garden/plants/{plant_id}/care/state")
