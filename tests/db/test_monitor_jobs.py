@@ -75,7 +75,7 @@ def test_triage_job_writes_alert_when_urgent_tasks_exist(db_session, patched_ses
     alerts = db_session.query(MonitorAlert).filter(MonitorAlert.alert_type == "triage").all()
     assert len(alerts) == 1
     assert alerts[0].severity == "high"
-    assert alerts[0].user_id == 1
+    assert alerts[0].user_id == "1"
     assert "urgent" in alerts[0].title.lower()
     assert alerts[0].source_type == "triage_snapshot"
 

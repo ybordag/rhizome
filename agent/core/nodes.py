@@ -123,9 +123,9 @@ def _message_text(message) -> str:
 
 def session_context_intake(state: GardenState, config: RunnableConfig):
     configurable = config.get("configurable") or {}
-    # Default to 1 for local CLI dev. The FastAPI layer always provides user_id
+    # Default to "1" for local CLI dev. The FastAPI layer always provides user_id
     # from the verified JWT; the CLI provides it via make_session_config().
-    uid = int(configurable.get("user_id", 1))
+    uid = str(configurable.get("user_id", "1"))
     thread_id = configurable.get("thread_id", "")
     current_user_id.set(uid)
 

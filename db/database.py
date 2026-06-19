@@ -9,7 +9,7 @@ from db.models import Base
 # Holds the authenticated user's ID for the current execution context.
 # Set once in session_context_intake at the start of every graph run.
 # Tools read this instead of hardcoding a user ID.
-current_user_id: ContextVar[int] = ContextVar("current_user_id", default=1)
+current_user_id: ContextVar[str] = ContextVar("current_user_id", default="1")
 
 # DATABASE_URL drives the backend:
 #   - unset / sqlite:///...  → local SQLite file (dev/test)

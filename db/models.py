@@ -18,7 +18,7 @@ class GardenProfile(Base):
     __tablename__ = "garden_profile"   # the actual table name in SQLite
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     climate_zone = Column(String, nullable=False)       # e.g. "9b"
     frost_date_last_spring = Column(String)             # e.g. "January 15"
     frost_date_first_fall = Column(String)              # e.g. "November 30"
@@ -61,7 +61,7 @@ class GardeningProject(Base):
     __tablename__ = "gardening_project"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=False)
     name = Column(String, nullable=False)
     goal = Column(String, nullable=False)
@@ -406,7 +406,7 @@ class Bed(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=False)
     name = Column(String, nullable=False)
     location = Column(String)
@@ -454,7 +454,7 @@ class Container(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=False)
     name = Column(String, nullable=False)
     container_type = Column(String)
@@ -529,7 +529,7 @@ class Plant(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=False)
     batch_id = Column(String, ForeignKey("plant_batch.id"), nullable=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
 
     name = Column(String, nullable=False)
     variety = Column(String)
@@ -627,7 +627,7 @@ class PlantBatch(Base):
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=False)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
 
@@ -694,7 +694,7 @@ class Conversation(Base):
     __tablename__ = "conversation"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     summary = Column(Text, nullable=True)
@@ -906,7 +906,7 @@ class MonitorRun(Base):
     status = Column(String, nullable=False, default="started")
     summary = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
-    user_id = Column(Integer, nullable=True)
+    user_id = Column(String, nullable=True)
 
 
 class MonitorAlert(Base):
@@ -926,7 +926,7 @@ class MonitorAlert(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
     # critical: 48h TTL; advisory/working_window: 24h TTL
     expires_at = Column(DateTime, nullable=False)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     # 'weather_critical' | 'weather_advisory' | 'working_window' | 'triage' | 'pest'
     alert_type = Column(String, nullable=False)
     # 'critical' | 'high' | 'medium' | 'low'
@@ -955,7 +955,7 @@ class Thread(Base):
     )
 
     id = Column(String, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(String, nullable=False)
     title = Column(String, nullable=True)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     last_message_preview = Column(String, nullable=True)

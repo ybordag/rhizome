@@ -48,7 +48,7 @@ def run_agent(req: AgentRequest):
     config = {
         "configurable": {
             "thread_id": req.thread_id,
-            "user_id": int(req.user_id),
+            "user_id": req.user_id,
             **({"provider": req.provider} if req.provider else {}),
             **({"provider_key": req.provider_key} if req.provider_key else {}),
             **({"model": req.model} if req.model else {}),
@@ -112,7 +112,7 @@ async def stream_agent(req: AgentRequest):
     config = {
         "configurable": {
             "thread_id": req.thread_id,
-            "user_id": int(req.user_id),
+            "user_id": req.user_id,
             **({"provider": req.provider} if req.provider else {}),
             **({"provider_key": req.provider_key} if req.provider_key else {}),
             **({"model": req.model} if req.model else {}),
@@ -179,10 +179,9 @@ async def resume_agent_stream(req: ResumeRequest):
 data_router = APIRouter()
 
 
-def _set_user(user_id: str) -> int:
-    uid = int(user_id)
-    current_user_id.set(uid)
-    return uid
+def _set_user(user_id: str) -> str:
+    current_user_id.set(user_id)
+    return user_id
 
 
 # --- Alerts ---
