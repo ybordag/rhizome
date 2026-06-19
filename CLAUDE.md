@@ -188,9 +188,9 @@ main.py             — CLI entrypoint
   — after visual garden understanding initiative
 
 ## Known issues
-- `user_id == 1` hardcoded in ~15 files across `agent/core/nodes.py` and `agent/tools/` — will be fixed in the multi-tenancy workstream
-- `ActivityEvent.revision_id` FK is defined in the model but only enforced in Postgres (not SQLite dev); Postgres is now in use for staging/prod so enforcement is active there
-- No Alembic migration tooling yet — schema changes require manual `ALTER TABLE` on live Postgres or a full re-create; acceptable for now, needed before the first production schema change
+- `ActivityEvent.revision_id` FK is defined in the model; enforced in Postgres (staging/prod), not SQLite (dev/test)
+- JSON columns use `Column(JSON, ...)` — JSONB would give better indexing; deferred to Intelligence track
+- `public` schema is empty; all tables are in `rhizome` schema ✓
 
 ## Invariants — never violate
 - **Model access only through `agent/core/model.py`.** Never instantiate a model client directly or at import time anywhere else.
@@ -203,10 +203,21 @@ main.py             — CLI entrypoint
 - **Tests required for every new feature.** `python -m pytest` must be green before any task is done.
 
 ## Postgres notes
-Migration is complete. `DATABASE_URL` drives the backend — unset/SQLite for local dev and tests, `postgresql://` for staging/prod. The LangGraph checkpointer follows the same env var.
 
-When adding schema changes: run `Base.metadata.create_all(engine)` for fresh installs. For live Postgres with existing data, write a manual migration script until Alembic is in place.
+`DATABASE_URL` drives the backend — unset/SQLite for local dev and tests, `postgresql://` for staging/prod. The LangGraph checkpointer follows the same env var. Both the SQLAlchemy engine and the psycopg checkpointer connection use `search_path=rhizome` so all tables live in the `rhizome` schema.
 
-For HA: run Postgres with streaming replication (Patroni or pg_auto_failover). `pool_pre_ping=True` is already set on the Postgres engine to handle restarts gracefully.
+**Alembic** manages schema migrations. Workflow:
+```bash
+# Apply pending migrations (run before starting the server after a schema change)
+alembic upgrade head
 
-**pgvector** is in `requirements.txt` but not yet enabled or used. It will be needed for the RAG / pest intelligence epic.
+# After modifying db/models.py, generate a new migration:
+alembic revision --autogenerate -m "describe the change"
+alembic upgrade head
+```
+
+Tests use in-memory SQLite via `init_db()` — they do not use Alembic. `init_db()` in `db/database.py` is kept as a safety net for fresh installs and tests only.
+
+For HA: run Postgres with streaming replication (Patroni or pg_auto_failover). `pool_pre_ping=True` is set on the engine to handle restarts.
+
+**pgvector** is in `requirements.txt` but not yet enabled. Needed for the RAG / pest intelligence epic: `CREATE EXTENSION IF NOT EXISTS vector;` then `alembic revision --autogenerate`.

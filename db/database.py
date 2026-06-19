@@ -21,8 +21,10 @@ _is_postgres = DATABASE_URL.startswith("postgresql") or DATABASE_URL.startswith(
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    # pool_pre_ping detects stale connections after a Postgres restart
     pool_pre_ping=_is_postgres,
+    # Route all queries to the rhizome schema in Postgres.
+    # SQLite (dev/test) ignores connect_args.
+    connect_args={"options": "-csearch_path=rhizome"} if _is_postgres else {},
 )
 
 SessionLocal = sessionmaker(bind=engine)

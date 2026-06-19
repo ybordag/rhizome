@@ -16,6 +16,7 @@ sqlalchemy
 # Database — Postgres
 psycopg2-binary
 pgvector
+alembic
 
 # Internal API server
 fastapi
