@@ -12,6 +12,7 @@ from agent.domain.activity_log import (
     snapshot_model,
 )
 from agent.domain.planner import DEFAULT_PLANT_RULES
+from db.database import current_user_id
 from db.models import (
     ActivityEvent,
     ActivitySubject,
@@ -1195,7 +1196,15 @@ def build_due_task_view(
 ) -> list[dict[str, Any]]:
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     horizon = now + timedelta(days=days_ahead)
-    query = session.query(Task).filter(Task.status.notin_(["done", "skipped", "superseded"]))
+    user_project_ids = [
+        pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == current_user_id.get()
+        ).all()
+    ]
+    query = session.query(Task).filter(
+        Task.status.notin_(["done", "skipped", "superseded"]),
+        Task.project_id.in_(user_project_ids),
+    )
     if project_id:
         query = query.filter(Task.project_id == project_id)
 
@@ -1326,8 +1335,14 @@ def get_daily_priority_tasks(
     )
     triage_recommended: set[str] = set(latest_triage.recommended_task_ids or []) if latest_triage else set()
 
+    user_project_ids = [
+        pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == current_user_id.get()
+        ).all()
+    ]
     query = session.query(Task).filter(
         Task.status.notin_(["done", "skipped", "superseded"]),
+        Task.project_id.in_(user_project_ids),
     )
     if project_id:
         query = query.filter(Task.project_id == project_id)

@@ -519,12 +519,13 @@ def get_project_activity(
 
 @data_router.get("/monitor/runs")
 def list_monitor_runs(user_id: str, limit: int = 20):
-    _set_user(user_id)
+    uid = _set_user(user_id)
     from db.models import MonitorRun
     session = SessionLocal()
     try:
         rows = (
             session.query(MonitorRun)
+            .filter(MonitorRun.user_id == uid)
             .order_by(MonitorRun.created_at.desc())
             .limit(limit)
             .all()
@@ -547,11 +548,13 @@ def list_monitor_runs(user_id: str, limit: int = 20):
 
 @data_router.get("/monitor/runs/{run_id}")
 def get_monitor_run(run_id: str, user_id: str):
-    _set_user(user_id)
+    uid = _set_user(user_id)
     from db.models import MonitorRun
     session = SessionLocal()
     try:
-        run = session.query(MonitorRun).filter(MonitorRun.id == run_id).first()
+        run = session.query(MonitorRun).filter(
+            MonitorRun.id == run_id, MonitorRun.user_id == uid
+        ).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
         return {
