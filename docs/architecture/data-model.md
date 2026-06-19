@@ -29,6 +29,12 @@ GardenProfile
   └── Plant    (status, source, timing dates, care timestamps)
         └── PlantBatch  (batch provenance: seed lot, supplier, tray)
 
+GardeningProject
+  ├── ProjectExpense   (budget tracking: estimated vs actual cost, by category)
+  └── ShoppingItem     (purchasing list; linked to ProjectExpense on purchase)
+
+CalendarAnnotation  (day-level notes, per user — independent of projects)
+
 IncidentReport (status: reported → approved → resolved)
   ├── IncidentSubject  (affected plants, beds, containers)
   └── TreatmentPlan  (status: draft → approved)
@@ -39,7 +45,7 @@ WeatherSnapshot    (7-day forecast + derived impacts)
 WeatherTaskChangeSet (status: draft → approved)
 TriageSnapshot     (session-start triage output)
 
-ActivityEvent      (every state change)
+ActivityEvent      (every state change, scoped to user_id)
   └── ActivitySubject  (links event to affected entities)
 ```
 
@@ -105,9 +111,9 @@ Proposals are versioned. Multiple proposals can exist for a brief; only one is a
 | `is_user_modified` | true = preserved on regeneration |
 | `reversible` | false = agent will confirm before skipping |
 
-**TaskDependency** — finish-to-start link between tasks. `blocking_task → blocked_task`. `compute_task_blocked_state` checks direct blockers only (one level deep).
+**TaskDependency** — finish-to-start link between tasks. `blocking_task → blocked_task`. `compute_task_blocked_state` checks direct blockers only (one level deep). Dependencies are manageable via the API; cycle detection (BFS) prevents A→B→A chains.
 
-**TaskSeries** — recurring rule. Defines cadence, start/end conditions, and linked subjects. `materialize_task_series` generates Task instances on a rolling 14-day horizon.
+**TaskSeries** — recurring rule. Defines cadence, start/end conditions, and linked subjects. `materialize_task_series` generates Task instances on a rolling 14-day horizon. `revision_id` and `generation_run_id` are nullable — user-created series (source_type="user") don't require a planning revision.
 
 ---
 
@@ -157,16 +163,30 @@ Session-start output: recommended task IDs, urgent/routine/project groupings, we
 
 ### ActivityEvent
 Every state change in the system records at least one event. Fields:
+- `user_id` — mandatory since the multi-tenancy fix; `list_recent_activity_entries` filters on this
 - `actor_type / actor_label` — who did it (agent tool call, user confirmation)
 - `event_type` — e.g. `task_completed`, `plant_watered`, `proposal_accepted`
 - `category` — domain: `task`, `project`, `plant`, `incident`, `interaction`, `care`, `weather`
 - `summary` — human-readable description
-- `project_id` — for project-scoped queries
-- `revision_id` — FK to project_revision (enforced in Postgres)
+- `project_id` — for project-scoped queries (nullable — not all events belong to a project)
+- `revision_id` — FK to project_revision (nullable)
 - `event_metadata` — JSON with `before`/`after` snapshots for update events
 
 ### ActivitySubject
 Links an event to the entities it affected. `subject_type` + `subject_id` + `role` (primary/affected/generated_from/source). Multiple subjects per event.
+
+---
+
+## User-facing models added in the frontend API pass
+
+### CalendarAnnotation
+Day-level notes per user. Not tied to a project. Key fields: `date` (Date), `content`, `category` (note|observation|plan|reminder), `color`. Indexed on `(user_id, date)` for efficient range queries.
+
+### ProjectExpense
+Budget tracking for a project. Tracks `estimated_cost` vs `actual_cost` per item, grouped by `category` (material|equipment|plant|labor|other). `purchased_at` is a Date column. Used by the `/expenses/summary` endpoint to produce proposal vs. actual budget comparisons.
+
+### ShoppingItem
+Purchasing list — standalone or project-scoped. `status`: needed|ordered|purchased. `priority`: high|normal|low. On `POST /shopping/{id}/purchase`, status is set to purchased and a linked `ProjectExpense` is auto-created when `project_id` and `estimated_cost` are both set (linked via `expense_id` FK).
 
 ---
 
@@ -184,8 +204,11 @@ Links an event to the entities it affected. `subject_type` + `subject_id` + `rol
 | ProjectBed | project_id; UNIQUE(project_id, bed_id) |
 | ProjectContainer | project_id; UNIQUE(project_id, container_id) |
 | ProjectPlant | project_id, plant_id |
-| ActivityEvent | created_at, project_id, event_type, revision_id |
+| ActivityEvent | created_at, project_id, event_type, revision_id, user_id |
 | ActivitySubject | event_id, (subject_type, subject_id) |
+| CalendarAnnotation | (user_id, date) |
+| ProjectExpense | user_id, project_id |
+| ShoppingItem | user_id, project_id, status |
 | InteractionRecord | created_at, status, project_id, interaction_type |
 | IncidentReport | project_id, status |
 | TreatmentPlan | incident_id, status |
@@ -199,7 +222,7 @@ Links an event to the entities it affected. `subject_type` + `subject_id` + `rol
 ```
 Thread
   id                   string PK    — IS the LangGraph thread_id (botanical name e.g. silver-fern-cascade)
-  user_id              int          — scopes the thread to a user (FK to cambium.users conceptually)
+  user_id              string       — UUID string from cambium.users; scopes the thread to a user
   title                string?      — auto-set from first human message (first 60 chars); user-editable
   project_id           string? FK   — optional link to a GardeningProject
   last_message_preview string?      — first 150 chars of last AI response (updated each turn)

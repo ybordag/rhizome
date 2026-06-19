@@ -17,6 +17,10 @@ Requires at least one provider key in `.env` to run the CLI (`GOOGLE_API_KEY` is
 Tests mock the model and run without any key. Live tests (`-m live`) auto-skip if the relevant key is absent.
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
+## Test counts (current)
+- Total (excluding E2E): **501 tests** — unit + integration + graph + API
+- E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
+
 ## Project layout
 ```
 agent/
@@ -139,12 +143,16 @@ main.py             — CLI entrypoint
 
 **FastAPI internal layer complete (narcissus → main, 2026-06):**
 - `agent/api/app.py`: FastAPI app with two routers + `/health`
-- `agent/api/routers.py`: ~80 data endpoints across all domains (garden, projects, tasks,
-  operations, activity) + agent endpoints (streaming + non-streaming + resume)
+- `agent/api/routers.py`: ~115 data endpoints across all domains (garden, projects, tasks,
+  operations, activity, calendar, shopping) + agent endpoints (streaming + non-streaming + resume)
+- `agent/api/views.py`: Pydantic view models for all P0 entities — all data endpoints return
+  structured JSON, not `{"result": "string"}`. Views: GardenProfileView, BedView, ContainerView,
+  PlantSummaryView/DetailView, CareStateView, TaskSummaryView/DetailView, ProjectSummaryView/DetailView,
+  TaskSeriesView, CalendarAnnotationView, ProjectExpenseView, ShoppingItemView
 - `server.py`: uvicorn entry point (`PORT` env var, default 8001)
 - Multi-tenancy: `_set_user()` sets `current_user_id` ContextVar before every data endpoint;
   agent endpoint passes `user_id` via `config["configurable"]`
-- 408 tests passing; streaming tests in DEFERRED_TESTS.md
+- 501 tests passing
 
 **Active work — Cambium (Go API gateway):**
 - Phases 1–3 complete (auth, key management, Rhizome proxy, SSE streaming)
@@ -182,10 +190,27 @@ main.py             — CLI entrypoint
   GET {id}, GET {id}/messages (from LangGraph checkpoint), DELETE
 - 13 tests; 421 total tests passing
 
+**Frontend API pass complete (2026-06-19):**
+- `ActivityEvent.user_id` column added (migration); `list_recent_activity_entries` now scopes
+  to current user — multi-tenancy bug fixed
+- `GET /activity/stats`: totals + by_day aggregation, group_by=day|week
+- All P0 GET endpoints return structured JSON (views.py). Route ordering fixed (literal routes
+  before parameterized).
+- New endpoints: `POST/DELETE /tasks`, `POST/DELETE /tasks/series`, `POST/DELETE /tasks/{id}/dependencies`
+  (BFS cycle detection), `PATCH /projects/{id}/tasks/bulk`, `GET /projects/{id}/tasks?include_dependencies=true`
+- Garden detail: `GET /garden/beds|containers|plants/{id}`, `POST /garden/beds`, location/bed_id/container_id
+  filters on plants, `?available=true` on beds/containers
+- New models + migrations: `CalendarAnnotation`, `ProjectExpense`, `ShoppingItem`
+- Calendar CRUD, expense CRUD + budget summary, shopping CRUD + purchase action
+- `Task.revision_id` and `generation_run_id` nullable (user-created tasks); same for `TaskSeries`
+
 **Next in Rhizome:**
-- Multi-tenancy: audit all tool queries for `user_id` scoping (currently defaults to 1 in CLI)
+- Unified entity search (`#126`)
+- Thread pinned context (`#127`)
+- Quick care recording (`#128`)
+- Notification SSE via Postgres LISTEN/NOTIFY (`#130`)
+- Incident CRUD gaps (`#129`)
 - Pest intelligence (deferred from calendula Phase 5): iNaturalist + image-based pest ID + RAG
-  — after visual garden understanding initiative
 
 ## Known issues
 - `ActivityEvent.revision_id` FK is defined in the model; enforced in Postgres (staging/prod), not SQLite (dev/test)
