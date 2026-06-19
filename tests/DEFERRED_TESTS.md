@@ -111,3 +111,17 @@ Tests that are known gaps but consciously deferred. Each entry explains why it w
 **Why deferred:** The feasibility checks are already partially covered via integration tests on `assemble_planning_context` and `list_candidate_locations`. Dedicated unit tests of every violation path are straightforward to add but low urgency given the existing integration coverage.
 
 **Re-enable when:** A constraint is found to be silently ignored in a real planning session. Add one unit test per violation type to `test_domain_logic.py`.
+
+---
+
+## SSE streaming endpoints
+
+**What:** Tests for `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` — verifying the SSE event sequence (token events, interaction event when graph pauses, done event), correct `Content-Type: text/event-stream` header, and that the stream closes cleanly.
+
+**Why deferred:** The streaming endpoints use `agent.astream_events()` which calls the real LangGraph graph and LLM. The `fresh_test_graph` fixture builds a test graph with a `FakeBoundModel`, but wiring it into the FastAPI `TestClient` requires either:
+- Patching `agent.core.graph.agent` in the test session before the router module loads (import-time state), or
+- Restructuring the router to accept an injectable graph instance (FastAPI dependency injection pattern)
+
+Neither is trivial. The non-streaming agent endpoint has the same gap — streaming makes it more visible.
+
+**Re-enable when:** The router is refactored to accept an injectable `agent` via FastAPI `Depends`, allowing `TestClient` tests to inject the `fresh_test_graph`. At that point, streaming tests can verify the full event sequence end-to-end with a fake model.

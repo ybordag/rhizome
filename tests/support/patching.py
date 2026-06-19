@@ -9,6 +9,7 @@ def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
     from agent.tools.operations import activity, care, incidents, interactions, triage, weather
     from agent.tools.garden import beds_containers, plants, profile, search
     from agent.tools.projects import planning, projects, tracker
+    from agent.api import routers as api_routers
 
     monkeypatch.setattr(nodes, "SessionLocal", session_factory)
     monkeypatch.setattr(activity, "SessionLocal", session_factory)
@@ -25,6 +26,7 @@ def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
     monkeypatch.setattr(plants, "SessionLocal", session_factory)
     monkeypatch.setattr(beds_containers, "SessionLocal", session_factory)
     monkeypatch.setattr(search, "SessionLocal", session_factory)
+    monkeypatch.setattr(api_routers, "SessionLocal", session_factory)
 
 
 def build_test_agent(monkeypatch, fake_model, session_factory, checkpointer):
