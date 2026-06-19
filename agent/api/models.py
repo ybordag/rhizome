@@ -131,3 +131,93 @@ class CreateBedRequest(BaseModel):
     sunlight: Optional[str] = None
     soil_type: Optional[str] = None
     notes: Optional[str] = None
+
+
+class CreateTaskSeriesRequest(BaseModel):
+    project_id: str
+    title_template: str
+    type: str
+    priority: Optional[str] = "normal"
+    estimated_minutes: Optional[int] = 0
+    cadence: str
+    window_days: Optional[int] = None
+    linked_subjects: Optional[list] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    reversible: Optional[bool] = True
+
+
+class TaskDateUpdate(BaseModel):
+    task_id: str
+    scheduled_date: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    deadline: Optional[str] = None
+
+
+class BulkTaskUpdateRequest(BaseModel):
+    updates: list[TaskDateUpdate]
+
+
+class CreateCalendarAnnotationRequest(BaseModel):
+    date: str   # ISO date
+    content: str
+    category: Optional[str] = None
+    color: Optional[str] = None
+
+
+class UpdateCalendarAnnotationRequest(BaseModel):
+    content: Optional[str] = None
+    category: Optional[str] = None
+    color: Optional[str] = None
+
+
+class CreateProjectExpenseRequest(BaseModel):
+    name: str
+    category: str
+    estimated_cost: Optional[float] = None
+    actual_cost: Optional[float] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    supplier: Optional[str] = None
+    purchased_at: Optional[str] = None
+    status: Optional[str] = "needed"
+    notes: Optional[str] = None
+
+
+class UpdateProjectExpenseRequest(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    actual_cost: Optional[float] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    supplier: Optional[str] = None
+    purchased_at: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class CreateShoppingItemRequest(BaseModel):
+    name: str
+    category: str
+    project_id: Optional[str] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    supplier: Optional[str] = None
+    notes: Optional[str] = None
+    priority: Optional[str] = "normal"
+
+
+class UpdateShoppingItemRequest(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    project_id: Optional[str] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    supplier: Optional[str] = None
+    notes: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None

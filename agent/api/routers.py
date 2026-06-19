@@ -15,9 +15,14 @@ from agent.api.models import (
     AgentRequest,
     AgentResponse,
     AssignLocationsRequest,
+    BulkTaskUpdateRequest,
     CreateBedRequest,
+    CreateCalendarAnnotationRequest,
+    CreateProjectExpenseRequest,
     CreateProjectRequest,
+    CreateShoppingItemRequest,
     CreateTaskRequest,
+    CreateTaskSeriesRequest,
     CreateThreadRequest,
     DeferTaskRequest,
     ReportIncidentRequest,
@@ -25,17 +30,21 @@ from agent.api.models import (
     ResolveInteractionRequest,
     TaskActionRequest,
     UpdateBriefRequest,
+    UpdateCalendarAnnotationRequest,
+    UpdateProjectExpenseRequest,
     UpdateProjectRequest,
+    UpdateShoppingItemRequest,
     UpdateTaskRequest,
     UpdateTaskSeriesRequest,
 )
 from agent.core.graph import agent
 from db.database import SessionLocal, current_user_id
 from db.models import (
-    Bed, Container, GardenProfile, GardeningProject, MonitorAlert, Plant,
-    PlantBatch, ProjectBed, ProjectContainer, ProjectPlant, Task,
+    Bed, CalendarAnnotation, Container, GardenProfile, GardeningProject,
+    MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
+    ProjectExpense, ShoppingItem, Task, TaskDependency, TaskSeries,
 )
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 # ---------------------------------------------------------------------------
 # Agent router
@@ -199,6 +208,25 @@ data_router = APIRouter()
 def _set_user(user_id: str) -> str:
     current_user_id.set(user_id)
     return user_id
+
+
+def _would_create_cycle(session, blocking_task_id: str, blocked_task_id: str) -> bool:
+    """True if adding (blocking→blocked) would create a dependency cycle.
+    BFS from blocked_task_id following blocking direction to see if we reach blocking_task_id.
+    """
+    visited: set = set()
+    queue = [blocked_task_id]
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        if current == blocking_task_id:
+            return True
+        visited.add(current)
+        downstream = [bid for (bid,) in session.query(TaskDependency.blocked_task_id)
+                      .filter(TaskDependency.blocking_task_id == current).all()]
+        queue.extend(downstream)
+    return False
 
 
 def _result_or_404(result) -> dict:
@@ -467,6 +495,63 @@ def update_task(task_id: str, user_id: str, body: UpdateTaskRequest = None):
     return _result_or_404(_update_task.invoke(params))
 
 
+@data_router.post("/tasks/{task_id}/dependencies")
+def add_task_dependency(task_id: str, user_id: str, body: dict):
+    _set_user(user_id)
+    blocking_task_id = body.get("blocking_task_id")
+    if not blocking_task_id:
+        raise HTTPException(status_code=400, detail="blocking_task_id is required")
+    session = SessionLocal()
+    try:
+        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == user_id).all()}
+        blocked = session.query(Task).filter(Task.id == task_id).first()
+        blocking = session.query(Task).filter(Task.id == blocking_task_id).first()
+        if not blocked or blocked.project_id not in user_pids:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not blocking or blocking.project_id not in user_pids:
+            raise HTTPException(status_code=400, detail="Blocking task not found or not owned by user")
+        if task_id == blocking_task_id:
+            raise HTTPException(status_code=400, detail="A task cannot depend on itself")
+        if _would_create_cycle(session, blocking_task_id, task_id):
+            raise HTTPException(status_code=400, detail="This dependency would create a cycle")
+        existing = session.query(TaskDependency).filter(
+            TaskDependency.blocking_task_id == blocking_task_id,
+            TaskDependency.blocked_task_id == task_id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Dependency already exists")
+        dep = TaskDependency(blocking_task_id=blocking_task_id, blocked_task_id=task_id)
+        session.add(dep)
+        session.commit()
+        return {"blocking_task_id": blocking_task_id, "blocked_task_id": task_id}
+    finally:
+        session.close()
+
+
+@data_router.delete("/tasks/{task_id}/dependencies/{blocking_task_id}")
+def remove_task_dependency(task_id: str, blocking_task_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == user_id).all()}
+        task = session.query(Task).filter(Task.id == task_id).first()
+        if not task or task.project_id not in user_pids:
+            raise HTTPException(status_code=404, detail="Task not found")
+        dep = session.query(TaskDependency).filter(
+            TaskDependency.blocking_task_id == blocking_task_id,
+            TaskDependency.blocked_task_id == task_id,
+        ).first()
+        if not dep:
+            raise HTTPException(status_code=404, detail="Dependency not found")
+        session.delete(dep)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
+
+
 @data_router.get("/tasks/{task_id}/blockers")
 def explain_task_blockers(task_id: str, user_id: str):
     _set_user(user_id)
@@ -486,6 +571,62 @@ def materialize_tasks(user_id: str, project_id: str = None, days_ahead: int = 14
     _set_user(user_id)
     from agent.tools.projects.tracker import materialize_recurring_tasks
     return {"result": materialize_recurring_tasks.invoke({"project_id": project_id, "days_ahead": days_ahead})}
+
+
+@data_router.post("/tasks/series")
+def create_task_series(user_id: str, body: CreateTaskSeriesRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == body.project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        from datetime import datetime as _dt
+        series = TaskSeries(
+            project_id=body.project_id,
+            source_type="user",
+            generator_key="user_direct",
+            title=body.title_template,
+            type=body.type,
+            cadence=body.cadence,
+            cadence_days=body.window_days,
+            default_estimated_minutes=body.estimated_minutes or 0,
+            linked_subjects=body.linked_subjects or [],
+            start_condition={"date": body.start_date} if body.start_date else {},
+            end_condition={"date": body.end_date} if body.end_date else {},
+            active=True,
+        )
+        session.add(series)
+        session.commit()
+        session.refresh(series)
+        return series.to_view()
+    finally:
+        session.close()
+
+
+@data_router.delete("/tasks/series/{series_id}")
+def delete_task_series(series_id: str, user_id: str, delete_pending_tasks: str = "false"):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == user_id).all()}
+        series = session.query(TaskSeries).filter(TaskSeries.id == series_id).first()
+        if not series or series.project_id not in user_pids:
+            raise HTTPException(status_code=404, detail="Task series not found")
+        if delete_pending_tasks == "true":
+            session.query(Task).filter(
+                Task.series_id == series_id,
+                Task.status.in_(["pending", "deferred"]),
+            ).delete(synchronize_session=False)
+        session.delete(series)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
 
 
 @data_router.patch("/tasks/series/{series_id}")
@@ -568,7 +709,7 @@ def get_project_progress(project_id: str, user_id: str):
 
 
 @data_router.get("/projects/{project_id}/tasks")
-def get_project_tasks(project_id: str, user_id: str, status: str = None):
+def get_project_tasks(project_id: str, user_id: str, status: str = None, include_dependencies: str = None):
     _set_user(user_id)
     session = SessionLocal()
     try:
@@ -584,7 +725,62 @@ def get_project_tasks(project_id: str, user_id: str, status: str = None):
         else:
             query = query.filter(Task.status != "superseded")
         tasks = query.order_by(Task.parent_task_id.asc(), Task.deadline.asc(), Task.scheduled_date.asc()).all()
-        return [t.to_summary_view() for t in tasks]
+        task_views = [t.to_summary_view() for t in tasks]
+        if include_dependencies == "true":
+            task_ids = [t.id for t in tasks]
+            edges = [
+                {"blocking_task_id": d.blocking_task_id, "blocked_task_id": d.blocked_task_id}
+                for d in session.query(TaskDependency).filter(
+                    TaskDependency.blocking_task_id.in_(task_ids),
+                    TaskDependency.blocked_task_id.in_(task_ids),
+                ).all()
+            ]
+            return {"tasks": task_views, "edges": edges}
+        return task_views
+    finally:
+        session.close()
+
+
+@data_router.patch("/projects/{project_id}/tasks/bulk")
+def bulk_update_project_tasks(project_id: str, user_id: str, body: BulkTaskUpdateRequest):
+    _set_user(user_id)
+    if len(body.updates) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 tasks per bulk update")
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        from datetime import datetime as _dt
+        def _parse(s):
+            return _dt.fromisoformat(s) if s else None
+        task_ids = [u.task_id for u in body.updates]
+        tasks_map = {t.id: t for t in session.query(Task).filter(
+            Task.id.in_(task_ids), Task.project_id == project_id).all()}
+        # Validate all tasks exist and are editable
+        for upd in body.updates:
+            t = tasks_map.get(upd.task_id)
+            if not t:
+                raise HTTPException(status_code=400, detail=f"Task {upd.task_id} not found in project")
+            if t.status in ("done", "superseded"):
+                raise HTTPException(status_code=400, detail=f"Task {upd.task_id} has status '{t.status}' and cannot be updated")
+        # Apply updates
+        for upd in body.updates:
+            t = tasks_map[upd.task_id]
+            if upd.scheduled_date is not None:
+                t.scheduled_date = _parse(upd.scheduled_date)
+            if upd.window_start is not None:
+                t.window_start = _parse(upd.window_start)
+            if upd.window_end is not None:
+                t.window_end = _parse(upd.window_end)
+            if upd.deadline is not None:
+                t.deadline = _parse(upd.deadline)
+            t.is_user_modified = True
+        session.commit()
+        return [tasks_map[u.task_id].to_summary_view() for u in body.updates]
     finally:
         session.close()
 
@@ -654,8 +850,20 @@ def accept_project_proposal(project_id: str, proposal_id: str, user_id: str):
 @data_router.get("/projects/{project_id}/series")
 def list_project_series(project_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.tracker import list_task_series
-    return {"result": list_task_series.invoke({"project_id": project_id})}
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        series = session.query(TaskSeries).filter(
+            TaskSeries.project_id == project_id, TaskSeries.active == True
+        ).all()
+        return [s.to_view() for s in series]
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/beds")
@@ -1553,5 +1761,379 @@ def get_activity_stats(
             project_id=project_id,
             group_by=group_by,
         )
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Calendar annotations
+# ---------------------------------------------------------------------------
+
+@data_router.get("/calendar/annotations")
+def list_calendar_annotations(user_id: str, since: str = None, before: str = None):
+    _set_user(user_id)
+    if not since or not before:
+        raise HTTPException(status_code=400, detail="since and before are required")
+    from datetime import date as _date
+    session = SessionLocal()
+    try:
+        since_d = _date.fromisoformat(since)
+        before_d = _date.fromisoformat(before)
+        annotations = session.query(CalendarAnnotation).filter(
+            CalendarAnnotation.user_id == user_id,
+            CalendarAnnotation.date >= since_d,
+            CalendarAnnotation.date <= before_d,
+        ).order_by(CalendarAnnotation.date.asc()).all()
+        return [a.to_view() for a in annotations]
+    finally:
+        session.close()
+
+
+@data_router.post("/calendar/annotations")
+def create_calendar_annotation(user_id: str, body: CreateCalendarAnnotationRequest):
+    _set_user(user_id)
+    from datetime import date as _date
+    session = SessionLocal()
+    try:
+        annotation = CalendarAnnotation(
+            user_id=user_id,
+            date=_date.fromisoformat(body.date),
+            content=body.content,
+            category=body.category,
+            color=body.color,
+        )
+        session.add(annotation)
+        session.commit()
+        session.refresh(annotation)
+        return annotation.to_view()
+    finally:
+        session.close()
+
+
+@data_router.patch("/calendar/annotations/{annotation_id}")
+def update_calendar_annotation(annotation_id: str, user_id: str, body: UpdateCalendarAnnotationRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        annotation = session.query(CalendarAnnotation).filter(
+            CalendarAnnotation.id == annotation_id,
+            CalendarAnnotation.user_id == user_id,
+        ).first()
+        if not annotation:
+            raise HTTPException(status_code=404, detail="Annotation not found")
+        if body.content is not None:
+            annotation.content = body.content
+        if body.category is not None:
+            annotation.category = body.category
+        if body.color is not None:
+            annotation.color = body.color
+        session.commit()
+        session.refresh(annotation)
+        return annotation.to_view()
+    finally:
+        session.close()
+
+
+@data_router.delete("/calendar/annotations/{annotation_id}")
+def delete_calendar_annotation(annotation_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        annotation = session.query(CalendarAnnotation).filter(
+            CalendarAnnotation.id == annotation_id,
+            CalendarAnnotation.user_id == user_id,
+        ).first()
+        if not annotation:
+            raise HTTPException(status_code=404, detail="Annotation not found")
+        session.delete(annotation)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Project expenses
+# ---------------------------------------------------------------------------
+
+@data_router.get("/projects/{project_id}/expenses")
+def list_project_expenses(project_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        expenses = session.query(ProjectExpense).filter(
+            ProjectExpense.project_id == project_id).order_by(ProjectExpense.created_at.asc()).all()
+        return [e.to_view() for e in expenses]
+    finally:
+        session.close()
+
+
+@data_router.post("/projects/{project_id}/expenses")
+def create_project_expense(project_id: str, user_id: str, body: CreateProjectExpenseRequest):
+    _set_user(user_id)
+    from datetime import date as _date
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        expense = ProjectExpense(
+            user_id=user_id,
+            project_id=project_id,
+            name=body.name,
+            category=body.category,
+            estimated_cost=body.estimated_cost,
+            actual_cost=body.actual_cost,
+            quantity=body.quantity,
+            unit=body.unit,
+            supplier=body.supplier,
+            purchased_at=_date.fromisoformat(body.purchased_at) if body.purchased_at else None,
+            status=body.status or "needed",
+            notes=body.notes,
+        )
+        session.add(expense)
+        session.commit()
+        session.refresh(expense)
+        return expense.to_view()
+    finally:
+        session.close()
+
+
+@data_router.patch("/projects/{project_id}/expenses/{expense_id}")
+def update_project_expense(project_id: str, expense_id: str, user_id: str, body: UpdateProjectExpenseRequest):
+    _set_user(user_id)
+    from datetime import date as _date
+    session = SessionLocal()
+    try:
+        expense = session.query(ProjectExpense).filter(
+            ProjectExpense.id == expense_id,
+            ProjectExpense.project_id == project_id,
+            ProjectExpense.user_id == user_id,
+        ).first()
+        if not expense:
+            raise HTTPException(status_code=404, detail="Expense not found")
+        for field in ("name", "category", "estimated_cost", "actual_cost",
+                      "quantity", "unit", "supplier", "status", "notes"):
+            val = getattr(body, field, None)
+            if val is not None:
+                setattr(expense, field, val)
+        if body.purchased_at is not None:
+            expense.purchased_at = _date.fromisoformat(body.purchased_at) if body.purchased_at else None
+        session.commit()
+        session.refresh(expense)
+        return expense.to_view()
+    finally:
+        session.close()
+
+
+@data_router.delete("/projects/{project_id}/expenses/{expense_id}")
+def delete_project_expense(project_id: str, expense_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        expense = session.query(ProjectExpense).filter(
+            ProjectExpense.id == expense_id,
+            ProjectExpense.project_id == project_id,
+            ProjectExpense.user_id == user_id,
+        ).first()
+        if not expense:
+            raise HTTPException(status_code=404, detail="Expense not found")
+        session.delete(expense)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
+
+
+@data_router.get("/projects/{project_id}/expenses/summary")
+def get_project_expense_summary(project_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        # Get proposal estimate from accepted proposal
+        from db.models import ProjectProposal
+        accepted = session.query(ProjectProposal).filter(
+            ProjectProposal.project_id == project_id,
+            ProjectProposal.status == "accepted",
+        ).first()
+        proposal_estimate = None
+        if accepted and accepted.cost_estimate:
+            proposal_estimate = accepted.cost_estimate.get("total_estimated_cost")
+
+        expenses = session.query(ProjectExpense).filter(
+            ProjectExpense.project_id == project_id).all()
+        total_estimated = sum(e.estimated_cost or 0 for e in expenses)
+        total_actual = sum(e.actual_cost or 0 for e in expenses)
+        by_category: dict = {}
+        for e in expenses:
+            cat = e.category
+            if cat not in by_category:
+                by_category[cat] = {"estimated": 0.0, "actual": 0.0}
+            by_category[cat]["estimated"] += e.estimated_cost or 0
+            by_category[cat]["actual"] += e.actual_cost or 0
+        return {
+            "proposal_estimate": proposal_estimate,
+            "total_estimated": total_estimated,
+            "total_actual": total_actual,
+            "remaining_estimate": total_estimated - total_actual,
+            "by_category": by_category,
+        }
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Shopping list
+# ---------------------------------------------------------------------------
+
+@data_router.get("/shopping")
+def list_shopping_items(
+    user_id: str, status: str = None, project_id: str = None,
+    category: str = None, priority: str = None,
+):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        query = session.query(ShoppingItem).filter(ShoppingItem.user_id == user_id)
+        if status:
+            query = query.filter(ShoppingItem.status == status)
+        if project_id:
+            query = query.filter(ShoppingItem.project_id == project_id)
+        if category:
+            query = query.filter(ShoppingItem.category == category)
+        if priority:
+            query = query.filter(ShoppingItem.priority == priority)
+        items = query.order_by(ShoppingItem.created_at.desc()).all()
+        return [i.to_view() for i in items]
+    finally:
+        session.close()
+
+
+@data_router.post("/shopping")
+def create_shopping_item(user_id: str, body: CreateShoppingItemRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        if body.project_id:
+            project = session.query(GardeningProject).filter(
+                GardeningProject.id == body.project_id,
+                GardeningProject.user_id == user_id,
+            ).first()
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+        item = ShoppingItem(
+            user_id=user_id,
+            project_id=body.project_id,
+            name=body.name,
+            category=body.category,
+            quantity=body.quantity,
+            unit=body.unit,
+            estimated_cost=body.estimated_cost,
+            supplier=body.supplier,
+            notes=body.notes,
+            priority=body.priority or "normal",
+        )
+        session.add(item)
+        session.commit()
+        session.refresh(item)
+        return item.to_view()
+    finally:
+        session.close()
+
+
+@data_router.patch("/shopping/{item_id}")
+def update_shopping_item(item_id: str, user_id: str, body: UpdateShoppingItemRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        item = session.query(ShoppingItem).filter(
+            ShoppingItem.id == item_id, ShoppingItem.user_id == user_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Shopping item not found")
+        for field in ("name", "category", "project_id", "quantity", "unit",
+                      "estimated_cost", "supplier", "notes", "status", "priority"):
+            val = getattr(body, field, None)
+            if val is not None:
+                setattr(item, field, val)
+        session.commit()
+        session.refresh(item)
+        return item.to_view()
+    finally:
+        session.close()
+
+
+@data_router.delete("/shopping/{item_id}")
+def delete_shopping_item(item_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        item = session.query(ShoppingItem).filter(
+            ShoppingItem.id == item_id, ShoppingItem.user_id == user_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Shopping item not found")
+        session.delete(item)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
+
+
+@data_router.post("/shopping/{item_id}/purchase")
+def purchase_shopping_item(item_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        item = session.query(ShoppingItem).filter(
+            ShoppingItem.id == item_id, ShoppingItem.user_id == user_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Shopping item not found")
+        item.status = "purchased"
+        # Optionally create a linked ProjectExpense
+        if item.project_id and item.estimated_cost is not None:
+            expense = ProjectExpense(
+                user_id=user_id,
+                project_id=item.project_id,
+                name=item.name,
+                category=item.category,
+                estimated_cost=item.estimated_cost,
+                actual_cost=item.estimated_cost,
+                quantity=item.quantity,
+                unit=item.unit,
+                supplier=item.supplier,
+                status="purchased",
+            )
+            session.add(expense)
+            session.flush()
+            item.expense_id = expense.id
+        session.commit()
+        session.refresh(item)
+        return item.to_view()
+    finally:
+        session.close()
+
+
+@data_router.get("/projects/{project_id}/shopping")
+def list_project_shopping(project_id: str, user_id: str, status: str = None):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        query = session.query(ShoppingItem).filter(
+            ShoppingItem.project_id == project_id, ShoppingItem.user_id == user_id)
+        if status:
+            query = query.filter(ShoppingItem.status == status)
+        return [i.to_view() for i in query.order_by(ShoppingItem.created_at.desc()).all()]
     finally:
         session.close()

@@ -1,6 +1,6 @@
 # db/models.py
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey, Index
+from sqlalchemy import Column, String, Integer, Float, DateTime, Date, Text, JSON, Boolean, ForeignKey, Index
 from datetime import datetime, timezone
 import uuid
 from typing import Optional
@@ -478,8 +478,8 @@ class TaskSeries(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
-    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=False)
-    generation_run_id = Column(String, ForeignKey("task_generation_run.id"), nullable=False)
+    revision_id = Column(String, ForeignKey("project_revision.id"), nullable=True)
+    generation_run_id = Column(String, ForeignKey("task_generation_run.id"), nullable=True)
     parent_task_id = Column(String, ForeignKey("task.id"), nullable=True)
     source_type = Column(String, nullable=False, default="generated")
     generator_key = Column(String, nullable=False)
@@ -503,6 +503,24 @@ class TaskSeries(Base):
             f"  Type: {self.type} | Cadence: {self.cadence}\n"
             f"  Next generation: {_fmt_date(self.next_generation_date)} | Active: {self.active}"
         )
+
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "title": self.title,
+            "description": self.description,
+            "type": self.type,
+            "cadence": self.cadence,
+            "cadence_days": self.cadence_days,
+            "linked_subjects": self.linked_subjects or [],
+            "default_estimated_minutes": self.default_estimated_minutes,
+            "next_generation_date": self.next_generation_date,
+            "active": self.active,
+            "source_type": self.source_type,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
 
 
 class Bed(Base):
@@ -1185,3 +1203,119 @@ class Thread(Base):
     message_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
+class CalendarAnnotation(Base):
+    __tablename__ = "calendar_annotation"
+    __table_args__ = (
+        Index("ix_calendar_annotation_user_date", "user_id", "date"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False)
+    date = Column(Date, nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String, nullable=True)   # note | observation | plan | reminder
+    color = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+                        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "date": self.date.isoformat() if self.date else None,
+            "content": self.content,
+            "category": self.category,
+            "color": self.color,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+class ProjectExpense(Base):
+    __tablename__ = "project_expense"
+    __table_args__ = (
+        Index("ix_project_expense_user_id", "user_id"),
+        Index("ix_project_expense_project_id", "project_id"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False)
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=False)
+    name = Column(Text, nullable=False)
+    category = Column(Text, nullable=False)    # material | equipment | plant | labor | other
+    estimated_cost = Column(Float, nullable=True)
+    actual_cost = Column(Float, nullable=True)
+    quantity = Column(Float, nullable=True)
+    unit = Column(Text, nullable=True)
+    supplier = Column(Text, nullable=True)
+    purchased_at = Column(Date, nullable=True)
+    status = Column(Text, nullable=False, default="needed")   # needed | ordered | purchased
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+                        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "name": self.name,
+            "category": self.category,
+            "estimated_cost": self.estimated_cost,
+            "actual_cost": self.actual_cost,
+            "quantity": self.quantity,
+            "unit": self.unit,
+            "supplier": self.supplier,
+            "purchased_at": self.purchased_at.isoformat() if self.purchased_at else None,
+            "status": self.status,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+class ShoppingItem(Base):
+    __tablename__ = "shopping_item"
+    __table_args__ = (
+        Index("ix_shopping_item_user_id", "user_id"),
+        Index("ix_shopping_item_project_id", "project_id"),
+        Index("ix_shopping_item_status", "status"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False)
+    project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
+    name = Column(Text, nullable=False)
+    category = Column(Text, nullable=False)    # plant | seed | tool | amendment | container | other
+    quantity = Column(Float, nullable=True)
+    unit = Column(Text, nullable=True)
+    estimated_cost = Column(Float, nullable=True)
+    supplier = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default="needed")   # needed | ordered | purchased
+    priority = Column(Text, nullable=False, default="normal") # high | normal | low
+    expense_id = Column(String, ForeignKey("project_expense.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+                        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "name": self.name,
+            "category": self.category,
+            "quantity": self.quantity,
+            "unit": self.unit,
+            "estimated_cost": self.estimated_cost,
+            "supplier": self.supplier,
+            "notes": self.notes,
+            "status": self.status,
+            "priority": self.priority,
+            "expense_id": self.expense_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }

@@ -195,3 +195,89 @@ class ProjectSummaryView(BaseModel):
 
 class ProjectDetailView(ProjectSummaryView):
     approved_plan: Optional[Any] = None
+
+
+# ---------------------------------------------------------------------------
+# Task series
+# ---------------------------------------------------------------------------
+
+class TaskSeriesView(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    description: Optional[str] = None
+    type: str
+    cadence: str
+    cadence_days: Optional[int] = None
+    linked_subjects: list = []
+    default_estimated_minutes: int = 0
+    next_generation_date: Optional[datetime] = None
+    active: bool = True
+    source_type: str = "generated"
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Calendar annotations
+# ---------------------------------------------------------------------------
+
+class CalendarAnnotationView(BaseModel):
+    id: str
+    user_id: str
+    date: str  # ISO date string
+    content: str
+    category: Optional[str] = None
+    color: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Project expenses
+# ---------------------------------------------------------------------------
+
+class ProjectExpenseView(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    category: str
+    estimated_cost: Optional[float] = None
+    actual_cost: Optional[float] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    supplier: Optional[str] = None
+    purchased_at: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class ExpenseSummaryView(BaseModel):
+    proposal_estimate: Optional[float] = None
+    total_estimated: float
+    total_actual: float
+    remaining_estimate: float
+    by_category: dict
+
+
+# ---------------------------------------------------------------------------
+# Shopping list
+# ---------------------------------------------------------------------------
+
+class ShoppingItemView(BaseModel):
+    id: str
+    project_id: Optional[str] = None
+    name: str
+    category: str
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    supplier: Optional[str] = None
+    notes: Optional[str] = None
+    status: str
+    priority: str
+    expense_id: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
