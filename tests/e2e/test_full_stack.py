@@ -331,6 +331,46 @@ def test_chat_streaming_returns_sse(auth):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.e2e
+@pytest.mark.skipif(not GOOGLE_API_KEY, reason="GOOGLE_API_KEY not set")
+def test_multi_node_session_continuity(auth):
+    """
+    Proves stateless scaling works: two consecutive messages in the same thread
+    must maintain context even if they are served by different Rhizome replicas.
+
+    This is the core guarantee of the PostgresSaver checkpointer — state lives
+    in Postgres, not in any individual pod. Any replica can resume any thread.
+    """
+    requests.put(f"{CAMBIUM}/api/v1/auth/keys",
+                 headers=_headers(auth["token"]),
+                 json={"provider": "gemini", "key": GOOGLE_API_KEY})
+
+    thread_id = requests.post(f"{CAMBIUM}/api/v1/threads",
+                              headers=_headers(auth["token"]),
+                              json={"title": "Multi-node continuity"}).json()["thread_id"]
+
+    # First message — establishes context
+    r1 = requests.post(f"{CAMBIUM}/api/v1/chat",
+                       params={"thread_id": thread_id},
+                       headers=_headers(auth["token"]),
+                       json={"message": "My name is PortfolioTestUser. Remember that."},
+                       timeout=60)
+    assert r1.status_code == 200, f"First message failed: {r1.text}"
+    assert r1.json()["response"], "Expected non-empty response"
+
+    # Second message — tests that context survived (even if served by a different pod)
+    r2 = requests.post(f"{CAMBIUM}/api/v1/chat",
+                       params={"thread_id": thread_id},
+                       headers=_headers(auth["token"]),
+                       json={"message": "What is my name?"},
+                       timeout=60)
+    assert r2.status_code == 200, f"Second message failed: {r2.text}"
+    response = r2.json()["response"].lower()
+    assert "portfoliotestuser" in response, (
+        f"Session context not maintained across replicas — response: {r2.json()['response'][:200]}"
+    )
+
+
+@pytest.mark.e2e
 def test_alerts_endpoint_returns_list(auth):
     r = requests.get(f"{CAMBIUM}/api/v1/alerts", headers=_headers(auth["token"]))
     assert r.status_code == 200
