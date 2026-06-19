@@ -1,13 +1,13 @@
 # Rhizome — Claude Code Memory
 
 ## Branch
-`geranium` → `main` merge pending (PR #109). Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done) and `iris` (image modality, planned).
+`geranium` merged into `main`. Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done, pending merge). `iris` deleted — image modality work not yet started.
 
 ## Build and test
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (375 tests)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (~369 tests)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -49,7 +49,7 @@ agent/
     triage.py       — triage snapshot builder; secondary LLM call at session start
     weather.py      — Open-Meteo integration and weather impact derivation
 
-  tools/            — 93 tools, all registered in tools/__init__.py
+  tools/            — 95 tools, all registered in tools/__init__.py
     garden/
       beds_containers.py  — bed and container CRUD
       plants.py           — plant and batch CRUD, status lifecycle
@@ -123,7 +123,7 @@ main.py             — CLI entrypoint
 - N+1 query fixes in `list_projects`, `get_project`, `search_garden`, `list_by_location`
 - DB schema: user_id indexes on Plant/Bed/Container/PlantBatch, unique constraints on ProjectBed/ProjectContainer, ActivityEvent.revision_id FK
 - Action history: `get_task_activity`, `get_incident_activity`, `list_project_activity`, enhanced `list_recent_activity` with DB-level filtering and cursor pagination; `interaction_resolved` events now recorded by `resolve_interaction_record`
-- 325 tests, 0 failures; `tests/DEFERRED_TESTS.md` documents 11 consciously deferred areas
+- ~326 tests, 0 failures; `tests/DEFERRED_TESTS.md` documents 11 consciously deferred areas
 
 **Model provider abstraction complete (geranium, 2026-06):**
 - `agent/core/model.py` rewritten as a multi-provider factory: `google_genai`, `openai`, `anthropic`
@@ -149,13 +149,14 @@ main.py             — CLI entrypoint
 - `unsafe_outdoor_window` / `safe_outdoor_window` impact types in `derive_weather_impacts()`
 - `GardenState.monitor_alerts`; session-start alert injection into system prompt
 - `triage_job()` writes triage alert when urgent tasks exist; `series_job()` materialises recurring tasks
-- 50 new tests (13 model, 20 weather monitor, 8 node, 9 job)
+- 43 new tests (13 model, 14 weather monitor, 7 node, 9 job)
 - Phase 5 (iNaturalist pest ingestion) deferred — see planning note below
 - See `docs/current_work/calendula_reactive_monitoring.md` for full implementation record
 
-**Active work — `iris` branch (image modality):**
+**Upcoming — visual garden understanding (image modality):**
 - Image input to Rhizome agent (multimodal `HumanMessage` handling)
-- Branch created, plan not yet started
+- Plant/disease/pest identification from photos
+- See `docs/roadmap/initiatives/visual_garden_understanding.md`
 
 **Postgres migration complete:**
 - `db/database.py` switches on `DATABASE_URL`: SQLite for dev/test, Postgres for staging/prod
