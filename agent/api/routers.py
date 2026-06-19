@@ -85,7 +85,7 @@ def run_agent(req: AgentRequest):
 @agent_router.post("/agent/resume", response_model=AgentResponse)
 def resume_agent(req: ResumeRequest):
     """Resume a paused graph after user interaction resolution."""
-    config = {"configurable": {"thread_id": req.thread_id, "user_id": int(req.user_id)}}
+    config = {"configurable": {"thread_id": req.thread_id, "user_id": req.user_id}}
     agent.invoke(Command(resume=req.resolution), config=config)
     state = agent.get_state(config)
     ai_messages = [
@@ -148,7 +148,7 @@ async def resume_agent_stream(req: ResumeRequest):
     Resume a paused graph with SSE streaming.
     Same event format as /agent/stream.
     """
-    config = {"configurable": {"thread_id": req.thread_id, "user_id": int(req.user_id)}}
+    config = {"configurable": {"thread_id": req.thread_id, "user_id": req.user_id}}
 
     async def generate():
         async for event in agent.astream_events(
@@ -182,6 +182,20 @@ data_router = APIRouter()
 def _set_user(user_id: str) -> str:
     current_user_id.set(user_id)
     return user_id
+
+
+def _result_or_404(result) -> dict:
+    """Convert tool 'not found' error strings to HTTP 404.
+
+    Tools return human-readable strings when an entity is not found
+    (e.g. "No bed found with id abc-123."). The router converts these
+    to 404 so callers get proper HTTP semantics.
+    """
+    if isinstance(result, str):
+        lower = result.lower()
+        if lower.startswith("no ") or "not found" in lower or "not assigned" in lower:
+            raise HTTPException(status_code=404, detail=result)
+    return {"result": result}
 
 
 # --- Alerts ---
@@ -259,35 +273,35 @@ def daily_tasks(user_id: str, limit: int = 10, project_id: str = None):
 def get_task(task_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.tracker import get_task as _get_task
-    return {"result": _get_task.invoke({"task_id": task_id})}
+    return _result_or_404(_get_task.invoke({"task_id": task_id}))
 
 
 @data_router.post("/tasks/{task_id}/complete")
 def complete_task(task_id: str, user_id: str, body: TaskActionRequest = None):
     _set_user(user_id)
     from agent.tools.projects.tracker import complete_task as _complete_task
-    return {"result": _complete_task.invoke({"task_id": task_id, "notes": body.notes if body else None})}
+    return _result_or_404(_complete_task.invoke({"task_id": task_id, "notes": body.notes if body else None}))
 
 
 @data_router.post("/tasks/{task_id}/skip")
 def skip_task(task_id: str, user_id: str, body: TaskActionRequest = None):
     _set_user(user_id)
     from agent.tools.projects.tracker import skip_task as _skip_task
-    return {"result": _skip_task.invoke({"task_id": task_id, "notes": body.notes if body else None})}
+    return _result_or_404(_skip_task.invoke({"task_id": task_id, "notes": body.notes if body else None}))
 
 
 @data_router.post("/tasks/{task_id}/defer")
 def defer_task(task_id: str, user_id: str, body: DeferTaskRequest):
     _set_user(user_id)
     from agent.tools.projects.tracker import defer_task as _defer_task
-    return {"result": _defer_task.invoke({"task_id": task_id, "defer_until": body.defer_until, "notes": body.notes})}
+    return _result_or_404(_defer_task.invoke({"task_id": task_id, "defer_until": body.defer_until, "notes": body.notes}))
 
 
 @data_router.post("/tasks/{task_id}/start")
 def start_task(task_id: str, user_id: str, body: TaskActionRequest = None):
     _set_user(user_id)
     from agent.tools.projects.tracker import start_task as _start_task
-    return {"result": _start_task.invoke({"task_id": task_id, "notes": body.notes if body else None})}
+    return _result_or_404(_start_task.invoke({"task_id": task_id, "notes": body.notes if body else None}))
 
 
 @data_router.patch("/tasks/{task_id}")
@@ -297,7 +311,7 @@ def update_task(task_id: str, user_id: str, body: UpdateTaskRequest = None):
     params = {"task_id": task_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return {"result": _update_task.invoke(params)}
+    return _result_or_404(_update_task.invoke(params))
 
 
 @data_router.get("/tasks/due")
@@ -318,14 +332,14 @@ def list_blocked_tasks(user_id: str, project_id: str = None):
 def explain_task_blockers(task_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.tracker import explain_task_blockers as _explain
-    return {"result": _explain.invoke({"task_id": task_id})}
+    return _result_or_404(_explain.invoke({"task_id": task_id}))
 
 
 @data_router.get("/tasks/{task_id}/activity")
 def get_task_activity(task_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
     from agent.tools.operations.activity import get_task_activity as _get_task_activity
-    return {"result": _get_task_activity.invoke({"task_id": task_id, "limit": limit})}
+    return _result_or_404(_get_task_activity.invoke({"task_id": task_id, "limit": limit}))
 
 
 @data_router.post("/tasks/materialize")
@@ -342,7 +356,7 @@ def update_task_series(series_id: str, user_id: str, body: UpdateTaskSeriesReque
     params = {"series_id": series_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return {"result": _update_series.invoke(params)}
+    return _result_or_404(_update_series.invoke(params))
 
 
 # --- Projects ---
@@ -358,14 +372,14 @@ def list_projects(user_id: str):
 def get_project(project_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import get_project as _get_project
-    return {"result": _get_project.invoke({"project_id": project_id})}
+    return _result_or_404(_get_project.invoke({"project_id": project_id}))
 
 
 @data_router.get("/projects/{project_id}/progress")
 def get_project_progress(project_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import get_project_progress
-    return {"result": get_project_progress.invoke({"project_id": project_id})}
+    return _result_or_404(get_project_progress.invoke({"project_id": project_id}))
 
 
 @data_router.get("/projects/{project_id}/tasks")
@@ -389,21 +403,21 @@ def update_project(project_id: str, user_id: str, body: UpdateProjectRequest = N
     params = {"project_id": project_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return {"result": _update.invoke(params)}
+    return _result_or_404(_update.invoke(params))
 
 
 @data_router.delete("/projects/{project_id}")
 def delete_project(project_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import delete_project as _delete
-    return {"result": _delete.invoke({"project_id": project_id})}
+    return _result_or_404(_delete.invoke({"project_id": project_id}))
 
 
 @data_router.get("/projects/{project_id}/brief")
 def get_project_brief(project_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.planning import get_project_brief as _get_brief
-    return {"result": _get_brief.invoke({"project_id": project_id})}
+    return _result_or_404(_get_brief.invoke({"project_id": project_id}))
 
 
 @data_router.patch("/projects/{project_id}/brief")
@@ -413,28 +427,28 @@ def update_project_brief(project_id: str, user_id: str, body: UpdateBriefRequest
     params = {"project_id": project_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return {"result": _update_brief.invoke(params)}
+    return _result_or_404(_update_brief.invoke(params))
 
 
 @data_router.get("/projects/{project_id}/proposals")
 def list_project_proposals(project_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.planning import list_project_proposals as _list
-    return {"result": _list.invoke({"project_id": project_id})}
+    return _result_or_404(_list.invoke({"project_id": project_id}))
 
 
 @data_router.get("/projects/{project_id}/proposals/{proposal_id}")
 def get_project_proposal(project_id: str, proposal_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.planning import get_project_proposal as _get
-    return {"result": _get.invoke({"proposal_id": proposal_id})}
+    return _result_or_404(_get.invoke({"proposal_id": proposal_id}))
 
 
 @data_router.post("/projects/{project_id}/proposals/{proposal_id}/accept")
 def accept_project_proposal(project_id: str, proposal_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.planning import accept_project_proposal as _accept
-    return {"result": _accept.invoke({"proposal_id": proposal_id})}
+    return _result_or_404(_accept.invoke({"proposal_id": proposal_id}))
 
 
 @data_router.get("/projects/{project_id}/series")
@@ -448,56 +462,56 @@ def list_project_series(project_id: str, user_id: str):
 def assign_bed(project_id: str, bed_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import assign_bed_to_project
-    return {"result": assign_bed_to_project.invoke({"project_id": project_id, "bed_id": bed_id})}
+    return _result_or_404(assign_bed_to_project.invoke({"project_id": project_id, "bed_id": bed_id}))
 
 
 @data_router.delete("/projects/{project_id}/beds/{bed_id}")
 def unassign_bed(project_id: str, bed_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import unassign_bed_from_project
-    return {"result": unassign_bed_from_project.invoke({"project_id": project_id, "bed_id": bed_id})}
+    return _result_or_404(unassign_bed_from_project.invoke({"project_id": project_id, "bed_id": bed_id}))
 
 
 @data_router.post("/projects/{project_id}/beds/batch")
 def assign_beds_batch(project_id: str, user_id: str, body: AssignLocationsRequest):
     _set_user(user_id)
     from agent.tools.projects.projects import assign_beds_to_project
-    return {"result": assign_beds_to_project.invoke({"project_id": project_id, "bed_ids": body.bed_ids or []})}
+    return _result_or_404(assign_beds_to_project.invoke({"project_id": project_id, "bed_ids": body.bed_ids or []}))
 
 
 @data_router.post("/projects/{project_id}/containers/{container_id}")
 def assign_container(project_id: str, container_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import assign_container_to_project
-    return {"result": assign_container_to_project.invoke({"project_id": project_id, "container_id": container_id})}
+    return _result_or_404(assign_container_to_project.invoke({"project_id": project_id, "container_id": container_id}))
 
 
 @data_router.delete("/projects/{project_id}/containers/{container_id}")
 def unassign_container(project_id: str, container_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import unassign_container_from_project
-    return {"result": unassign_container_from_project.invoke({"project_id": project_id, "container_id": container_id})}
+    return _result_or_404(unassign_container_from_project.invoke({"project_id": project_id, "container_id": container_id}))
 
 
 @data_router.post("/projects/{project_id}/containers/batch")
 def assign_containers_batch(project_id: str, user_id: str, body: AssignLocationsRequest):
     _set_user(user_id)
     from agent.tools.projects.projects import assign_containers_to_project
-    return {"result": assign_containers_to_project.invoke({"project_id": project_id, "container_ids": body.container_ids or []})}
+    return _result_or_404(assign_containers_to_project.invoke({"project_id": project_id, "container_ids": body.container_ids or []}))
 
 
 @data_router.post("/projects/{project_id}/plants/{plant_id}")
 def add_plant_to_project(project_id: str, plant_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import add_plant_to_project as _add
-    return {"result": _add.invoke({"project_id": project_id, "plant_id": plant_id})}
+    return _result_or_404(_add.invoke({"project_id": project_id, "plant_id": plant_id}))
 
 
 @data_router.delete("/projects/{project_id}/plants/{plant_id}")
 def remove_plant_from_project(project_id: str, plant_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.projects.projects import remove_plant_from_project as _remove
-    return {"result": _remove.invoke({"project_id": project_id, "plant_id": plant_id})}
+    return _result_or_404(_remove.invoke({"project_id": project_id, "plant_id": plant_id}))
 
 
 @data_router.get("/projects/{project_id}/activity")
@@ -602,14 +616,14 @@ def list_beds(user_id: str):
 def update_bed(bed_id: str, user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import update_bed as _update
-    return {"result": _update.invoke({"bed_id": bed_id, **(body or {})})}
+    return _result_or_404(_update.invoke({"bed_id": bed_id, **(body or {})}))
 
 
 @data_router.delete("/garden/beds/{bed_id}")
 def delete_bed(bed_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import delete_bed as _delete
-    return {"result": _delete.invoke({"bed_id": bed_id})}
+    return _result_or_404(_delete.invoke({"bed_id": bed_id}))
 
 
 @data_router.get("/garden/beds/{bed_id}/care/state")
@@ -630,7 +644,7 @@ def get_bed_care_history(bed_id: str, user_id: str, limit: int = 10):
 def get_bed_activity(bed_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
     from agent.tools.operations.activity import get_bed_activity as _get
-    return {"result": _get.invoke({"bed_id": bed_id, "limit": limit})}
+    return _result_or_404(_get.invoke({"bed_id": bed_id, "limit": limit}))
 
 
 # ---------------------------------------------------------------------------
@@ -655,14 +669,15 @@ def add_container(user_id: str, body: dict):
 def update_container(container_id: str, user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import update_container as _update
-    return {"result": _update.invoke({"container_id": container_id, **(body or {})})}
+    return _result_or_404(_update.invoke({"container_id": container_id, **(body or {})}))
+
 
 
 @data_router.delete("/garden/containers/{container_id}")
 def remove_container(container_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import remove_container as _remove
-    return {"result": _remove.invoke({"container_id": container_id})}
+    return _result_or_404(_remove.invoke({"container_id": container_id}))
 
 
 @data_router.get("/garden/containers/{container_id}/care/state")
@@ -683,7 +698,7 @@ def get_container_care_history(container_id: str, user_id: str, limit: int = 10)
 def get_container_activity(container_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
     from agent.tools.operations.activity import get_container_activity as _get
-    return {"result": _get.invoke({"container_id": container_id, "limit": limit})}
+    return _result_or_404(_get.invoke({"container_id": container_id, "limit": limit}))
 
 
 # ---------------------------------------------------------------------------
@@ -708,7 +723,7 @@ def add_plant(user_id: str, body: dict):
 def update_plant(plant_id: str, user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.plants import update_plant as _update
-    return {"result": _update.invoke({"plant_id": plant_id, **(body or {})})}
+    return _result_or_404(_update.invoke({"plant_id": plant_id, **(body or {})}))
 
 
 @data_router.patch("/garden/plants/{plant_id}/remove")
@@ -716,7 +731,7 @@ def remove_plant(plant_id: str, user_id: str, reason: str = None):
     """Soft delete — marks plant as removed (died, harvested, rehomed). Keeps the record."""
     _set_user(user_id)
     from agent.tools.garden.plants import remove_plant as _remove
-    return {"result": _remove.invoke({"plant_id": plant_id, "reason": reason or "removed via API"})}
+    return _result_or_404(_remove.invoke({"plant_id": plant_id, "reason": reason or "removed via API"}))
 
 
 @data_router.delete("/garden/plants/{plant_id}")
@@ -724,7 +739,7 @@ def delete_plant(plant_id: str, user_id: str):
     """Hard delete — permanently removes the plant record. Use for data entry mistakes only."""
     _set_user(user_id)
     from agent.tools.garden.plants import delete_plant as _delete
-    return {"result": _delete.invoke({"plant_id": plant_id})}
+    return _result_or_404(_delete.invoke({"plant_id": plant_id}))
 
 
 @data_router.post("/garden/plants/batch")
@@ -767,7 +782,7 @@ def get_plant_care_history(plant_id: str, user_id: str, limit: int = 10):
 def get_plant_activity(plant_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
     from agent.tools.operations.activity import get_plant_activity as _get
-    return {"result": _get.invoke({"plant_id": plant_id, "limit": limit})}
+    return _result_or_404(_get.invoke({"plant_id": plant_id, "limit": limit}))
 
 
 # ---------------------------------------------------------------------------
@@ -785,14 +800,14 @@ def list_batches(user_id: str):
 def delete_batch(batch_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.garden.plants import delete_batch as _delete
-    return {"result": _delete.invoke({"batch_id": batch_id})}
+    return _result_or_404(_delete.invoke({"batch_id": batch_id}))
 
 
 @data_router.get("/garden/batches/{batch_id}/activity")
 def get_batch_activity(batch_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
     from agent.tools.operations.activity import get_batch_activity as _get
-    return {"result": _get.invoke({"batch_id": batch_id, "limit": limit})}
+    return _result_or_404(_get.invoke({"batch_id": batch_id, "limit": limit}))
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +868,7 @@ def weather_impacted_tasks(user_id: str):
 def approve_weather_changes(changeset_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.weather import approve_weather_task_changes
-    return {"result": approve_weather_task_changes.invoke({"change_set_id": changeset_id})}
+    return _result_or_404(approve_weather_task_changes.invoke({"change_set_id": changeset_id}))
 
 
 # ---------------------------------------------------------------------------
@@ -878,35 +893,35 @@ def report_incident(user_id: str, body: ReportIncidentRequest):
 def get_incident(incident_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.incidents import get_incident as _get
-    return {"result": _get.invoke({"incident_id": incident_id})}
+    return _result_or_404(_get.invoke({"incident_id": incident_id}))
 
 
 @data_router.patch("/incidents/{incident_id}/resolve")
 def resolve_incident(incident_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.incidents import resolve_incident as _resolve
-    return {"result": _resolve.invoke({"incident_id": incident_id})}
+    return _result_or_404(_resolve.invoke({"incident_id": incident_id}))
 
 
 @data_router.get("/incidents/{incident_id}/treatment")
 def get_treatment_plan(incident_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.incidents import get_treatment_plan as _get
-    return {"result": _get.invoke({"incident_id": incident_id})}
+    return _result_or_404(_get.invoke({"incident_id": incident_id}))
 
 
 @data_router.patch("/treatment-plans/{plan_id}/approve")
 def approve_treatment_plan(plan_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.incidents import approve_treatment_plan as _approve
-    return {"result": _approve.invoke({"treatment_plan_id": plan_id})}
+    return _result_or_404(_approve.invoke({"treatment_plan_id": plan_id}))
 
 
 @data_router.get("/incidents/{incident_id}/activity")
 def get_incident_activity(incident_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
     from agent.tools.operations.activity import get_incident_activity as _get
-    return {"result": _get.invoke({"incident_id": incident_id, "limit": limit})}
+    return _result_or_404(_get.invoke({"incident_id": incident_id, "limit": limit}))
 
 
 # ---------------------------------------------------------------------------
@@ -931,14 +946,14 @@ def list_recent_interactions(user_id: str, limit: int = 10):
 def get_interaction(interaction_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.interactions import get_interaction_record
-    return {"result": get_interaction_record.invoke({"interaction_id": interaction_id})}
+    return _result_or_404(get_interaction_record.invoke({"interaction_id": interaction_id}))
 
 
 @data_router.post("/interactions/{interaction_id}/resolve")
 def resolve_interaction(interaction_id: str, user_id: str, body: ResolveInteractionRequest):
     _set_user(user_id)
     from agent.tools.operations.interactions import resolve_interaction as _resolve
-    return {"result": _resolve.invoke({"interaction_id": interaction_id, **body.model_dump(exclude_none=True)})}
+    return _result_or_404(_resolve.invoke({"interaction_id": interaction_id, **body.model_dump(exclude_none=True)}))
 
 
 # ---------------------------------------------------------------------------
