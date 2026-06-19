@@ -140,9 +140,9 @@ main.py             — CLI entrypoint
 - ✅ Phase 1: `MonitorAlert` + `MonitorRun` models; `scripts/monitor.py` skeleton; 13 tests
 - ✅ Phase 2: `apply_weather_impacts()` auto-apply/queue policy; `unsafe_outdoor_window`/`safe_outdoor_window` impact types; `weather_job()` wired; 20 tests
 - ✅ Phase 3: `GardenState.monitor_alerts`; `session_context_intake` queries pending alerts; `llm_call` injects `⚠ Active monitor alerts` section; 8 tests
-- Phase 4: triage + series materialization jobs
+- ✅ Phase 4: `triage_job()` (snapshot + urgent alert), `series_job()` (14-day rolling materialization); 9 tests
 - Phase 5: iNaturalist pest monitoring
-- 366 tests, 0 failures
+- 375 tests, 0 failures
 - See `docs/current_work/calendula_reactive_monitoring.md` for full plan
 
 **Active work — `iris` branch (image modality):**

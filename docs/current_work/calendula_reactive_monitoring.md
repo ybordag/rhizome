@@ -2,7 +2,7 @@
 
 **Branch:** `calendula`  
 **Epic:** [Epic 6: Reactive Monitoring and Alerting](../roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)  
-**Status:** In progress — Phases 1–3 complete, Phase 4 next  
+**Status:** In progress — Phases 1–4 complete, Phase 5 (iNaturalist) next  
 **Last updated:** 2026-06-18
 
 ---
@@ -170,9 +170,11 @@ Only `severity in ('critical', 'high')` and non-expired alerts are injected.
 - `_monitor_alerts_text()` helper; empty string when no alerts (keeps prompt clean)
 - 8 tests: 2 unit on formatting, 6 integration on pending/dismissed/expired/severity/cross-user filtering
 
-### Phase 4 — Triage + series jobs
-- `triage_job()` and `series_job()` in `scripts/monitor.py`
-- Tests: series materialization runs for due series; triage job writes alert when urgent tasks exist
+### Phase 4 — Triage + series jobs ✅
+- `triage_job()`: calls `build_triage_snapshot()`, writes `MonitorAlert(alert_type='triage', severity='high', ttl=20h)` when `urgent_task_ids` non-empty
+- `series_job()`: calls `materialize_task_series()` — idempotent, creates recurring tasks within the 14-day rolling horizon
+- `_write_alert()` private helper in monitor.py for writing alerts from any job
+- 9 integration tests in `tests/db/test_monitor_jobs.py`
 
 ### Phase 5 — iNaturalist pest monitoring
 - `agent/domain/pests.py` — iNaturalist Observations API, observation → `IncidentReport` mapping
