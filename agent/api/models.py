@@ -221,3 +221,28 @@ class UpdateShoppingItemRequest(BaseModel):
     notes: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
+
+
+class RecordCareRequest(BaseModel):
+    care_type: str  # watered | fertilized | amended | inspected | treated | pruned
+    notes: Optional[str] = None
+    recorded_at: Optional[str] = None  # ISO datetime; defaults to now
+
+
+class UpdateIncidentRequest(BaseModel):
+    summary: Optional[str] = None
+    severity: Optional[str] = None
+    notes: Optional[str] = None
+    incident_type: Optional[str] = None
+
+
+class CreateManualTreatmentPlanRequest(BaseModel):
+    approach_summary: str
+    recommended_steps: list = []
+    follow_up_strategy: Optional[str] = None
+
+
+class UpdateTreatmentPlanRequest(BaseModel):
+    approach_summary: Optional[str] = None
+    recommended_steps: Optional[list] = None
+    follow_up_strategy: Optional[str] = None

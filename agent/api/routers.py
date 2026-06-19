@@ -18,6 +18,7 @@ from agent.api.models import (
     BulkTaskUpdateRequest,
     CreateBedRequest,
     CreateCalendarAnnotationRequest,
+    CreateManualTreatmentPlanRequest,
     CreateProjectExpenseRequest,
     CreateProjectRequest,
     CreateShoppingItemRequest,
@@ -25,24 +26,27 @@ from agent.api.models import (
     CreateTaskSeriesRequest,
     CreateThreadRequest,
     DeferTaskRequest,
+    RecordCareRequest,
     ReportIncidentRequest,
     ResumeRequest,
     ResolveInteractionRequest,
     TaskActionRequest,
     UpdateBriefRequest,
     UpdateCalendarAnnotationRequest,
+    UpdateIncidentRequest,
     UpdateProjectExpenseRequest,
     UpdateProjectRequest,
     UpdateShoppingItemRequest,
     UpdateTaskRequest,
     UpdateTaskSeriesRequest,
+    UpdateTreatmentPlanRequest,
 )
 from agent.core.graph import agent
 from db.database import SessionLocal, current_user_id
 from db.models import (
     Bed, CalendarAnnotation, Container, GardenProfile, GardeningProject,
-    MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
-    ProjectExpense, ShoppingItem, Task, TaskDependency, TaskSeries,
+    IncidentReport, MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
+    ProjectExpense, ShoppingItem, Task, TaskDependency, TaskSeries, TreatmentPlan,
 )
 from sqlalchemy import func, or_
 
@@ -1416,6 +1420,135 @@ def get_plant_activity(plant_id: str, user_id: str, limit: int = 20):
 
 
 # ---------------------------------------------------------------------------
+# Quick care recording (find-or-create + complete in one call)
+# ---------------------------------------------------------------------------
+
+# care_type (request) → CARE_ACTIONS key
+_CARE_TYPE_MAP = {
+    "watered": "water",
+    "fertilized": "fertilize",
+    "amended": "amend",
+    "inspected": "inspect",
+    "treated": "treat",
+    "pruned": "prune",
+}
+
+
+def _record_care(session, subject_type: str, obj, user_id: str, body: RecordCareRequest):
+    """Shared implementation for plant/bed/container quick-care endpoints."""
+    from agent.domain.care import CARE_ACTIONS
+    from agent.domain.activity_log import record_activity_event
+    from db.database import current_user_id
+
+    care_key = _CARE_TYPE_MAP.get(body.care_type)
+    if not care_key or subject_type not in CARE_ACTIONS.get(care_key, {}):
+        raise HTTPException(
+            status_code=400,
+            detail=f"care_type '{body.care_type}' is not valid for {subject_type}s",
+        )
+
+    event_type, field_name = CARE_ACTIONS[care_key][subject_type]
+    care_ts = (
+        datetime.fromisoformat(body.recorded_at)
+        if body.recorded_at
+        else datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+
+    # Find an existing pending/in_progress task linked to this subject
+    from agent.domain.care import infer_care_action
+    user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
+        GardeningProject.user_id == user_id).all()}
+    existing_task = None
+    if user_pids:
+        candidates = session.query(Task).filter(
+            Task.project_id.in_(user_pids),
+            Task.status.in_(["pending", "in_progress"]),
+        ).all()
+        for t in candidates:
+            if infer_care_action(t) == care_key:
+                for s in (t.linked_subjects or []):
+                    if s.get("subject_type") == subject_type and s.get("subject_id") == obj.id:
+                        existing_task = t
+                        break
+            if existing_task:
+                break
+
+    # Apply care timestamp directly (works regardless of task)
+    setattr(obj, field_name, care_ts)
+    if body.notes:
+        existing = getattr(obj, "care_state_notes", None)
+        setattr(obj, "care_state_notes", f"{existing}\n{body.notes}".strip() if existing else body.notes)
+
+    # If we found an existing task, complete it too
+    task_view = None
+    if existing_task:
+        existing_task.status = "done"
+        existing_task.completed_at = care_ts
+        if body.notes:
+            existing_task.notes = (
+                f"{existing_task.notes}\n{body.notes}".strip()
+                if existing_task.notes else body.notes
+            )
+        task_view = existing_task.to_summary_view()
+
+    # Record care activity event
+    record_activity_event(
+        session,
+        actor_type="user",
+        actor_label="quick_care",
+        event_type=event_type,
+        category=subject_type,
+        summary=f"{obj.__class__.__name__} {body.care_type}" + (f": {body.notes}" if body.notes else "."),
+        metadata={"care_type": body.care_type, "recorded_at": care_ts.isoformat()},
+        subjects=[{"subject_type": subject_type, "subject_id": obj.id, "role": "primary"}],
+    )
+
+    session.commit()
+    session.refresh(obj)
+    return {"task": task_view, "care_state": obj.to_care_state_view()}
+
+
+@data_router.post("/garden/plants/{plant_id}/care")
+def record_plant_care(plant_id: str, user_id: str, body: RecordCareRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        plant = session.query(Plant).filter(Plant.id == plant_id, Plant.user_id == user_id).first()
+        if not plant:
+            raise HTTPException(status_code=404, detail="Plant not found")
+        return _record_care(session, "plant", plant, user_id, body)
+    finally:
+        session.close()
+
+
+@data_router.post("/garden/beds/{bed_id}/care")
+def record_bed_care(bed_id: str, user_id: str, body: RecordCareRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        bed = session.query(Bed).filter(Bed.id == bed_id, Bed.user_id == user_id).first()
+        if not bed:
+            raise HTTPException(status_code=404, detail="Bed not found")
+        return _record_care(session, "bed", bed, user_id, body)
+    finally:
+        session.close()
+
+
+@data_router.post("/garden/containers/{container_id}/care")
+def record_container_care(container_id: str, user_id: str, body: RecordCareRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.id == container_id, Container.user_id == user_id).first()
+        if not container:
+            raise HTTPException(status_code=404, detail="Container not found")
+        return _record_care(session, "container", container, user_id, body)
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # Garden — batches
 # ---------------------------------------------------------------------------
 
@@ -1505,11 +1638,83 @@ def approve_weather_changes(changeset_id: str, user_id: str):
 # Incidents & treatment plans
 # ---------------------------------------------------------------------------
 
+def _get_incident_for_user(session, incident_id: str, user_id: str):
+    """Return the incident if it belongs to the user, else None."""
+    incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
+    if not incident:
+        return None
+    if incident.project_id:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == incident.project_id,
+            GardeningProject.user_id == user_id,
+        ).first()
+        if not project:
+            return None
+    return incident
+
+
 @data_router.get("/incidents")
-def list_incidents(user_id: str, project_id: str = None, status: str = None):
+def list_incidents(
+    user_id: str,
+    project_id: str = None,
+    status: str = None,
+    severity: str = None,
+    incident_type: str = None,
+    since: str = None,
+    before: str = None,
+    subject_type: str = None,
+    subject_id: str = None,
+):
     _set_user(user_id)
     from agent.tools.operations.incidents import list_incidents as _list
-    return {"result": _list.invoke({"project_id": project_id, "status": status})}
+    # Pass base params through the tool, apply additional filters in Python
+    result_str = _list.invoke({"project_id": project_id, "status": status})
+    # The tool returns a string; for the new filters we query directly
+    session = SessionLocal()
+    try:
+        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == user_id).all()}
+        query = session.query(IncidentReport).filter(
+            or_(
+                IncidentReport.project_id.in_(user_pids),
+                IncidentReport.project_id.is_(None),
+            )
+        )
+        if project_id:
+            query = query.filter(IncidentReport.project_id == project_id)
+        if status:
+            query = query.filter(IncidentReport.status == status)
+        if severity:
+            query = query.filter(IncidentReport.severity == severity)
+        if incident_type:
+            query = query.filter(IncidentReport.incident_type == incident_type)
+        if since:
+            query = query.filter(IncidentReport.created_at >= datetime.fromisoformat(since))
+        if before:
+            query = query.filter(IncidentReport.created_at < datetime.fromisoformat(before))
+        if subject_type and subject_id:
+            from db.models import IncidentSubject
+            query = query.join(IncidentSubject, IncidentReport.id == IncidentSubject.incident_id).filter(
+                IncidentSubject.subject_type == subject_type,
+                IncidentSubject.subject_id == subject_id,
+            )
+        incidents = query.order_by(IncidentReport.created_at.desc()).all()
+        return [
+            {
+                "id": inc.id,
+                "incident_type": inc.incident_type,
+                "status": inc.status,
+                "severity": inc.severity,
+                "summary": inc.summary,
+                "notes": inc.notes,
+                "project_id": inc.project_id,
+                "detected_at": inc.detected_at,
+                "created_at": inc.created_at,
+            }
+            for inc in incidents
+        ]
+    finally:
+        session.close()
 
 
 @data_router.post("/incidents")
@@ -1526,6 +1731,62 @@ def get_incident(incident_id: str, user_id: str):
     return _result_or_404(_get.invoke({"incident_id": incident_id}))
 
 
+@data_router.patch("/incidents/{incident_id}")
+def update_incident(incident_id: str, user_id: str, body: UpdateIncidentRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        if body.summary is not None:
+            incident.summary = body.summary
+        if body.severity is not None:
+            incident.severity = body.severity
+        if body.notes is not None:
+            incident.notes = body.notes
+        if body.incident_type is not None:
+            incident.incident_type = body.incident_type
+        session.commit()
+        return {
+            "id": incident.id,
+            "incident_type": incident.incident_type,
+            "status": incident.status,
+            "severity": incident.severity,
+            "summary": incident.summary,
+            "notes": incident.notes,
+            "project_id": incident.project_id,
+            "created_at": incident.created_at,
+        }
+    finally:
+        session.close()
+
+
+@data_router.delete("/incidents/{incident_id}")
+def delete_incident(incident_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        # Block if there is an approved treatment plan
+        plan = session.query(TreatmentPlan).filter(
+            TreatmentPlan.incident_id == incident_id,
+            TreatmentPlan.status == "approved",
+        ).first()
+        if plan:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete incident with an approved treatment plan. Resolve the incident first.",
+            )
+        session.delete(incident)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
+
+
 @data_router.patch("/incidents/{incident_id}/resolve")
 def resolve_incident(incident_id: str, user_id: str):
     _set_user(user_id)
@@ -1538,6 +1799,97 @@ def get_treatment_plan(incident_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.operations.incidents import get_treatment_plan as _get
     return _result_or_404(_get.invoke({"incident_id": incident_id}))
+
+
+@data_router.post("/incidents/{incident_id}/treatment/manual")
+def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateManualTreatmentPlanRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        existing = session.query(TreatmentPlan).filter(
+            TreatmentPlan.incident_id == incident_id,
+            TreatmentPlan.status == "draft",
+        ).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="A draft treatment plan already exists for this incident")
+        plan = TreatmentPlan(
+            incident_id=incident_id,
+            status="draft",
+            approach_summary=body.approach_summary,
+            recommended_steps=body.recommended_steps,
+            follow_up_strategy=[body.follow_up_strategy] if body.follow_up_strategy else [],
+        )
+        session.add(plan)
+        session.commit()
+        session.refresh(plan)
+        return {
+            "id": plan.id,
+            "incident_id": plan.incident_id,
+            "status": plan.status,
+            "approach_summary": plan.approach_summary,
+            "recommended_steps": plan.recommended_steps,
+            "follow_up_strategy": plan.follow_up_strategy,
+            "created_at": plan.created_at,
+        }
+    finally:
+        session.close()
+
+
+@data_router.patch("/treatment-plans/{plan_id}")
+def update_treatment_plan(plan_id: str, user_id: str, body: UpdateTreatmentPlanRequest):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == plan_id).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Treatment plan not found")
+        incident = _get_incident_for_user(session, plan.incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Treatment plan not found")
+        if plan.status != "draft":
+            raise HTTPException(status_code=400, detail="Cannot edit an approved treatment plan")
+        if body.approach_summary is not None:
+            plan.approach_summary = body.approach_summary
+        if body.recommended_steps is not None:
+            plan.recommended_steps = body.recommended_steps
+        if body.follow_up_strategy is not None:
+            plan.follow_up_strategy = [body.follow_up_strategy] if isinstance(body.follow_up_strategy, str) else body.follow_up_strategy
+        session.commit()
+        session.refresh(plan)
+        return {
+            "id": plan.id,
+            "incident_id": plan.incident_id,
+            "status": plan.status,
+            "approach_summary": plan.approach_summary,
+            "recommended_steps": plan.recommended_steps,
+            "follow_up_strategy": plan.follow_up_strategy,
+            "created_at": plan.created_at,
+        }
+    finally:
+        session.close()
+
+
+@data_router.delete("/treatment-plans/{plan_id}")
+def delete_treatment_plan(plan_id: str, user_id: str):
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == plan_id).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Treatment plan not found")
+        incident = _get_incident_for_user(session, plan.incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Treatment plan not found")
+        if plan.status == "approved":
+            raise HTTPException(status_code=400, detail="Cannot delete an approved treatment plan")
+        session.delete(plan)
+        session.commit()
+        return {"status": "deleted"}
+    finally:
+        session.close()
 
 
 @data_router.patch("/treatment-plans/{plan_id}/approve")
