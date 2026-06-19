@@ -30,7 +30,7 @@ from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
 from agent.domain.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
-from db.models import GardenProfile, InteractionRecord, MonitorAlert, TreatmentPlan
+from db.models import GardenProfile, InteractionRecord, MonitorAlert, Thread, TreatmentPlan
 
 # None at module level — tests patch this directly; production builds it lazily in llm_call
 model_with_tools = None
@@ -123,6 +123,7 @@ def _message_text(message) -> str:
 
 def session_context_intake(state: GardenState, config: RunnableConfig):
     uid = int((config.get("configurable") or {}).get("user_id", 1))
+    thread_id = (config.get("configurable") or {}).get("thread_id", "")
     current_user_id.set(uid)
 
     opener = ""
@@ -138,6 +139,11 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         temporal_context = build_temporal_context(session, timezone=DEFAULT_TIMEZONE)
         session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
         now = datetime.now(dt_timezone.utc).replace(tzinfo=None)
+
+        # Upsert thread metadata — preview from last AI message in prior turns
+        if thread_id:
+            _upsert_thread(session, uid, thread_id, state, now)
+
         alert_rows = (
             session.query(MonitorAlert)
             .filter(
@@ -170,6 +176,53 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         }
     finally:
         session.close()
+
+
+def _upsert_thread(session, user_id: int, thread_id: str, state: GardenState, now) -> None:
+    """Create or update thread metadata at the start of each turn."""
+    # Extract preview from the last AI message in prior turns
+    preview = None
+    human_count = 0
+    for msg in state.get("messages", []):
+        if hasattr(msg, "type"):
+            if msg.type == "human":
+                human_count += 1
+            elif msg.type == "ai" and msg.content:
+                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                preview = content[:150]
+
+    existing = session.query(Thread).filter(Thread.id == thread_id).first()
+    if existing:
+        existing.last_active_at = now
+        existing.message_count = human_count
+        if preview:
+            existing.last_message_preview = preview
+        # Auto-set title from first human message if still unset
+        if not existing.title and human_count > 0:
+            for msg in state.get("messages", []):
+                if hasattr(msg, "type") and msg.type == "human" and msg.content:
+                    text = msg.content if isinstance(msg.content, str) else str(msg.content)
+                    existing.title = text[:60] + ("..." if len(text) > 60 else "")
+                    break
+    else:
+        # First turn — create the thread record
+        title = None
+        if opener := next(
+            (msg.content for msg in state.get("messages", [])
+             if hasattr(msg, "type") and msg.type == "human" and msg.content),
+            None
+        ):
+            text = opener if isinstance(opener, str) else str(opener)
+            title = text[:60] + ("..." if len(text) > 60 else "")
+        session.add(Thread(
+            id=thread_id,
+            user_id=user_id,
+            title=title,
+            last_active_at=now,
+            message_count=human_count,
+            created_at=now,
+        ))
+    session.commit()
 
 
 def weather_context_loader(state: GardenState):
