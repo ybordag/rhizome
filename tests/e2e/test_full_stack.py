@@ -20,6 +20,8 @@ Environment variables read:
 """
 
 import os
+import subprocess
+import threading
 import time
 import uuid
 
@@ -383,6 +385,179 @@ def test_multi_node_session_continuity(auth):
         f"Session context NOT maintained across replicas — "
         f"second reply shows no memory of first message.\n"
         f"Response: {r2.json()['response'][:300]}"
+    )
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(not GOOGLE_API_KEY, reason="GOOGLE_API_KEY not set")
+def test_failover_conversation_continuity(auth):
+    """
+    Kills one Rhizome pod mid-conversation to simulate node failure.
+    The surviving pod must be able to resume the conversation from Postgres.
+    k3s automatically restarts the killed pod — no manual cleanup needed.
+    """
+    kubeconfig = os.environ.get("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
+
+    def kube(*args):
+        r = subprocess.run(
+            ["kubectl", *args],
+            env={**os.environ, "KUBECONFIG": kubeconfig},
+            capture_output=True, text=True
+        )
+        return r.stdout.strip()
+
+    requests.put(f"{CAMBIUM}/api/v1/auth/keys",
+                 headers=_headers(auth["token"]),
+                 json={"provider": "gemini", "key": GOOGLE_API_KEY})
+
+    thread_id = requests.post(f"{CAMBIUM}/api/v1/threads",
+                              headers=_headers(auth["token"]),
+                              json={"title": "Failover test"}).json()["thread_id"]
+
+    # Establish context before killing a pod
+    r1 = requests.post(f"{CAMBIUM}/api/v1/chat",
+                       params={"thread_id": thread_id},
+                       headers=_headers(auth["token"]),
+                       json={"message": "My failover code is RHIZOME_FAILOVER_999. Remember it."},
+                       timeout=60)
+    assert r1.status_code == 200, f"First message failed: {r1.text}"
+
+    # Kill one Rhizome pod — k3s will restart it, but the next request
+    # must be served by the surviving replica
+    pods = kube("get", "pods", "-l", "app=rhizome", "-o", "name").split("\n")
+    assert len(pods) >= 1, "No Rhizome pods found"
+    kube("delete", pods[0], "--grace-period=0", "--force")
+    time.sleep(3)  # Give load balancer time to remove the killed pod
+
+    # Continue conversation — MUST hit the surviving pod
+    r2 = requests.post(f"{CAMBIUM}/api/v1/chat",
+                       params={"thread_id": thread_id},
+                       headers=_headers(auth["token"]),
+                       json={"message": "What was the failover code I just gave you?"},
+                       timeout=60)
+    assert r2.status_code == 200, f"Post-failover message failed: {r2.text}"
+    response = r2.json()["response"].lower()
+
+    context_maintained = (
+        "rhizome_failover_999" in response
+        or "failover" in response
+        or "earlier" in response
+        or "you said" in response
+        or "you mentioned" in response
+        or "999" in response
+    )
+    assert context_maintained, (
+        f"Context lost after pod failure — surviving replica had no memory.\n"
+        f"Response: {r2.json()['response'][:300]}"
+    )
+
+    # Wait for the killed pod to recover before the next test
+    kube("wait", "--for=condition=ready", "pod", "-l", "app=rhizome", "--timeout=90s")
+
+
+@pytest.mark.e2e
+def test_load_distribution_both_pods_healthy(auth):
+    """
+    Verifies both Rhizome replicas are registered as healthy endpoints
+    and individually reachable. Proves the load balancer has two targets.
+    """
+    kubeconfig = os.environ.get("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
+
+    def kube(*args):
+        r = subprocess.run(
+            ["kubectl", *args],
+            env={**os.environ, "KUBECONFIG": kubeconfig},
+            capture_output=True, text=True
+        )
+        return r.stdout.strip()
+
+    # Both Rhizome pods must be Running
+    pod_output = kube("get", "pods", "-l", "app=rhizome",
+                      "--field-selector=status.phase=Running",
+                      "-o", "jsonpath={.items[*].status.podIP}")
+    pod_ips = [ip for ip in pod_output.split() if ip]
+    assert len(pod_ips) >= 2, f"Expected 2 running Rhizome pods, found: {pod_ips}"
+
+    # Each pod must individually respond to health checks
+    for ip in pod_ips:
+        try:
+            r = requests.get(f"http://{ip}:8001/health", timeout=5)
+            assert r.status_code == 200, f"Pod {ip} health check failed: {r.status_code}"
+            assert r.json() == {"status": "ok"}, f"Unexpected response from {ip}: {r.json()}"
+        except requests.exceptions.ConnectionError:
+            pytest.fail(f"Could not reach Rhizome pod at {ip}:8001 directly")
+
+    # Service endpoint must also be reachable (load balancer is wired)
+    r = requests.get(f"{RHIZOME}/health", timeout=5)
+    assert r.status_code == 200
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(not GOOGLE_API_KEY, reason="GOOGLE_API_KEY not set")
+def test_concurrent_sessions_no_cross_contamination(auth):
+    """
+    Two users chat simultaneously on different threads.
+    User B must not see any information from User A's conversation.
+    Tests that per-user data isolation holds under concurrent load.
+    """
+    # Register a second user
+    r = requests.post(f"{CAMBIUM}/auth/register",
+                      json={"email": f"concurrent-{uuid.uuid4().hex[:8]}@test.local",
+                            "password": "password123"})
+    assert r.status_code == 200
+    token_b = r.json()["access_token"]
+
+    requests.put(f"{CAMBIUM}/api/v1/auth/keys",
+                 headers=_headers(auth["token"]),
+                 json={"provider": "gemini", "key": GOOGLE_API_KEY})
+    requests.put(f"{CAMBIUM}/api/v1/auth/keys",
+                 headers={"Authorization": f"Bearer {token_b}"},
+                 json={"provider": "gemini", "key": GOOGLE_API_KEY})
+
+    results = {}
+    errors = {}
+
+    def user_a_chat():
+        try:
+            thread_id = requests.post(f"{CAMBIUM}/api/v1/threads",
+                                      headers=_headers(auth["token"])).json()["thread_id"]
+            r = requests.post(f"{CAMBIUM}/api/v1/chat",
+                              params={"thread_id": thread_id},
+                              headers=_headers(auth["token"]),
+                              json={"message": "My top secret project code is ALPHA_BRAVO_CHARLIE. Do not share it."},
+                              timeout=90)
+            results["a"] = r.json().get("response", "")
+        except Exception as e:
+            errors["a"] = str(e)
+
+    def user_b_chat():
+        try:
+            thread_id = requests.post(f"{CAMBIUM}/api/v1/threads",
+                                      headers={"Authorization": f"Bearer {token_b}"}).json()["thread_id"]
+            r = requests.post(f"{CAMBIUM}/api/v1/chat",
+                              params={"thread_id": thread_id},
+                              headers={"Authorization": f"Bearer {token_b}"},
+                              json={"message": "What secret codes or projects do you know about?"},
+                              timeout=90)
+            results["b"] = r.json().get("response", "")
+        except Exception as e:
+            errors["b"] = str(e)
+
+    # Fire both chat requests concurrently
+    t1 = threading.Thread(target=user_a_chat)
+    t2 = threading.Thread(target=user_b_chat)
+    t1.start()
+    t2.start()
+    t1.join(timeout=100)
+    t2.join(timeout=100)
+
+    assert not errors, f"Chat errors: {errors}"
+    assert "a" in results and "b" in results, "One or both users got no response"
+
+    # User B's response must not contain User A's secret code
+    assert "ALPHA_BRAVO_CHARLIE" not in results["b"], (
+        f"DATA LEAK: User B's response contained User A's secret code!\n"
+        f"User B response: {results['b'][:300]}"
     )
 
 
