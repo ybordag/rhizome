@@ -2,7 +2,7 @@
 
 **Branch:** `calendula`  
 **Epic:** [Epic 6: Reactive Monitoring and Alerting](../roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)  
-**Status:** In progress  
+**Status:** In progress — Phase 1 complete, Phase 2 in progress  
 **Last updated:** 2026-06-18
 
 ---
@@ -151,13 +151,13 @@ Only `severity in ('critical', 'high')` and non-expired alerts are injected.
 
 ## Phases
 
-### Phase 1 — Models + runner skeleton
-- `MonitorAlert` and `MonitorRun` in `db/models.py`
-- `scripts/monitor.py` with `--job` flag, `MonitorRun` tracking, error handling
-- Tests: model creation, MonitorRun status transitions
+### Phase 1 — Models + runner skeleton ✅
+- `MonitorAlert` and `MonitorRun` added to `db/models.py`
+- `scripts/monitor.py` with `--job` flag, `MonitorRun` lifecycle tracking, per-job error isolation
+- 13 integration tests in `tests/db/test_monitor_models.py`
 
-### Phase 2 — Automated weather pipeline
-- New impact types in `derive_weather_impacts()`
+### Phase 2 — Automated weather pipeline 🔄
+- New impact types in `derive_weather_impacts()` (`unsafe_outdoor_window`, `safe_outdoor_window`)
 - `apply_weather_impacts()` with auto-apply/queue logic
 - `weather_job()` wired into `scripts/monitor.py`
 - Tests: critical severity auto-applies; moderate queues as draft; working window writes alert only
