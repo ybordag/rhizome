@@ -90,20 +90,20 @@ kubectl apply -f ../cambium/k8s/secrets.yaml
 
 ## Step 4 — Build and push Docker images
 
-From your Mac (cross-compiling for linux/amd64):
+From your Mac (Apple Silicon is ARM64 — same architecture as Thor/Loki, no emulation needed):
 
 ```bash
 # Enable multi-platform builds (once)
 docker buildx create --use --name sparks
 
 # Rhizome
-docker buildx build --platform linux/amd64 \
+docker buildx build --platform linux/arm64 \
   -t ghcr.io/ybordag/rhizome:latest \
   -t ghcr.io/ybordag/rhizome:$(git -C . rev-parse --short HEAD) \
   --push .
 
 # Cambium
-docker buildx build --platform linux/amd64 \
+docker buildx build --platform linux/arm64 \
   -t ghcr.io/ybordag/cambium:latest \
   -t ghcr.io/ybordag/cambium:$(git -C ../cambium rev-parse --short HEAD) \
   --push ../cambium
@@ -148,7 +148,7 @@ curl http://<thor-ip>/health
 
 ```bash
 # 1. Build and push new image (tags :latest and :<git-sha>)
-docker buildx build --platform linux/amd64 \
+docker buildx build --platform linux/arm64 \
   -t ghcr.io/ybordag/rhizome:latest --push .
 
 # 2. Rolling restart (pulls new :latest, zero downtime because replicas=2)

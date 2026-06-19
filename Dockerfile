@@ -2,7 +2,7 @@
 # Build for linux/amd64 (DGX Spark). On Apple Silicon:
 #   docker buildx build --platform linux/amd64 -t ghcr.io/ybordag/rhizome:latest .
 
-FROM --platform=linux/amd64 python:3.12-slim
+FROM --platform=linux/arm64 python:3.12-slim
 
 WORKDIR /app
 
