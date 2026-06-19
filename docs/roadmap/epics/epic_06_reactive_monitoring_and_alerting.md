@@ -1,6 +1,6 @@
 # Epic 6 Plan: Reactive Monitoring and Alerting
 
-**Epic status:** In progress — branch `calendula`  
+**Epic status:** Substantially complete — core monitoring infrastructure delivered; pest ingestion deferred  
 **Last updated:** 2026-06-18  
 **Implementation plan:** [docs/current_work/calendula_reactive_monitoring.md](../../current_work/calendula_reactive_monitoring.md)
 
@@ -103,16 +103,14 @@ Connect monitoring outputs to:
 
 ## Completion criteria
 
-This epic should be considered complete when:
-
-- Rhizome can refresh and evaluate weather context without waiting for a user
-  session
-- Rhizome can ingest at least one external pest-report source
-- alerts are filtered through vulnerability assessment instead of being treated
-  as globally relevant
-- monitoring results can influence triage and create approval-gated task/action
-  recommendations
-- major alert-driven changes do not silently rewrite project plans
+| Criterion | Status |
+|-----------|--------|
+| Rhizome can refresh and evaluate weather context without waiting for a user session | ✅ Done — `weather_job()` in `scripts/monitor.py` |
+| Monitoring results influence triage and create approval-gated task/action recommendations | ✅ Done — `triage_job()`, `series_job()`, `apply_weather_impacts()` |
+| Major alert-driven changes do not silently rewrite project plans | ✅ Done — critical auto-applied, moderate queued for approval |
+| Alerts surface in the agent session | ✅ Done — `session_context_intake` injects pending alerts into system prompt |
+| Rhizome can ingest at least one external pest-report source | ⏳ Deferred — iNaturalist integration moved to pest intelligence epic |
+| Alerts filtered through vulnerability assessment | ⏳ Deferred — planned for pest intelligence epic alongside RAG |
 
 ---
 

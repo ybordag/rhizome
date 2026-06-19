@@ -2,7 +2,7 @@
 
 **Branch:** `calendula`  
 **Epic:** [Epic 6: Reactive Monitoring and Alerting](../roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)  
-**Status:** In progress — Phases 1–4 complete, Phase 5 (iNaturalist) next  
+**Status:** Complete — Phases 1–4 shipped; Phase 5 deferred to pest intelligence epic  
 **Last updated:** 2026-06-18
 
 ---
@@ -176,11 +176,12 @@ Only `severity in ('critical', 'high')` and non-expired alerts are injected.
 - `_write_alert()` private helper in monitor.py for writing alerts from any job
 - 9 integration tests in `tests/db/test_monitor_jobs.py`
 
-### Phase 5 — iNaturalist pest monitoring
-- `agent/domain/pests.py` — iNaturalist Observations API, observation → `IncidentReport` mapping
-- `pest_job()` in `scripts/monitor.py`
-- Wire into existing incident + treatment plan workflow
-- Tests: mocked iNaturalist response creates `IncidentReport` + `MonitorAlert`
+### Phase 5 — iNaturalist pest monitoring ⏳ Deferred
+Moved to the pest intelligence epic. Rationale: standalone iNaturalist ingestion is narrow
+without a RAG knowledge base to reason about plant-specific vulnerability, and without
+image processing to identify what the user is actually seeing. The three capabilities
+(iNaturalist + image ID + RAG) are more valuable together and should be built as a cohesive
+epic after `iris` (image modality) and the RAG foundation are in place.
 
 ---
 
