@@ -185,3 +185,115 @@ def test_list_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile)
 def test_daily_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/tasks/daily?user_id=1")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Garden domain smoke tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_get_garden_profile(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/garden/profile?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_beds_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/garden/beds?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_containers_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/garden/containers?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_plants_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/garden/plants?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_batches_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/garden/batches?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_search_garden_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/garden/search?user_id=1&query=tomato")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Operations smoke tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_list_incidents_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/incidents?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_get_pending_interaction_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/interactions/pending?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_recent_interactions_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/interactions/recent?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_recent_activity_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/activity?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_activity_with_filters(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/activity?user_id=1&category=task&limit=5")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_task_activity_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/tasks/nonexistent-id/activity?user_id=1")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Task additions smoke tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_list_due_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/tasks/due?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_list_blocked_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/tasks/blocked?user_id=1")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Weather smoke tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_get_weather_snapshot_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/weather/latest?user_id=1")
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_weather_impacted_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/weather/tasks/impacted?user_id=1")
+    assert resp.status_code == 200
