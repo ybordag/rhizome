@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
 from pathlib import Path
+
+
+def pytest_configure(config):
+    # Tests always use in-memory SQLite — clear DATABASE_URL before any module
+    # imports so graph.py's module-level checkpointer selection picks SQLite.
+    os.environ.pop("DATABASE_URL", None)
 
 import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
