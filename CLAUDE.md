@@ -7,12 +7,14 @@ Active development is on `geranium`. `main` is behind — do not treat it as cur
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest          # full suite (310 tests)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (325 tests)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m live        # live API smoke tests (requires provider keys)
 ```
-Requires `GOOGLE_API_KEY` in `.env` to run the CLI. Tests mock the model and run without a key.
+Requires at least one provider key in `.env` to run the CLI (`GOOGLE_API_KEY` is the default).
+Tests mock the model and run without any key. Live tests (`-m live`) auto-skip if the relevant key is absent.
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Project layout
@@ -23,7 +25,10 @@ agent/
                       → triage_reasoner → llm_call → {interaction_node | tool_node | END}
     nodes.py        — all graph node implementations and routing functions
     state.py        — GardenState TypedDict
-    model.py        — single model seam; all LLM access goes through here
+    model.py        — multi-provider model factory (google_genai | openai | anthropic);
+                      get_model(config) / get_triage_model(config) accept optional per-request
+                      provider/provider_key from config["configurable"] (Cambium injection path),
+                      falling back to RHIZOME_MODEL_PROVIDER + provider key env vars for local dev
     telemetry.py    — OTel + observer framework wired into all node transitions
     temporal.py     — timezone handling, temporal context, session context inference
 
@@ -77,7 +82,8 @@ db/
 
 tests/
   agent/
-    core/           — test_graph, test_nodes, test_node_edge_cases, test_telemetry
+    core/           — test_graph, test_nodes, test_node_edge_cases, test_telemetry,
+                      test_model (15 unit tests), test_model_live (live endpoint smoke tests)
     domain/         — test_domain_logic (compute_task_blocked_state, planner estimates,
                       infer_care_action, _resolve_subjects)
   tools/
@@ -110,7 +116,19 @@ main.py             — CLI entrypoint
 - N+1 query fixes in `list_projects`, `get_project`, `search_garden`, `list_by_location`
 - DB schema: user_id indexes on Plant/Bed/Container/PlantBatch, unique constraints on ProjectBed/ProjectContainer, ActivityEvent.revision_id FK
 - Action history: `get_task_activity`, `get_incident_activity`, `list_project_activity`, enhanced `list_recent_activity` with DB-level filtering and cursor pagination; `interaction_resolved` events now recorded by `resolve_interaction_record`
-- 310 tests, 0 failures; `tests/DEFERRED_TESTS.md` documents 11 consciously deferred areas
+- 325 tests, 0 failures; `tests/DEFERRED_TESTS.md` documents 11 consciously deferred areas
+
+**Model provider abstraction complete (geranium, 2026-06):**
+- `agent/core/model.py` rewritten as a multi-provider factory: `google_genai`, `openai`, `anthropic`
+- `get_model(config)` / `get_triage_model(config)` accept per-request `provider` + `provider_key`
+  from `config["configurable"]` (the Cambium injection path); env-var fallback for local dev
+- Default models: `gemini-2.5-flash` (Google), `gpt-4o` (OpenAI), `claude-sonnet-4-6` (Anthropic)
+- `model_with_tools` in `nodes.py` is now lazy (`None` at module level); `llm_call` accepts `config`
+  and calls `get_model(config).bind_tools(tools)` — per-request provider flows end-to-end
+- 15 unit tests cover routing, env fallback, error paths, caching; 3 live smoke tests (`-m live`)
+  confirm all three provider endpoints respond (auto-skip when key is absent)
+- `gemini-2.0-flash` was retired by Google; updated default and `.env` to `gemini-2.5-flash`
+- Added `langchain-openai` and `langchain-anthropic` to `requirements.txt`
 
 **Active work — Cambium (Go API gateway):**
 - Cambium sits between Verdant (React frontend) and Rhizome
@@ -122,7 +140,6 @@ main.py             — CLI entrypoint
 - Postgres migration (prerequisite for multi-instance deployment and FK enforcement)
 - Multi-tenancy: thread `user_id` from JWT (via Cambium) into every tool query
 - FastAPI layer for internal HTTP interface (Cambium → Rhizome)
-- Model provider abstraction (Phase 2): env-var switch for Gemini / Claude / OpenAI / local endpoint
 
 ## Known issues
 - `user_id == 1` hardcoded in ~15 files across `agent/core/nodes.py` and `agent/tools/` — Phase 1 work (multi-tenancy)

@@ -31,7 +31,8 @@ from agent.domain.weather import get_latest_weather_snapshot
 from db.database import SessionLocal
 from db.models import GardenProfile, InteractionRecord, TreatmentPlan
 
-model_with_tools = get_model().bind_tools(tools)
+# None at module level — tests patch this directly; production builds it lazily in llm_call
+model_with_tools = None
 
 DESTRUCTIVE_TOOLS = {
     "delete_project", "delete_bed", "delete_plant", "remove_container",
@@ -250,7 +251,7 @@ def should_enter_llm_after_triage(state: GardenState):
         return "llm_call"
     return END
 
-def llm_call(state: GardenState):
+def llm_call(state: GardenState, config: RunnableConfig):
     """Always loads fresh profile from DB before building the system prompt."""
     profile_obj = None
     session = SessionLocal()
@@ -275,8 +276,9 @@ def llm_call(state: GardenState):
         triage_context=triage_text,
         interaction_context=interaction_text,
     )
+    mtw = model_with_tools or get_model(config).bind_tools(tools)
     with start_span("rhizome.llm_call", {"rhizome.model": "primary"}):
-        response = model_with_tools.invoke(
+        response = mtw.invoke(
             [SystemMessage(content=system_prompt)] + state["messages"]
         )
     return {"messages": [response]}

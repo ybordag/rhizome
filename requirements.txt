@@ -4,6 +4,8 @@ langgraph-checkpoint-sqlite
 langgraph-checkpoint-postgres
 langchain
 langchain-google-genai
+langchain-openai
+langchain-anthropic
 
 # Environment
 python-dotenv
