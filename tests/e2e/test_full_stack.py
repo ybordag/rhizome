@@ -35,6 +35,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 CAMBIUM = os.environ.get("CAMBIUM_URL", "http://localhost:8080")
+RHIZOME = os.environ.get("RHIZOME_URL", "http://localhost:8001")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
@@ -55,8 +56,8 @@ def require_stack():
     """Skip the entire module if services are not reachable."""
     if not _is_up(CAMBIUM):
         pytest.skip(f"Cambium not reachable at {CAMBIUM} — start with: go run ./cmd/server/")
-    if not _is_up("http://localhost:8001"):
-        pytest.skip("Rhizome not reachable at :8001 — start with: python server.py")
+    if not _is_up(RHIZOME):
+        pytest.skip(f"Rhizome not reachable at {RHIZOME} — start with: python server.py")
 
 
 @pytest.fixture(scope="module")
