@@ -68,12 +68,23 @@ def run_agent(req: AgentRequest):
         if interrupts:
             interaction = interrupts[0].value
 
-    # Extract last AI message text
+    # Extract last AI message text. Content may be a plain string or a list of
+    # content blocks (multi-modal format used by some providers/models).
     ai_messages = [
         m for m in state.values.get("messages", [])
         if hasattr(m, "type") and m.type == "ai"
     ]
-    response_text = ai_messages[-1].content if ai_messages else ""
+    if ai_messages:
+        content = ai_messages[-1].content
+        if isinstance(content, list):
+            response_text = " ".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            response_text = content if isinstance(content, str) else str(content)
+    else:
+        response_text = ""
 
     return AgentResponse(
         thread_id=req.thread_id,

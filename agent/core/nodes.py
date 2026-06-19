@@ -191,8 +191,11 @@ def _upsert_thread(session, user_id: int, thread_id: str, state: GardenState, no
             if msg.type == "human":
                 human_count += 1
             elif msg.type == "ai" and msg.content:
-                content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                preview = content[:150]
+                # Content may be a plain string or a list of content blocks
+                c = msg.content
+                if isinstance(c, list):
+                    c = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+                preview = (c if isinstance(c, str) else str(c))[:150]
 
     existing = session.query(Thread).filter(Thread.id == thread_id).first()
     if existing:
