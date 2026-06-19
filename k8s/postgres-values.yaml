@@ -1,0 +1,38 @@
+# Postgres Helm values for the Bitnami chart.
+# Deploy with:
+#   helm repo add bitnami https://charts.bitnami.com/bitnami
+#   helm install postgres bitnami/postgresql -f k8s/postgres-values.yaml \
+#     --set auth.postgresPassword=<secret>
+#
+# The password is passed at install time (not in this file) so it stays out of git.
+
+auth:
+  database: postgres      # main database name
+
+primary:
+  # Pin Postgres to Loki so the PVC stays on one node
+  nodeSelector:
+    kubernetes.io/hostname: loki
+
+  persistence:
+    enabled: true
+    size: 20Gi             # adjust to available disk on Loki
+
+  # Create schemas on first boot
+  initdb:
+    scripts:
+      init-schemas.sql: |
+        CREATE SCHEMA IF NOT EXISTS cambium;
+        CREATE SCHEMA IF NOT EXISTS rhizome;
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1"
+
+# Disable read replicas — single node is enough for 2-Spark deployment
+readReplicas:
+  replicaCount: 0
