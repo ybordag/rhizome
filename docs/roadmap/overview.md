@@ -74,7 +74,7 @@ See [Verdant initiative plan](initiatives/app_frontend_experience.md).
 
 | Initiative | Status | Scope |
 |---|---|---|
-| Fairlead + vLLM | **in progress** (Phases 1–4 on main, Phase 5 pending) | Inference router (Rust), vLLM on Loki GPU, fallback chain (local → cloud) |
+| Fairlead + vLLM | **in progress** (Phases 1–4 on main, Phase 5 active on trim) | Inference router (Rust), vLLM on Loki GPU, fallback chain (local → cloud) |
 
 See [Fairlead design doc](../../../fairlead/design.md).
 
