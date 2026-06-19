@@ -6,7 +6,32 @@ Rhizome exposes two internal surfaces:
 - **`/internal/agent`** — LangGraph graph execution (AI operations: chat, triage, drafting)
 - **`/internal/data/...`** — direct SQLAlchemy queries (CRUD, no LLM overhead)
 
-Both surfaces are live. Cambium Phases 1–4 are complete; all ~95 endpoints are wired.
+Both surfaces are live. Cambium Phases 1–5 are complete; all ~95 endpoints are wired.
+
+---
+
+## Swagger UI — interactive API explorer
+
+When `server.py` is running, Rhizome's internal API is fully documented and explorable at:
+
+```
+http://localhost:8001/docs
+```
+
+FastAPI generates this automatically from Python type hints and Pydantic models — no extra work required. The spec is always in sync with the code.
+
+The Swagger UI at `:8001/docs` shows all `/internal/agent` and `/internal/data/...` endpoints with:
+- Request parameter schemas (query params, path params, JSON bodies)
+- Response shapes
+- The ability to execute requests directly from the browser
+
+This is the primary tool for inspecting what Cambium is proxying during development. The raw OpenAPI spec is also available at:
+
+```
+http://localhost:8001/openapi.json
+```
+
+**Note:** The public API (what Verdant uses) is documented via **Cambium's Swagger UI** at `http://localhost:8080/docs/index.html`. Rhizome's Swagger shows the internal interface only.
 
 ---
 
