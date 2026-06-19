@@ -106,3 +106,28 @@ class CreateThreadRequest(BaseModel):
     thread_id: str
     title: Optional[str] = None
     project_id: Optional[str] = None
+
+
+class CreateTaskRequest(BaseModel):
+    project_id: str
+    title: str
+    type: str  # milestone | maintenance | emergency | opportunistic
+    priority: Optional[str] = "normal"
+    scheduled_date: Optional[str] = None
+    earliest_start: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    deadline: Optional[str] = None
+    estimated_minutes: Optional[int] = 0
+    notes: Optional[str] = None
+    linked_subjects: Optional[list] = None
+    reversible: Optional[bool] = True
+
+
+class CreateBedRequest(BaseModel):
+    name: str
+    location: Optional[str] = None
+    size: Optional[str] = None
+    sunlight: Optional[str] = None
+    soil_type: Optional[str] = None
+    notes: Optional[str] = None
