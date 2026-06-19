@@ -17,5 +17,9 @@ sqlalchemy
 psycopg2-binary
 pgvector
 
+# Internal API server
+fastapi
+uvicorn[standard]
+
 # Dev / visualization
 ipython
