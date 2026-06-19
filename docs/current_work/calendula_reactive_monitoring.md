@@ -2,7 +2,7 @@
 
 **Branch:** `calendula`  
 **Epic:** [Epic 6: Reactive Monitoring and Alerting](../roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)  
-**Status:** In progress — Phase 1 complete, Phase 2 in progress  
+**Status:** In progress — Phases 1–2 complete, Phase 3 next  
 **Last updated:** 2026-06-18
 
 ---
@@ -156,11 +156,12 @@ Only `severity in ('critical', 'high')` and non-expired alerts are injected.
 - `scripts/monitor.py` with `--job` flag, `MonitorRun` lifecycle tracking, per-job error isolation
 - 13 integration tests in `tests/db/test_monitor_models.py`
 
-### Phase 2 — Automated weather pipeline 🔄
-- New impact types in `derive_weather_impacts()` (`unsafe_outdoor_window`, `safe_outdoor_window`)
-- `apply_weather_impacts()` with auto-apply/queue logic
-- `weather_job()` wired into `scripts/monitor.py`
-- Tests: critical severity auto-applies; moderate queues as draft; working window writes alert only
+### Phase 2 — Automated weather pipeline ✅
+- `unsafe_outdoor_window` and `safe_outdoor_window` impact types in `derive_weather_impacts()`
+- `_create_changeset()` private helper; `_is_critical_task_impact()`
+- `apply_weather_impacts(session, *, snapshot, user_id)` — auto-applies critical (storm/frost/heat), queues moderate as draft, writes working window `MonitorAlert` records only
+- `weather_job()` wired into `scripts/monitor.py` with fresh-snapshot guard and rollback on failure
+- 20 tests in `tests/agent/domain/test_weather_monitor.py`
 
 ### Phase 3 — Session delivery
 - `session_context_intake` reads pending alerts → `monitor_alerts` in state

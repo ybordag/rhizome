@@ -137,12 +137,12 @@ main.py             — CLI entrypoint
 - See `../cambium/CLAUDE.md` for Cambium's build plan and invariants
 
 **Active work — `calendula` branch (reactive monitoring):**
-- ✅ Phase 1: `MonitorAlert` + `MonitorRun` models in `db/models.py`; `scripts/monitor.py` skeleton with `--job` flag and `MonitorRun` lifecycle tracking; 13 integration tests
-- 🔄 Phase 2: `apply_weather_impacts()` auto-apply policy; `unsafe_outdoor_window`/`safe_outdoor_window` impact types; `weather_job()` wired in monitor script
-- Phase 3: session-start alert delivery via `session_context_intake` + `llm_call` system prompt injection
+- ✅ Phase 1: `MonitorAlert` + `MonitorRun` models; `scripts/monitor.py` skeleton; 13 tests
+- ✅ Phase 2: `apply_weather_impacts()` auto-apply/queue policy; `unsafe_outdoor_window`/`safe_outdoor_window` impact types; `weather_job()` wired; 20 tests
+- 🔄 Phase 3: session-start alert delivery via `session_context_intake` + `llm_call` system prompt injection
 - Phase 4: triage + series materialization jobs
 - Phase 5: iNaturalist pest monitoring
-- 338 tests, 0 failures
+- 358 tests, 0 failures
 - See `docs/current_work/calendula_reactive_monitoring.md` for full plan
 
 **Active work — `iris` branch (image modality):**
