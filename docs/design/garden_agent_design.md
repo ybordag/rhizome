@@ -1,7 +1,7 @@
 # Garden Helper Agent — Design Document
 
 **Version:** 0.1 (draft)
-**Status:** In design — pre-implementation
+**Status:** This document is STALE, please read docs/roadmap/long_term_roadmap.md for latest list of features
 **Authors:** Yashi + Claude
 
 ---
@@ -76,7 +76,6 @@ These aren't independent problems — they are deeply interdependent. A decision
 
 - Automated purchasing or e-commerce integration
 - IoT sensor integration (soil moisture, weather stations)
-- Computer vision–based autonomous pest diagnosis without user confirmation
 - Multi-user / shared garden management
 - Professional or commercial-scale farming
 
@@ -275,7 +274,7 @@ scheduled → time_sensitive (window_end is ~3 days away)
 time_sensitive → blocker   (window_end is tomorrow, OR external event triggered)
 ```
 
-Reactive monitoring can **override** urgency directly — a frost warning upgrades all `type="emergency"` tasks for vulnerable plants to `blocker` immediately.
+Reactive monitoring can **override** urgency directly — a frost warning upgrades all `task_type="emergency"` tasks for vulnerable plants to `blocker` immediately.
 
 ### 5.6 Session Context
 
