@@ -100,3 +100,9 @@ class UpdateTaskSeriesRequest(BaseModel):
     cadence_days: Optional[int] = None
     active: Optional[bool] = None
     notes: Optional[str] = None
+
+
+class CreateThreadRequest(BaseModel):
+    thread_id: str
+    title: Optional[str] = None
+    project_id: Optional[str] = None

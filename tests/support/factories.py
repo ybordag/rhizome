@@ -39,7 +39,7 @@ def _persist(session, obj):
 
 def make_profile(session, **overrides: Any) -> GardenProfile:
     data = {
-        "user_id": 1,
+        "user_id": "1",
         "climate_zone": "9b",
         "frost_date_last_spring": "January 15",
         "frost_date_first_fall": "November 30",
@@ -60,7 +60,7 @@ def make_profile(session, **overrides: Any) -> GardenProfile:
 
 def make_project(session, profile: GardenProfile, **overrides: Any) -> GardeningProject:
     data = {
-        "user_id": 1,
+        "user_id": "1",
         "garden_profile_id": profile.id,
         "name": "Tomato Project",
         "goal": "Grow enough tomatoes for sauce.",
@@ -308,7 +308,7 @@ def make_task_dependency(
 
 def make_bed(session, profile: GardenProfile, **overrides: Any) -> Bed:
     data = {
-        "user_id": 1,
+        "user_id": "1",
         "garden_profile_id": profile.id,
         "name": "Courtyard Bed",
         "location": "courtyard",
@@ -329,7 +329,7 @@ def make_bed(session, profile: GardenProfile, **overrides: Any) -> Bed:
 
 def make_container(session, profile: GardenProfile, **overrides: Any) -> Container:
     data = {
-        "user_id": 1,
+        "user_id": "1",
         "garden_profile_id": profile.id,
         "name": "Growbag 1",
         "container_type": "growbag",
@@ -355,7 +355,7 @@ def make_batch(
     **overrides: Any,
 ) -> PlantBatch:
     data = {
-        "user_id": 1,
+        "user_id": "1",
         "garden_profile_id": profile.id,
         "project_id": project.id if project else None,
         "name": "Cosmos Spring 2026",
@@ -384,7 +384,7 @@ def make_plant(
     **overrides: Any,
 ) -> Plant:
     data = {
-        "user_id": 1,
+        "user_id": "1",
         "garden_profile_id": profile.id,
         "batch_id": batch.id if batch else None,
         "name": "Tomato",

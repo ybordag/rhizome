@@ -118,6 +118,20 @@ The conversation is paused at this point. The graph resumes only after you respo
 
 ## Session persistence
 
-Conversation history and pending interactions are persisted in `rhizome_checkpoints.db` via LangGraph's checkpointer. The next session picks up exactly where you left off — including any pending approvals that weren't resolved.
+Conversation history and pending interactions are persisted in the LangGraph PostgresSaver checkpointer (keyed by `thread_id`). The next session picks up exactly where you left off — including any pending approvals that weren't resolved.
 
-Garden state (plants, tasks, projects, care history) is persisted in `rhizome.db` and is always current regardless of session state.
+Garden state (plants, tasks, projects, care history) is persisted in Postgres and is always current regardless of session state.
+
+---
+
+## Internal API and Swagger UI
+
+Rhizome also runs as a FastAPI server (`python server.py`) that Cambium calls. When the server is running, the full internal API is explorable at:
+
+```
+http://localhost:8001/docs
+```
+
+FastAPI generates this Swagger UI automatically — it always reflects the live code. Use it to inspect the `/internal/data/...` endpoints during development or to understand what Cambium is proxying.
+
+The CLI (`python main.py`) and the API server (`python server.py`) share the same LangGraph agent and domain code — the only difference is the interface layer.

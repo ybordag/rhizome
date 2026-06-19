@@ -215,7 +215,7 @@ def bootstrap_startup_triage(config: dict, shown_ids: set[str], startup_opener: 
     return maybe_render_triage_interaction(config, shown_ids)
 
 
-def make_session_config(user_id: int = 1) -> dict:
+def make_session_config(user_id: str = "1") -> dict:
     thread_id = f"session-{user_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
     return {"configurable": {"thread_id": thread_id, "user_id": user_id}}
 

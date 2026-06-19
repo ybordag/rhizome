@@ -9,7 +9,7 @@ Usage:
     python scripts/monitor.py [--user-id ID] [--job JOB]
 
 Arguments:
-    --user-id   integer user ID to run jobs for (default: 1)
+    --user-id   user ID to run jobs for (default: "1" for local dev; use UUID in production)
     --job       one of: weather | triage | series | all  (default: all)
 
 Example crontab:
@@ -62,7 +62,7 @@ def _fail_run(session, run: MonitorRun, error: str) -> None:
 def _write_alert(
     session,
     *,
-    user_id: int,
+    user_id: str,
     alert_type: str,
     severity: str,
     title: str,
@@ -228,7 +228,7 @@ def run(user_id: int, job: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rhizome background monitor")
-    parser.add_argument("--user-id", type=int, default=1, dest="user_id")
+    parser.add_argument("--user-id", type=str, default="1", dest="user_id")
     parser.add_argument(
         "--job",
         choices=["weather", "triage", "series", "all"],

@@ -137,7 +137,8 @@ def update_project(
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
 
         if not project:
@@ -212,7 +213,8 @@ def get_project(project_id: str) -> str:
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
@@ -403,14 +405,17 @@ def assign_bed_to_project(project_id: str, bed_id: str) -> str:
     session = SessionLocal()
     try:
 
-        # verify both exist
+        # verify both exist and belong to this user
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
 
-        bed = session.query(Bed).filter(Bed.id == bed_id).first()
+        bed = session.query(Bed).filter(
+            Bed.id == bed_id, Bed.user_id == current_user_id.get()
+        ).first()
         if not bed:
             return f"No bed found with id {bed_id}."
 
@@ -479,13 +484,14 @@ def assign_container_to_project(project_id: str, container_id: str) -> str:
     try:
 
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
 
         container = session.query(Container).filter(
-            Container.id == container_id
+            Container.id == container_id, Container.user_id == current_user_id.get()
         ).first()
         if not container:
             return f"No container found with id {container_id}."
@@ -556,14 +562,17 @@ def assign_beds_to_project(project_id: str, bed_ids: list[str]) -> str:
             return "No bed IDs provided."
 
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
 
         beds_by_id = {
             b.id: b
-            for b in session.query(Bed).filter(Bed.id.in_(bed_ids)).all()
+            for b in session.query(Bed).filter(
+                Bed.id.in_(bed_ids), Bed.user_id == current_user_id.get()
+            ).all()
         }
         conflict_map = dict(
             session.query(ProjectBed.bed_id, GardeningProject.name)
@@ -641,14 +650,17 @@ def assign_containers_to_project(project_id: str, container_ids: list[str]) -> s
             return "No container IDs provided."
 
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
 
         containers_by_id = {
             c.id: c
-            for c in session.query(Container).filter(Container.id.in_(container_ids)).all()
+            for c in session.query(Container).filter(
+                Container.id.in_(container_ids), Container.user_id == current_user_id.get()
+            ).all()
         }
         conflict_map = dict(
             session.query(ProjectContainer.container_id, GardeningProject.name)
@@ -721,9 +733,12 @@ def unassign_bed_from_project(project_id: str, bed_id: str) -> str:
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
-        bed = session.query(Bed).filter(Bed.id == bed_id).first()
+        bed = session.query(Bed).filter(
+            Bed.id == bed_id, Bed.user_id == current_user_id.get()
+        ).first()
         row = session.query(ProjectBed).filter(
             ProjectBed.project_id == project_id,
             ProjectBed.bed_id == bed_id
@@ -764,10 +779,11 @@ def unassign_container_from_project(project_id: str, container_id: str) -> str:
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         container = session.query(Container).filter(
-            Container.id == container_id
+            Container.id == container_id, Container.user_id == current_user_id.get()
         ).first()
         row = session.query(ProjectContainer).filter(
             ProjectContainer.project_id == project_id,
@@ -812,12 +828,15 @@ def add_plant_to_project(project_id: str, plant_id: str, notes: Optional[str] = 
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
 
-        plant = session.query(Plant).filter(Plant.id == plant_id).first()
+        plant = session.query(Plant).filter(
+            Plant.id == plant_id, Plant.user_id == current_user_id.get()
+        ).first()
         if not plant:
             return f"No plant found with id {plant_id}."
 
@@ -872,9 +891,12 @@ def remove_plant_from_project(project_id: str, plant_id: str, reason: Optional[s
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
-        plant = session.query(Plant).filter(Plant.id == plant_id).first()
+        plant = session.query(Plant).filter(
+            Plant.id == plant_id, Plant.user_id == current_user_id.get()
+        ).first()
 
         link = session.query(ProjectPlant).filter(
             ProjectPlant.project_id == project_id,
@@ -933,7 +955,8 @@ def delete_project(project_id: str) -> str:
     session = SessionLocal()
     try:
         project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
         ).first()
         if not project:
             return f"No project found with id {project_id}."
@@ -1021,7 +1044,10 @@ def get_project_progress(project_id: str) -> str:
     """Show task completion progress, timeline status, and budget tracking for a project."""
     session = SessionLocal()
     try:
-        project = session.query(GardeningProject).filter(GardeningProject.id == project_id).first()
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id,
+            GardeningProject.user_id == current_user_id.get()
+        ).first()
         if not project:
             return f"No project found with id {project_id}."
 

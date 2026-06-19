@@ -27,4 +27,4 @@ rhizome_checkpoints.db
 *.swo
 
 # macOS
-.DS_Store
+.DS_Storek8s/secrets.yaml

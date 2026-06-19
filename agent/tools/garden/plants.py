@@ -247,7 +247,9 @@ def update_plant(
     """
     session = SessionLocal()
     try:
-        plant = session.query(Plant).filter(Plant.id == plant_id).first()
+        plant = session.query(Plant).filter(
+            Plant.id == plant_id, Plant.user_id == current_user_id.get()
+        ).first()
         if not plant:
             return f"No plant found with id {plant_id}."
 
@@ -317,7 +319,9 @@ def remove_plant(plant_id: str, reason: Optional[str] = None) -> str:
     """
     session = SessionLocal()
     try:
-        plant = session.query(Plant).filter(Plant.id == plant_id).first()
+        plant = session.query(Plant).filter(
+            Plant.id == plant_id, Plant.user_id == current_user_id.get()
+        ).first()
         if not plant:
             return f"No plant found with id {plant_id}."
 
@@ -756,7 +760,9 @@ def batch_update_plants(
         affected_batch_ids = {plant.batch_id for plant in plants if plant.batch_id}
         batch_before = {}
         for batch_id in affected_batch_ids:
-            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            batch = session.query(PlantBatch).filter(
+                PlantBatch.id == batch_id, PlantBatch.user_id == current_user_id.get()
+            ).first()
             if batch:
                 batch_before[batch_id] = snapshot_model(batch)
 
@@ -842,7 +848,9 @@ def batch_update_plants(
             )
 
         for batch_id, before_batch in batch_before.items():
-            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            batch = session.query(PlantBatch).filter(
+                PlantBatch.id == batch_id, PlantBatch.user_id == current_user_id.get()
+            ).first()
             if batch:
                 record_update_event(
                     session,
@@ -954,7 +962,9 @@ def batch_remove_plants(
         affected_batch_ids = {plant.batch_id for plant in plants if plant.batch_id}
         batch_before = {}
         for batch_id in affected_batch_ids:
-            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            batch = session.query(PlantBatch).filter(
+                PlantBatch.id == batch_id, PlantBatch.user_id == current_user_id.get()
+            ).first()
             if batch:
                 batch_before[batch_id] = snapshot_model(batch)
 
@@ -1001,7 +1011,9 @@ def batch_remove_plants(
             )
 
         for batch_id, before_batch in batch_before.items():
-            batch = session.query(PlantBatch).filter(PlantBatch.id == batch_id).first()
+            batch = session.query(PlantBatch).filter(
+                PlantBatch.id == batch_id, PlantBatch.user_id == current_user_id.get()
+            ).first()
             if batch:
                 record_update_event(
                     session,
@@ -1087,7 +1099,9 @@ def delete_plant(plant_id: str) -> str:
     """
     session = SessionLocal()
     try:
-        plant = session.query(Plant).filter(Plant.id == plant_id).first()
+        plant = session.query(Plant).filter(
+            Plant.id == plant_id, Plant.user_id == current_user_id.get()
+        ).first()
         if not plant:
             return f"No plant found with id {plant_id}."
 

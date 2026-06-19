@@ -12,11 +12,11 @@ Infrastructure that everything else depends on.
 
 | Initiative | Status | Scope |
 |---|---|---|
-| FastAPI internal layer | **in progress** | `/internal/agent` (LangGraph) + `/internal/data/...` (direct CRUD) routers for Cambium |
-| Cambium proxy (phloem branch) | **in progress** | Cambium Phase 3 — HTTP client, provider key injection, all `/api/v1` routes |
-| Multi-tenancy | pending | Thread real `user_id` from Cambium JWT into all ~15 tool files (currently hardcoded to 1) |
+| FastAPI internal layer | **complete** (narcissus → main) | `/internal/agent` (LangGraph) + `/internal/data/...` (~80 endpoints); SSE streaming; `server.py` entry point |
+| Thread management | **complete** (narcissus) | `Thread` model; botanical name generation in Cambium; conversation list, history, delete endpoints |
+| Cambium proxy + full API | **complete** (phloem + periderm → main) | Cambium Phases 1–4: auth, key management, proxy, all ~95 routes wired |
+| Multi-tenancy | pending | Audit all tool queries to confirm `user_id` scoping; harden against any remaining hardcoded `1` |
 | k3s deployment | pending | Thor + Loki cluster setup, Helm for Postgres, raw manifests for Rhizome/Cambium/Verdant |
-| Cambium full API surface | pending | Cambium Phase 4 — all planned endpoints fully wired |
 
 ---
 
@@ -29,6 +29,7 @@ Capabilities that make the agent smarter and better grounded.
 | Google Search grounding | pending | Live search for planning queries — grounds proposals in current information rather than training data |
 | RAG / knowledge base | pending | pgvector embeddings over plant care guides, pest/disease references, seed databases |
 | Full-text search | pending | Postgres `tsvector` across plants, tasks, projects, activity; `GET /api/v1/search` |
+| iNaturalist | pending | Local species/pest observation data via public API; feeds sighting catalog and reactive monitoring |
 
 See [Intelligence initiative plan](initiatives/intelligence.md) for design detail.
 
@@ -41,10 +42,21 @@ Background monitoring and environmental awareness.
 | Initiative | Status | Scope |
 |---|---|---|
 | Reactive monitoring (calendula) phases 1–4 | **complete** | Weather auto-apply, working window alerts, session-start delivery, triage + series jobs |
-| iNaturalist pest monitoring | pending | `pest_job()` querying iNaturalist Observations API near garden location → `IncidentReport` + `MonitorAlert`. Best built after visual garden understanding is in place. |
-| Visual garden understanding | pending | Image processing, plant/disease/pest identification from photos, visual growth tracking |
+| Visual garden understanding | pending | MediaAsset + GardenSighting models; plant ID, pest/sighting catalog, space assessment, sun audit from photos |
+| iNaturalist pest monitoring | pending | Background `pest_job()` — cross-reference local observations against active projects; best built after visual garden understanding |
 
 See [calendula plan](../current_work/calendula_reactive_monitoring.md) and [visual garden plan](initiatives/visual_garden_understanding.md).
+
+---
+
+## Onboarding
+
+| Initiative | Status | Scope |
+|---|---|---|
+| Google Drive integration | pending | MCP sidecar; import images from Drive into MediaAsset store |
+| Chat import | pending | Parse exported AI chat histories → extract garden profile + project context → `interaction_node` confirmation |
+
+See [Onboarding and data import plan](initiatives/onboarding_and_data_import.md).
 
 ---
 
@@ -52,7 +64,7 @@ See [calendula plan](../current_work/calendula_reactive_monitoring.md) and [visu
 
 | Initiative | Status | Scope |
 |---|---|---|
-| Verdant | not started | React app — dashboard, alert banners, task list, project view, chat interface |
+| Verdant | not started | React app — dashboard, alert banners, task list, project view, chat interface, conversation history |
 
 See [Verdant initiative plan](initiatives/app_frontend_experience.md).
 
@@ -72,15 +84,21 @@ See [Fairlead design doc](../../../fairlead/design.md).
 
 ```
 FastAPI internal layer ──┐
-Multi-tenancy            ├──► Cambium full API ──► Verdant
-Cambium proxy ───────────┘
+Thread management        │
+Multi-tenancy            ├──► Verdant (frontend)
+Cambium full API ────────┘
 
-Google Search ───────────┐
-RAG ─────────────────────┼──► Richer planning, care recommendations, incident analysis
-Full-text search ────────┘
+Google Search ──────────────┐
+RAG ────────────────────────┼──► Richer planning, care recommendations, incident analysis
+Full-text search ───────────┤
+iNaturalist ────────────────┘
 
-Visual garden understanding ──► iNaturalist (full photo integration)
-                              └► Image-grounded incident reports
+Visual garden understanding (MediaAsset + GardenSighting)
+    ├──► iNaturalist pest monitoring (photo + local data = stronger ID)
+    ├──► Image-grounded incident reports
+    └──► Space/sun data improves project planning
+
+Google Drive ──► Chat import ──► faster onboarding for new users
 
 Fairlead ──► vLLM local inference ──► cost-free local operation on Sparks
 ```

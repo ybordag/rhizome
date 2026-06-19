@@ -54,7 +54,9 @@ def update_bed(
     """
     session = SessionLocal()
     try:
-        bed = session.query(Bed).filter(Bed.id == bed_id).first()
+        bed = session.query(Bed).filter(
+            Bed.id == bed_id, Bed.user_id == current_user_id.get()
+        ).first()
         if not bed:
             return f"No bed found with id {bed_id}."
 
@@ -201,7 +203,7 @@ def update_container(
     session = SessionLocal()
     try:
         container = session.query(Container).filter(
-            Container.id == container_id
+            Container.id == container_id, Container.user_id == current_user_id.get()
         ).first()
         if not container:
             return f"No container found with id {container_id}."
@@ -252,7 +254,7 @@ def remove_container(container_id: str, reason: Optional[str] = None) -> str:
     session = SessionLocal()
     try:
         container = session.query(Container).filter(
-            Container.id == container_id
+            Container.id == container_id, Container.user_id == current_user_id.get()
         ).first()
         if not container:
             return f"No container found with id {container_id}."
@@ -341,7 +343,9 @@ def delete_bed(bed_id: str) -> str:
     """
     session = SessionLocal()
     try:
-        bed = session.query(Bed).filter(Bed.id == bed_id).first()
+        bed = session.query(Bed).filter(
+            Bed.id == bed_id, Bed.user_id == current_user_id.get()
+        ).first()
         if not bed:
             return f"No bed found with id {bed_id}."
 

@@ -10,8 +10,10 @@ def patch_all_sessionlocals(monkeypatch, session_factory) -> None:
     from agent.tools.garden import beds_containers, plants, profile, search
     from agent.tools.projects import planning, projects, tracker
     from agent.api import routers as api_routers
+    from agent.core import nodes as core_nodes
 
     monkeypatch.setattr(nodes, "SessionLocal", session_factory)
+    monkeypatch.setattr(core_nodes, "SessionLocal", session_factory)
     monkeypatch.setattr(activity, "SessionLocal", session_factory)
     monkeypatch.setattr(interactions, "SessionLocal", session_factory)
     monkeypatch.setattr(planning, "SessionLocal", session_factory)

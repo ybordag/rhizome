@@ -1,0 +1,10 @@
+.env
+.git
+__pycache__
+*.pyc
+*.pyo
+rhizome.db
+rhizome_checkpoints.db
+tests/
+docs/
+*.md

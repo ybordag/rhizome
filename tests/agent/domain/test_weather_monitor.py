@@ -250,7 +250,7 @@ def test_apply_weather_impacts_auto_applies_critical_and_writes_alert(db_session
     alerts = db_session.query(MonitorAlert).filter(MonitorAlert.alert_type == "weather_critical").all()
     assert len(alerts) == 1
     assert alerts[0].severity == "critical"
-    assert alerts[0].user_id == 1
+    assert alerts[0].user_id == "1"
 
     assert result["critical_applied"] > 0
     assert result["advisory_queued"] == 0

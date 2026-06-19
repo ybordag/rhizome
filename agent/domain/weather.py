@@ -253,7 +253,15 @@ def evaluate_weather_task_impacts(
     if not snapshot:
         return []
 
-    query = session.query(Task).filter(Task.status.notin_(["done", "skipped", "superseded"]))
+    user_project_ids = [
+        pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == current_user_id.get()
+        ).all()
+    ]
+    query = session.query(Task).filter(
+        Task.status.notin_(["done", "skipped", "superseded"]),
+        Task.project_id.in_(user_project_ids),
+    )
     if project_id:
         query = query.filter(Task.project_id == project_id)
     tasks = query.order_by(Task.deadline.asc(), Task.window_end.asc(), Task.scheduled_date.asc()).all()
@@ -531,7 +539,10 @@ def approve_weather_task_changes(session, change_set_id: str) -> WeatherTaskChan
         )
         for item in items:
             proposed = item.get("proposed_change") or {}
-            task = session.query(Task).filter(Task.id == item.get("task_id")).first()
+            task = session.query(Task).filter(
+                Task.id == item.get("task_id"),
+                Task.project_id == project_id,
+            ).first()
             if not task:
                 continue
             before = snapshot_model(task)

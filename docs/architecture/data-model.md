@@ -1,6 +1,6 @@
 # Data Model
 
-All models live in `db/models.py`. The database is SQLite for development; Postgres is the migration target. SQLAlchemy ORM throughout.
+All models live in `db/models.py`. The database is **Postgres** in staging and production (SQLite for in-memory test runs only). SQLAlchemy ORM throughout.
 
 ---
 
@@ -192,20 +192,53 @@ Links an event to the entities it affected. `subject_type` + `subject_id` + `rol
 
 ---
 
-## Session state (LangGraph)
+## Thread model
 
-Conversation state lives in the LangGraph checkpoint store (`rhizome_checkpoints.db`), keyed by `thread_id`. The `GardenState` TypedDict carries: messages, pending_interaction, interaction_history, skip_tool_node.
+`Thread` bridges user-facing conversation management with LangGraph's internal checkpoint store.
 
-`user_id` is NOT in GardenState — it's in `graph.config["configurable"]["user_id"]`, read by tools via the `current_user_id` ContextVar.
+```
+Thread
+  id                   string PK    — IS the LangGraph thread_id (botanical name e.g. silver-fern-cascade)
+  user_id              int          — scopes the thread to a user (FK to cambium.users conceptually)
+  title                string?      — auto-set from first human message (first 60 chars); user-editable
+  project_id           string? FK   — optional link to a GardeningProject
+  last_message_preview string?      — first 150 chars of last AI response (updated each turn)
+  last_active_at       datetime?    — updated by session_context_intake on every turn
+  message_count        int          — human message count; updated each turn
+  created_at           datetime
+```
+
+**Key design decision:** `Thread` stores only metadata. Actual message content lives in the LangGraph PostgresSaver checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
+
+**Thread ID generation:** Cambium generates botanical three-word names (31 descriptors × 41 plants × 36 phenomena ≈ 45,700 combinations). Rhizome stores and uses them as opaque strings.
+
+**Interrupted stream recovery:** The LangGraph checkpoint is saved after each node completes — including after `llm_call` finishes, before SSE streaming to the client. If the stream is cut, the full AI response is still in the checkpoint and retrievable via the messages endpoint.
 
 ---
 
-## Postgres migration path
+## Session state (LangGraph)
 
-`requirements.txt` already includes `psycopg2-binary` and `pgvector`. Migration steps:
-1. Swap `langgraph-checkpoint-sqlite` → `langgraph-checkpoint-postgres`
-2. Update `db/database.py` engine and session factory to use the Postgres URL
-3. Run Alembic migrations (or apply schema via `Base.metadata.create_all`)
-4. Configure HA replication (Patroni or pg_auto_failover)
+Conversation state lives in the LangGraph PostgresSaver checkpoint store, keyed by `thread_id`. The `GardenState` TypedDict carries: `messages`, `monitor_alerts`, `temporal_context`, `session_context`, `skip_tool_node`, `user_id`.
 
-This migration is required before: multi-instance deployment, FK enforcement (SQLite ignores FKs at runtime), and pgvector for embeddings.
+`user_id` flows through `graph.config["configurable"]["user_id"]` and is set into the `current_user_id` ContextVar by `session_context_intake` at the start of every turn. All tool queries use `current_user_id.get()` — never a hardcoded value.
+
+---
+
+## Schema and migrations
+
+All domain tables live in the **`rhizome` schema** in Postgres. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome` so queries and `create_all()` target the correct schema.
+
+**Alembic** manages schema migrations in staging and production:
+
+```bash
+# Apply pending migrations before starting the server
+alembic upgrade head
+
+# After changing db/models.py — generate and apply a new migration
+alembic revision --autogenerate -m "describe the change"
+alembic upgrade head
+```
+
+`alembic/versions/` contains the migration history. `alembic.ini` and `alembic/env.py` configure the connection (reads `DATABASE_URL` from environment) and target schema.
+
+Tests use `init_db()` with in-memory SQLite — they never run Alembic. `init_db()` remains as a safety net for fresh installs only.

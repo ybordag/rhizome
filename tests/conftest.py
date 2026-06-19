@@ -92,7 +92,7 @@ def seed_garden_profile(db_session, patched_sessionlocal):
 
 @pytest.fixture(autouse=True)
 def reset_user_id():
-    """Reset current_user_id to 1 before each test."""
+    """Reset current_user_id to "1" before each test."""
     from db.database import current_user_id
-    current_user_id.set(1)
+    current_user_id.set("1")
     yield

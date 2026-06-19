@@ -1,0 +1,88 @@
+# Rhizome — Deployment + Service
+#
+# Two stateless worker replicas share state via Postgres (domain data +
+# LangGraph checkpoint tables). k3s load-balances requests across both.
+#
+# Apply: kubectl apply -f k8s/rhizome.yaml
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rhizome
+  namespace: default
+  labels:
+    app: rhizome
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rhizome
+  template:
+    metadata:
+      labels:
+        app: rhizome
+    spec:
+      # Run Alembic migrations before the server starts on each deploy.
+      # Safe to run concurrently — Alembic uses advisory locks in Postgres.
+      initContainers:
+      - name: migrate
+        image: docker.io/library/rhizome:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-c", "from dotenv import load_dotenv; load_dotenv(); from db.database import init_db; init_db(); print('Schema ready')"]
+        envFrom:
+        - secretRef:
+            name: rhizome-secrets
+
+      containers:
+      - name: rhizome
+        image: docker.io/library/rhizome:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+
+        envFrom:
+        - secretRef:
+            name: rhizome-secrets
+
+        # Liveness: restart pod if /health stops responding
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30   # give Python time to start
+          periodSeconds: 10
+          failureThreshold: 3
+
+        # Readiness: only route traffic once the server is fully up
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 3
+
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"    # LangGraph + LLM client can use significant memory
+            cpu: "2"
+
+---
+# ClusterIP Service — internal only, not reachable from outside the cluster.
+# Cambium calls this via http://rhizome-svc:8001
+apiVersion: v1
+kind: Service
+metadata:
+  name: rhizome-svc
+  namespace: default
+spec:
+  selector:
+    app: rhizome
+  ports:
+  - port: 8001
+    targetPort: 8001
+  type: ClusterIP

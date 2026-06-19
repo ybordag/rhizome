@@ -22,7 +22,8 @@ if _use_postgres:
     from langgraph.checkpoint.postgres import PostgresSaver
     # psycopg (v3) uses plain postgres:// — strip any SQLAlchemy driver prefix
     _checkpoint_url = _database_url.replace("postgresql+psycopg2://", "postgresql://")
-    _pg_conn = psycopg.connect(_checkpoint_url, autocommit=True)
+    # Route checkpointer tables to the rhizome schema alongside domain tables.
+    _pg_conn = psycopg.connect(_checkpoint_url, autocommit=True, options="-csearch_path=rhizome")
     checkpointer = PostgresSaver(_pg_conn)
     checkpointer.setup()  # creates langgraph checkpoint tables if they don't exist
 else:
