@@ -111,7 +111,7 @@ def test_cambium_health():
 
 @pytest.mark.e2e
 def test_rhizome_health():
-    r = requests.get("http://localhost:8001/health")
+    r = requests.get(f"{RHIZOME}/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
 
