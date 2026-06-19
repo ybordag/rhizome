@@ -148,7 +148,7 @@ main.py             — CLI entrypoint
 
 **Active work — Cambium (Go API gateway):**
 - Phases 1–3 complete (auth, key management, Rhizome proxy, SSE streaming)
-- Phase 4 in progress (periderm branch): wiring remaining proxy routes + AI triggers + thread management
+- Phases 1–4 complete (periderm merged); Phase 5 (fibril branch): thread management
 - See `../cambium/CLAUDE.md` for full build plan and invariants
 
 **Reactive monitoring complete (calendula, 2026-06):**
