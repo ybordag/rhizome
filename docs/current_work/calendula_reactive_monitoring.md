@@ -2,7 +2,7 @@
 
 **Branch:** `calendula`  
 **Epic:** [Epic 6: Reactive Monitoring and Alerting](../roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)  
-**Status:** In progress — Phases 1–2 complete, Phase 3 next  
+**Status:** In progress — Phases 1–3 complete, Phase 4 next  
 **Last updated:** 2026-06-18
 
 ---
@@ -163,10 +163,12 @@ Only `severity in ('critical', 'high')` and non-expired alerts are injected.
 - `weather_job()` wired into `scripts/monitor.py` with fresh-snapshot guard and rollback on failure
 - 20 tests in `tests/agent/domain/test_weather_monitor.py`
 
-### Phase 3 — Session delivery
-- `session_context_intake` reads pending alerts → `monitor_alerts` in state
-- `llm_call` injects into system prompt
-- Tests: alerts present in state when pending; absent when dismissed or expired
+### Phase 3 — Session delivery ✅
+- `GardenState.monitor_alerts: Optional[list[dict]]`
+- `session_context_intake` queries pending, non-expired, critical/high `MonitorAlert` records and returns them in state
+- `llm_call` injects a `⚠ Active monitor alerts` section into the system prompt when alerts are present
+- `_monitor_alerts_text()` helper; empty string when no alerts (keeps prompt clean)
+- 8 tests: 2 unit on formatting, 6 integration on pending/dismissed/expired/severity/cross-user filtering
 
 ### Phase 4 — Triage + series jobs
 - `triage_job()` and `series_job()` in `scripts/monitor.py`
