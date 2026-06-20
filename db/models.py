@@ -992,10 +992,12 @@ class WeatherSnapshot(Base):
     __tablename__ = "weather_snapshot"
     __table_args__ = (
         Index("ix_weather_snapshot_created_at", "created_at"),
+        Index("ix_weather_snapshot_garden_profile_id", "garden_profile_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=True)
     timezone = Column(String, nullable=False)
     location_label = Column(String, nullable=False)
     forecast_start_date = Column(DateTime, nullable=False)
@@ -1030,10 +1032,12 @@ class TriageSnapshot(Base):
     __tablename__ = "triage_snapshot"
     __table_args__ = (
         Index("ix_triage_snapshot_created_at", "created_at"),
+        Index("ix_triage_snapshot_garden_profile_id", "garden_profile_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=True)
     timezone = Column(String, nullable=False)
     session_context = Column(JSON, default=dict)
     temporal_context = Column(JSON, default=dict)

@@ -139,6 +139,27 @@ def test_weather_task_changes_are_drafted_then_approved(db_session, patched_sess
 
 
 @pytest.mark.integration
+def test_approve_weather_task_changes_rejects_another_users_change_set(db_session, patched_sessionlocal):
+    from db.database import current_user_id
+
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    generate_project_tasks.invoke({"project_id": project.id})
+    make_weather_snapshot(
+        db_session,
+        derived_impacts=[{"date": "2026-04-14", "impact_type": "frost", "severity": "high", "summary": "Frost risk."}],
+    )
+    draft_weather_task_changes.invoke({"project_id": project.id})
+    change_set = db_session.query(WeatherTaskChangeSet).order_by(WeatherTaskChangeSet.created_at.desc()).first()
+
+    current_user_id.set("owner-b")
+    try:
+        result = approve_weather_task_changes.invoke({"change_set_id": change_set.id})
+        assert "No weather task change set found" in result
+    finally:
+        current_user_id.set("1")
+
+
+@pytest.mark.integration
 def test_incident_reporting_and_treatment_workflow_creates_tasks(db_session, patched_sessionlocal):
     project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
     generate_project_tasks.invoke({"project_id": project.id})

@@ -8,7 +8,8 @@ from agent.core.model import get_triage_model
 from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
 from agent.domain.tracker import build_due_task_view, compute_task_urgency
 from agent.domain.weather import evaluate_weather_task_impacts, get_latest_weather_snapshot
-from db.models import Task, TriageSnapshot
+from db.database import current_user_id
+from db.models import GardenProfile, Task, TriageSnapshot
 from langchain.messages import HumanMessage, SystemMessage
 
 
@@ -324,7 +325,9 @@ def build_triage_snapshot(
     if session_context.get("focus_project_id"):
         focus_summary.append(f"focused on project {session_context['focus_project_id']}")
 
+    profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
     snapshot = TriageSnapshot(
+        garden_profile_id=profile.id if profile else None,
         timezone=timezone,
         session_context=session_context,
         temporal_context=temporal_context,
@@ -358,6 +361,18 @@ def build_triage_snapshot(
     )
     _step("Generating recommendations", "done")
     return snapshot
+
+
+def get_latest_triage_snapshot(session) -> Optional[TriageSnapshot]:
+    profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
+    if not profile:
+        return None
+    return (
+        session.query(TriageSnapshot)
+        .filter(TriageSnapshot.garden_profile_id == profile.id)
+        .order_by(TriageSnapshot.created_at.desc())
+        .first()
+    )
 
 
 def format_triage_snapshot(session, snapshot: TriageSnapshot) -> str:

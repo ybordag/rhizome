@@ -7,9 +7,8 @@ from langchain.tools import tool
 
 from agent.core.temporal import DEFAULT_TIMEZONE
 from agent.domain.notifications import push_event
-from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
+from agent.domain.triage import build_triage_snapshot, format_triage_snapshot, get_latest_triage_snapshot as get_latest_triage_snapshot_data
 from db.database import SessionLocal, current_user_id
-from db.models import TriageSnapshot
 
 
 @tool
@@ -43,7 +42,7 @@ def get_latest_triage_snapshot() -> str:
     """Show the latest persisted triage snapshot."""
     session = SessionLocal()
     try:
-        snapshot = session.query(TriageSnapshot).order_by(TriageSnapshot.created_at.desc()).first()
+        snapshot = get_latest_triage_snapshot_data(session)
         if not snapshot:
             return "No triage snapshot found."
         return format_triage_snapshot(session, snapshot)
@@ -58,7 +57,7 @@ def list_triage_recommendations(limit: int = 9) -> str:
     """List the task recommendations from the latest triage snapshot for frontend/API use."""
     session = SessionLocal()
     try:
-        snapshot = session.query(TriageSnapshot).order_by(TriageSnapshot.created_at.desc()).first()
+        snapshot = get_latest_triage_snapshot_data(session)
         if not snapshot:
             return "No triage snapshot found."
         task_ids = (snapshot.recommended_task_ids or [])[:limit]

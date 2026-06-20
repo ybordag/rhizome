@@ -181,8 +181,22 @@ def derive_weather_impacts(payload: dict[str, Any]) -> tuple[list[dict[str, Any]
     return impacts, actions, "\n".join(summaries[:3]), "\n".join(alerts) if alerts else "No significant weather alerts."
 
 
-def get_latest_weather_snapshot(session) -> Optional[WeatherSnapshot]:
-    return session.query(WeatherSnapshot).order_by(WeatherSnapshot.created_at.desc()).first()
+def _resolve_garden_profile(session, garden_profile_id: Optional[str] = None) -> Optional[GardenProfile]:
+    if garden_profile_id:
+        return session.query(GardenProfile).filter(GardenProfile.id == garden_profile_id).first()
+    return session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
+
+
+def get_latest_weather_snapshot(session, *, garden_profile_id: Optional[str] = None) -> Optional[WeatherSnapshot]:
+    profile = _resolve_garden_profile(session, garden_profile_id)
+    if not profile:
+        return None
+    return (
+        session.query(WeatherSnapshot)
+        .filter(WeatherSnapshot.garden_profile_id == profile.id)
+        .order_by(WeatherSnapshot.created_at.desc())
+        .first()
+    )
 
 
 def refresh_weather_snapshot(
@@ -196,7 +210,9 @@ def refresh_weather_snapshot(
         if event_sink:
             event_sink(step, status)
 
-    profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
+    profile = _resolve_garden_profile(session)
+    if not profile:
+        raise ValueError("No garden profile found. Set up your garden profile first.")
     location = profile_weather_location(profile)
     if not location:
         raise ValueError("Garden profile is missing latitude/longitude. Update the weather location first.")
@@ -213,6 +229,7 @@ def refresh_weather_snapshot(
     start = datetime.fromisoformat(dates[0]) if dates else datetime.now(timezone.utc).replace(tzinfo=None)
     end = datetime.fromisoformat(dates[-1]) if dates else datetime.now(timezone.utc).replace(tzinfo=None)
     snapshot = WeatherSnapshot(
+        garden_profile_id=profile.id,
         timezone=timezone,
         location_label=location["location_label"],
         forecast_start_date=start,
@@ -537,7 +554,13 @@ def _event_followup_run(session, *, project_id: str, revision_id: str, summary: 
 
 
 def approve_weather_task_changes(session, change_set_id: str) -> WeatherTaskChangeSet:
-    change_set = session.query(WeatherTaskChangeSet).filter(WeatherTaskChangeSet.id == change_set_id).first()
+    change_set = (
+        session.query(WeatherTaskChangeSet)
+        .join(WeatherSnapshot, WeatherTaskChangeSet.weather_snapshot_id == WeatherSnapshot.id)
+        .join(GardenProfile, WeatherSnapshot.garden_profile_id == GardenProfile.id)
+        .filter(WeatherTaskChangeSet.id == change_set_id, GardenProfile.user_id == current_user_id.get())
+        .first()
+    )
     if not change_set:
         raise ValueError(f"No weather task change set found with id {change_set_id}.")
     if change_set.status != "draft":

@@ -5,7 +5,9 @@ from datetime import datetime
 import pytest
 
 from agent.core.temporal import build_temporal_context, infer_session_context
-from agent.domain.weather import derive_weather_impacts, evaluate_weather_task_impacts
+from agent.domain.weather import derive_weather_impacts, evaluate_weather_task_impacts, get_latest_weather_snapshot
+from agent.domain.triage import get_latest_triage_snapshot
+from db.database import current_user_id
 from tests.support.factories import (
     make_profile,
     make_project,
@@ -135,3 +137,57 @@ def test_weather_task_impacts_use_task_intents_not_generic_planting_keywords(db_
     assert fertilize_task.id not in impacts_by_task
     transplant_impacts = {impact["impact_type"] for impact in impacts_by_task[transplant_task.id]}
     assert {"heavy_rain", "good_planting_window", "heat"} == transplant_impacts
+
+
+# ---------------------------------------------------------------------------
+# WeatherSnapshot / TriageSnapshot garden_profile_id isolation
+#
+# Different users have different garden locations, so weather/triage data
+# must not be shared across them (multi-tenancy audit fix, post-#130).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_get_latest_weather_snapshot_scoped_to_current_users_garden(db_session):
+    profile_a = make_profile(db_session, user_id="owner-a", location_label="Phoenix, AZ")
+    profile_b = make_profile(db_session, user_id="owner-b", location_label="Duluth, MN")
+    snapshot_a = make_weather_snapshot(db_session, garden_profile_id=profile_a.id, location_label="Phoenix, AZ")
+    make_weather_snapshot(db_session, garden_profile_id=profile_b.id, location_label="Duluth, MN")
+
+    current_user_id.set("owner-a")
+    try:
+        result = get_latest_weather_snapshot(db_session)
+        assert result.id == snapshot_a.id
+        assert result.location_label == "Phoenix, AZ"
+    finally:
+        current_user_id.set("1")
+
+
+@pytest.mark.unit
+def test_get_latest_weather_snapshot_none_without_garden_profile(db_session):
+    current_user_id.set("no-profile-user")
+    try:
+        assert get_latest_weather_snapshot(db_session) is None
+    finally:
+        current_user_id.set("1")
+
+
+@pytest.mark.unit
+def test_get_latest_triage_snapshot_scoped_to_current_users_garden(db_session):
+    profile_a = make_profile(db_session, user_id="owner-a")
+    profile_b = make_profile(db_session, user_id="owner-b")
+    triage_a = make_triage_snapshot(db_session, garden_profile_id=profile_a.id, user_focus_summary="owner-a session")
+    make_triage_snapshot(db_session, garden_profile_id=profile_b.id, user_focus_summary="owner-b session")
+
+    current_user_id.set("owner-b")
+    try:
+        result = get_latest_triage_snapshot(db_session)
+        assert result.user_focus_summary == "owner-b session"
+    finally:
+        current_user_id.set("1")
+
+    current_user_id.set("owner-a")
+    try:
+        result = get_latest_triage_snapshot(db_session)
+        assert result.id == triage_a.id
+    finally:
+        current_user_id.set("1")

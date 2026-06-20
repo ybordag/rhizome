@@ -264,12 +264,9 @@ main.py             — CLI entrypoint
 - ~~`IncidentReport` had no `user_id` column~~ — fixed, same pattern as `InteractionRecord`
   (migration `b2c3d4e5f6a7`). See audit below.
 - ~~`get_activity_for_subject` had no `user_id` filter~~ — fixed, scoped to `current_user_id`.
-- **`WeatherSnapshot`/`TriageSnapshot` have no `user_id` or `project_id` at all** — by design,
-  not a missed column. The weather monitor and daily triage assume a single garden/location per
-  install (`get_latest_weather_snapshot` has zero filters; `approve_weather_task_changes` can
-  span every active project across all users). Closing this means redesigning the weather/triage
-  subsystem for multi-garden/multi-user support, not adding a column. Revisit when multi-user
-  deployment is actually planned.
+- ~~`WeatherSnapshot`/`TriageSnapshot` have no `user_id` or `project_id` at all~~ — fixed: both
+  now carry `garden_profile_id` (migration `c3d4e5f6a7b8`), since location lives on
+  `GardenProfile` rather than directly on the user. See the multi-tenancy audit below.
 
 ### Post-#130 user_id audit (2026-06-20)
 
@@ -279,12 +276,38 @@ Triggered by the `InteractionRecord` and `user_id` type findings above. Audited 
    the schema; fixed).
 2. `IncidentReport` missing `user_id` (fixed, same shape as `InteractionRecord`).
 3. `get_activity_for_subject` missing scoping (fixed).
-4. `WeatherSnapshot`/`TriageSnapshot` single-tenant design (documented above, not fixed — out of
-   scope until multi-garden support is built).
+4. `WeatherSnapshot`/`TriageSnapshot` single-tenant design (fixed in the follow-up audit below).
 
 Everything else (`GardenProfile`, `Bed`, `Container`, `Plant`, `PlantBatch`, `Conversation`,
 `Thread`, `CalendarAnnotation`, `ProjectExpense`, `ShoppingItem`, `MonitorAlert`, `MonitorRun`)
 already had a `user_id` column with correctly scoped queries.
+
+### Multi-tenancy follow-up audit (2026-06-20)
+
+Different users have different garden locations, so weather/triage data must not be shared
+across them. Audited for any other functionality that assumes single-tenancy (shared/global
+state, not just missing `user_id` columns). Findings:
+
+- **`WeatherSnapshot`/`TriageSnapshot` were genuinely shared across all users** — confirmed
+  exploitable through 7 agent tools (`refresh_weather_snapshot`, `get_latest_weather_snapshot`,
+  `list_weather_impacted_tasks`, `draft_weather_task_changes`, `approve_weather_task_changes`,
+  `get_latest_triage_snapshot`, `list_triage_recommendations`) plus `GET /triage/latest`. Tasks
+  themselves were always correctly scoped per-user; the weather/triage *data* overlaid on them
+  was not — whichever user refreshed weather last won for everyone. Fixed: both tables now carry
+  `garden_profile_id` (migration `c3d4e5f6a7b8`, backfilled to the bootstrapped user's profile).
+  `get_latest_weather_snapshot`/`get_latest_triage_snapshot` resolve the current user's
+  `GardenProfile` and scope to it; `refresh_weather_snapshot`/`build_triage_snapshot` stamp it on
+  create; `approve_weather_task_changes` now joins through
+  `WeatherSnapshot.garden_profile_id → GardenProfile.user_id` instead of trusting `change_set_id`
+  alone (same shape as the `IncidentReport`/`TreatmentPlan` fix).
+- No other unscoped global state found: `agent/core/model.py`'s model-client cache and the
+  LangGraph checkpointer are stateless/thread-safe; `current_user_id` is reliably set at every
+  entry point (HTTP, SSE, cron, graph nodes); `agent/domain/search.py` scopes all entity types;
+  `DEFAULT_PLANT_RULES` and other module-level constants are read-only.
+- `scripts/monitor.py`'s cron only ever runs jobs for one `--user-id` per invocation — not a bug,
+  but means multi-user weather refresh requires an orchestrator that calls it once per user. Not
+  addressed here since no such orchestrator exists yet; revisit alongside actual multi-user cron
+  scheduling.
 
 ## Invariants — never violate
 - **Model access only through `agent/core/model.py`.** Never instantiate a model client directly or at import time anywhere else.

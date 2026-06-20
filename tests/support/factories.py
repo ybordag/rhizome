@@ -442,8 +442,18 @@ def link_plant_to_project(
     return _persist(session, link)
 
 
+def _default_garden_profile_id(session) -> str:
+    """Get-or-create the bootstrapped user's garden profile, for factories
+    that need a garden_profile_id but the test doesn't care which one."""
+    profile = session.query(GardenProfile).filter(GardenProfile.user_id == "1").first()
+    if profile is None:
+        profile = make_profile(session)
+    return profile.id
+
+
 def make_weather_snapshot(session, **overrides: Any) -> WeatherSnapshot:
     data = {
+        "garden_profile_id": _default_garden_profile_id(session),
         "timezone": "America/Los_Angeles",
         "location_label": "San Francisco, CA",
         "forecast_start_date": datetime(2026, 4, 12),
@@ -462,6 +472,7 @@ def make_weather_snapshot(session, **overrides: Any) -> WeatherSnapshot:
 
 def make_triage_snapshot(session, **overrides: Any) -> TriageSnapshot:
     data = {
+        "garden_profile_id": _default_garden_profile_id(session),
         "timezone": "America/Los_Angeles",
         "session_context": {"available_minutes": 30, "energy_level": "low"},
         "temporal_context": {"today": "2026-04-12"},
