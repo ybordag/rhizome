@@ -330,3 +330,41 @@ def test_alert_list_excludes_other_user(patched_sessionlocal, db_session):
     assert resp.status_code == 200
     assert "Their alert" not in str(resp.json())
     assert "My alert" in str(resp.json())
+
+
+# ---------------------------------------------------------------------------
+# Triage snapshot (GET /triage/latest) — different users have different
+# garden locations, so triage data must not be shared between them.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_triage_latest_scoped_to_current_user(patched_sessionlocal, db_session):
+    from db.models import TriageSnapshot
+
+    profile_1 = _profile(USER_1)
+    profile_2 = _profile(USER_2)
+    db_session.add_all([profile_1, profile_2])
+    db_session.commit()
+
+    snapshot_1 = TriageSnapshot(
+        id=_uid(), garden_profile_id=profile_1.id, timezone="America/Los_Angeles",
+        reasoning_summary="User 1 plan", user_focus_summary="user-1 session",
+    )
+    snapshot_2 = TriageSnapshot(
+        id=_uid(), garden_profile_id=profile_2.id, timezone="America/Los_Angeles",
+        reasoning_summary="User 2 plan", user_focus_summary="user-2 session",
+    )
+    db_session.add_all([snapshot_1, snapshot_2])
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/triage/latest?user_id={USER_1}")
+    assert resp.status_code == 200
+    assert "user-2 session" not in str(resp.json())
+    assert "user-1 session" in str(resp.json())
+
+
+@pytest.mark.integration
+def test_triage_latest_no_profile_returns_not_found_message(patched_sessionlocal, db_session):
+    resp = client.get(f"/internal/data/triage/latest?user_id={USER_1}")
+    assert resp.status_code == 200
+    assert "No triage snapshot found" in str(resp.json())

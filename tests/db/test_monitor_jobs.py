@@ -388,3 +388,43 @@ def test_weather_job_emits_job_failed_on_error(db_session, patched_sessionlocal,
 
     assert events[-1]["type"] == "job_failed"
     assert events[-1]["error"] == "boom"
+
+
+# ---------------------------------------------------------------------------
+# Cron-layer multi-user isolation (different users have different garden
+# locations, so weather/triage data must not collide between them)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_weather_job_isolates_snapshots_between_users(db_session, patched_sessionlocal, fake_open_meteo):
+    from db.models import WeatherSnapshot
+
+    profile_a = make_profile(db_session, user_id="owner-a", location_label="Phoenix, AZ")
+    profile_b = make_profile(db_session, user_id="owner-b", location_label="Duluth, MN")
+
+    weather_job(db_session, user_id="owner-a")
+    weather_job(db_session, user_id="owner-b")
+
+    snapshot_a = db_session.query(WeatherSnapshot).filter(WeatherSnapshot.garden_profile_id == profile_a.id).one()
+    snapshot_b = db_session.query(WeatherSnapshot).filter(WeatherSnapshot.garden_profile_id == profile_b.id).one()
+
+    assert snapshot_a.id != snapshot_b.id
+    assert snapshot_a.location_label == "Phoenix, AZ"
+    assert snapshot_b.location_label == "Duluth, MN"
+
+
+@pytest.mark.integration
+def test_triage_job_isolates_snapshots_between_users(db_session, patched_sessionlocal, monkeypatch):
+    from agent.domain import triage as triage_runtime
+    from db.models import TriageSnapshot
+    monkeypatch.setattr(triage_runtime, "triage_summary_model", None)
+
+    profile_a = make_profile(db_session, user_id="owner-a")
+    profile_b = make_profile(db_session, user_id="owner-b")
+
+    triage_job(db_session, user_id="owner-a")
+    triage_job(db_session, user_id="owner-b")
+
+    snapshot_a = db_session.query(TriageSnapshot).filter(TriageSnapshot.garden_profile_id == profile_a.id).one()
+    snapshot_b = db_session.query(TriageSnapshot).filter(TriageSnapshot.garden_profile_id == profile_b.id).one()
+    assert snapshot_a.id != snapshot_b.id
