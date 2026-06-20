@@ -14,7 +14,11 @@ from unittest.mock import patch
 
 from agent.api.app import app
 from db.models import GardeningProject, Thread
-from tests.support.factories import make_bed, make_plant, make_project
+from tests.support.factories import (
+    make_bed, make_container, make_incident_report, make_plant, make_project,
+    make_project_brief, make_project_proposal, make_project_revision,
+    make_task, make_task_generation_run,
+)
 
 client = TestClient(app)
 USER = "1"
@@ -35,6 +39,16 @@ def _make_thread(db_session, thread_id="thread-1", pinned=None):
     db_session.add(t)
     db_session.commit()
     return t
+
+
+def _make_task_via_chain(db_session, profile, user_id=USER, **overrides):
+    """Create a task through the full project→brief→proposal→revision→run chain."""
+    project = make_project(db_session, profile, user_id=user_id)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project=project, revision=revision)
+    return make_task(db_session, project=project, revision=revision, generation_run=run, **overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -324,3 +338,319 @@ def test_session_context_intake_empty_pinned_no_text(patched_sessionlocal, db_se
         result = session_context_intake(state, config)
 
     assert not result.get("pinned_context_text")
+
+
+# ---------------------------------------------------------------------------
+# Entity type coverage: container, task, incident in _verify_entity_owner
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_add_container_to_context(patched_sessionlocal, db_session, seed_garden_profile):
+    container = make_container(db_session, seed_garden_profile, name="Growbag A")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "container", "subject_id": container.id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pinned_context"][0]["subject_type"] == "container"
+
+
+@pytest.mark.integration
+def test_add_container_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    other_container = make_container(db_session, seed_garden_profile, name="Other Pot", user_id="other-user")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "container", "subject_id": other_container.id},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_add_task_to_context(patched_sessionlocal, db_session, seed_garden_profile):
+    task = _make_task_via_chain(db_session, seed_garden_profile, title="Prune roses")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "task", "subject_id": task.id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pinned_context"][0]["subject_type"] == "task"
+
+
+@pytest.mark.integration
+def test_add_task_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    # Task's project belongs to other-user, so the join on GardeningProject.user_id won't match USER
+    task = _make_task_via_chain(db_session, seed_garden_profile, user_id="other-user")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "task", "subject_id": task.id},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_add_incident_to_context(patched_sessionlocal, db_session, seed_garden_profile):
+    proj = make_project(db_session, seed_garden_profile)
+    incident = make_incident_report(db_session, project_id=proj.id, summary="Aphids on peppers")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "incident", "subject_id": incident.id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pinned_context"][0]["subject_type"] == "incident"
+
+
+@pytest.mark.integration
+def test_add_incident_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    other_proj = make_project(db_session, seed_garden_profile, user_id="other-user")
+    incident = make_incident_report(db_session, project_id=other_proj.id)
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "incident", "subject_id": incident.id},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_add_projectless_incident_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    # Incident with NULL project_id can't be scoped to any user
+    incident = make_incident_report(db_session, project_id=None)
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "incident", "subject_id": incident.id},
+    )
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Wrong-user thread on POST /context
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_add_context_to_other_users_thread_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    other_thread = Thread(
+        id="other-thread",
+        user_id="other-user",
+        pinned_context=[],
+        created_at=_now(),
+        last_active_at=_now(),
+    )
+    db_session.add(other_thread)
+    db_session.commit()
+    bed = make_bed(db_session, seed_garden_profile)
+    resp = client.post(
+        f"/internal/data/threads/other-thread/context?user_id={USER}",
+        json={"subject_type": "bed", "subject_id": bed.id},
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Append semantics: multiple sequential pins
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_add_two_items_sequentially_both_present(patched_sessionlocal, db_session, seed_garden_profile):
+    plant = make_plant(db_session, seed_garden_profile, name="Tomato")
+    bed = make_bed(db_session, seed_garden_profile, name="Main Bed")
+    _make_thread(db_session)
+
+    client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "plant", "subject_id": plant.id},
+    )
+    client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "bed", "subject_id": bed.id},
+    )
+
+    resp = client.get(f"/internal/data/threads/thread-1?user_id={USER}")
+    pinned = resp.json()["pinned_context"]
+    assert len(pinned) == 2
+    types = {p["subject_type"] for p in pinned}
+    assert types == {"plant", "bed"}
+
+
+# ---------------------------------------------------------------------------
+# Persistence: GET confirms DB change after POST /context
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_add_context_persisted_to_db(patched_sessionlocal, db_session, seed_garden_profile):
+    plant = make_plant(db_session, seed_garden_profile, name="Pepper")
+    _make_thread(db_session)
+
+    post_resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "plant", "subject_id": plant.id},
+    )
+    assert post_resp.status_code == 200
+
+    get_resp = client.get(f"/internal/data/threads/thread-1?user_id={USER}")
+    assert get_resp.json()["pinned_context"] == [{"subject_type": "plant", "subject_id": plant.id}]
+
+
+@pytest.mark.integration
+def test_remove_context_persisted_to_db(patched_sessionlocal, db_session, seed_garden_profile):
+    plant = make_plant(db_session, seed_garden_profile)
+    _make_thread(db_session, pinned=[{"subject_type": "plant", "subject_id": plant.id}])
+
+    client.delete(f"/internal/data/threads/thread-1/context/plant/{plant.id}?user_id={USER}")
+
+    get_resp = client.get(f"/internal/data/threads/thread-1?user_id={USER}")
+    assert get_resp.json()["pinned_context"] == []
+
+
+# ---------------------------------------------------------------------------
+# _pinned_context_text: all entity type branches in session_context_intake
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_session_context_intake_injects_bed_text(patched_sessionlocal, db_session, seed_garden_profile):
+    bed = make_bed(db_session, seed_garden_profile, name="Sunny Bed", location="back yard")
+    _make_thread(db_session, thread_id="thread-bed", pinned=[{"subject_type": "bed", "subject_id": bed.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-bed"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "bed" in text
+    assert "Sunny Bed" in text
+
+
+@pytest.mark.integration
+def test_session_context_intake_injects_container_text(patched_sessionlocal, db_session, seed_garden_profile):
+    container = make_container(db_session, seed_garden_profile, name="Big Growbag", container_type="growbag")
+    _make_thread(db_session, thread_id="thread-ct", pinned=[{"subject_type": "container", "subject_id": container.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-ct"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "container" in text
+    assert "Big Growbag" in text
+
+
+@pytest.mark.integration
+def test_session_context_intake_injects_task_text(patched_sessionlocal, db_session, seed_garden_profile):
+    task = _make_task_via_chain(db_session, seed_garden_profile, title="Stake tomatoes")
+    _make_thread(db_session, thread_id="thread-task", pinned=[{"subject_type": "task", "subject_id": task.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-task"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "task" in text
+    assert "Stake tomatoes" in text
+
+
+@pytest.mark.integration
+def test_session_context_intake_injects_project_text(patched_sessionlocal, db_session, seed_garden_profile):
+    proj = make_project(db_session, seed_garden_profile, name="Summer Harvest")
+    _make_thread(db_session, thread_id="thread-proj", pinned=[{"subject_type": "project", "subject_id": proj.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-proj"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "project" in text
+    assert "Summer Harvest" in text
+
+
+@pytest.mark.integration
+def test_session_context_intake_injects_incident_text(patched_sessionlocal, db_session, seed_garden_profile):
+    proj = make_project(db_session, seed_garden_profile)
+    incident = make_incident_report(db_session, project_id=proj.id, incident_type="fungal_disease", summary="Powdery mildew on squash")
+    _make_thread(db_session, thread_id="thread-inc", pinned=[{"subject_type": "incident", "subject_id": incident.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-inc"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "incident" in text
+    assert "fungal_disease" in text
+
+
+# ---------------------------------------------------------------------------
+# Stale pinned entity: deleted entity silently skipped
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_stale_pinned_entity_silently_skipped(patched_sessionlocal, db_session, seed_garden_profile):
+    plant = make_plant(db_session, seed_garden_profile, name="Doomed Plant")
+    plant_id = plant.id
+    _make_thread(db_session, thread_id="thread-stale", pinned=[{"subject_type": "plant", "subject_id": plant_id}])
+
+    # Delete the plant after pinning it
+    db_session.delete(plant)
+    db_session.commit()
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-stale"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    # No crash; stale entry produces no text
+    assert not result.get("pinned_context_text")
+
+
+# ---------------------------------------------------------------------------
+# initial_context with invalid subject_type
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_create_thread_initial_context_invalid_type_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.post(
+        f"/internal/data/threads?user_id={USER}",
+        json={
+            "thread_id": "thread-badtype",
+            "initial_context": [{"subject_type": "weather", "subject_id": "some-id"}],
+        },
+    )
+    assert resp.status_code == 400
