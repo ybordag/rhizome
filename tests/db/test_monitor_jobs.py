@@ -252,6 +252,32 @@ def test_series_job_summary_reports_task_count(db_session, patched_sessionlocal)
     assert "recurring task" in summary
 
 
+@pytest.mark.integration
+def test_series_job_writes_alert_when_tasks_materialized(db_session, patched_sessionlocal):
+    project, revision, run = _setup_project(db_session)
+    now = _now()
+
+    make_task_series(db_session, project, revision, run, next_generation_date=now)
+
+    series_job(db_session, user_id=1)
+
+    alerts = db_session.query(MonitorAlert).filter(MonitorAlert.alert_type == "series").all()
+    assert len(alerts) == 1
+    assert alerts[0].severity == "low"
+    assert alerts[0].user_id == "1"
+    assert "materialized" in alerts[0].title.lower()
+    assert alerts[0].source_type == "monitor_run"
+
+
+@pytest.mark.integration
+def test_series_job_writes_no_alert_when_nothing_materialized(db_session, patched_sessionlocal):
+    # No task series in DB → nothing materialized → no alert
+    series_job(db_session, user_id=1)
+
+    alerts = db_session.query(MonitorAlert).filter(MonitorAlert.alert_type == "series").all()
+    assert len(alerts) == 0
+
+
 # ---------------------------------------------------------------------------
 # series_job — event_sink instrumentation (#130)
 # ---------------------------------------------------------------------------

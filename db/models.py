@@ -1176,6 +1176,7 @@ class MonitorAlert(Base):
     expires_at = Column(DateTime, nullable=False)
     user_id = Column(String, nullable=False)
     # 'weather_critical' | 'weather_advisory' | 'working_window' | 'triage' | 'pest'
+    # | 'series' | 'treatment_plan'
     alert_type = Column(String, nullable=False)
     # 'critical' | 'high' | 'medium' | 'low'
     severity = Column(String, nullable=False)
@@ -1184,7 +1185,7 @@ class MonitorAlert(Base):
     # 'pending' | 'dismissed'
     status = Column(String, nullable=False, default="pending")
     dismissed_at = Column(DateTime, nullable=True)
-    # 'weather_snapshot' | 'triage_snapshot' | 'monitor_run'
+    # 'weather_snapshot' | 'triage_snapshot' | 'monitor_run' | 'treatment_plan'
     source_type = Column(String, nullable=True)
     source_id = Column(String, nullable=True)
     alert_metadata = Column("metadata", JSON, nullable=True)

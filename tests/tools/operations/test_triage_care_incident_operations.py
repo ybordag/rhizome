@@ -18,7 +18,7 @@ from agent.tools.operations.weather import (
     refresh_weather_snapshot,
 )
 from db.database import current_user_id
-from db.models import ActivityEvent, GardenProfile, IncidentReport, Plant, Task, TreatmentPlan, WeatherTaskChangeSet
+from db.models import ActivityEvent, GardenProfile, IncidentReport, MonitorAlert, Plant, Task, TreatmentPlan, WeatherTaskChangeSet
 from tests.support.factories import (
     link_plant_to_project,
     make_container,
@@ -370,6 +370,63 @@ def test_draft_treatment_plan_works_without_active_queue(db_session, patched_ses
     incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
     result = draft_treatment_plan.invoke({"incident_id": incident.id})
     assert "Drafted treatment plan" in result
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_writes_recoverable_alert(db_session, patched_sessionlocal):
+    """A disconnected user must still be able to discover a completed plan via MonitorAlert."""
+    from db.database import current_user_id
+
+    current_user_id.set("1")
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    report_incident.invoke({
+        "incident_type": "pest",
+        "summary": "Aphids on tomato leaves",
+        "project_id": project.id,
+        "severity": "medium",
+        "subjects": [],
+    })
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+    draft_treatment_plan.invoke({"incident_id": incident.id})
+
+    plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.desc()).first()
+    alerts = db_session.query(MonitorAlert).filter(MonitorAlert.alert_type == "treatment_plan").all()
+    assert len(alerts) == 1
+    assert alerts[0].user_id == "1"
+    assert alerts[0].severity == "medium"
+    assert alerts[0].source_type == "treatment_plan"
+    assert alerts[0].source_id == plan.id
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_pushes_alert_event_when_queue_active(db_session, patched_sessionlocal):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    current_user_id.set("1")
+    queue = notifications.get_or_create_user_queue("1")
+    try:
+        project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+        report_incident.invoke({
+            "incident_type": "pest",
+            "summary": "Aphids on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        })
+        incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+        draft_treatment_plan.invoke({"incident_id": incident.id})
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        alert_events = [e for e in events if e["type"] == "alert"]
+        assert len(alert_events) == 1
+        assert alert_events[0]["payload"]["alert_type"] == "treatment_plan"
+    finally:
+        notifications.remove_user_queue("1")
 
 
 @pytest.mark.integration

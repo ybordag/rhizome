@@ -257,6 +257,23 @@ def series_job(session, user_id: str, event_sink=None) -> str:
         summary = f"Materialized {len(created)} recurring task(s) from active series."
         print(f"  [series] {summary}")
         _finish_run(session, run, summary)
+        if created:
+            # series_job has no other persisted trace of its own completion (unlike
+            # weather_job/triage_job, which write a MonitorAlert for anything that
+            # matters). Without this, a user disconnected when the job finishes has
+            # no way to learn recurring tasks were materialized while they were away.
+            _write_alert(
+                session,
+                user_id=user_id,
+                alert_type="series",
+                severity="low",
+                title=f"{len(created)} recurring task(s) materialized",
+                body=summary,
+                source_type="monitor_run",
+                source_id=run.id,
+                ttl_hours=24,
+            )
+            session.commit()
         if event_sink:
             event_sink({"type": "job_step", "job_id": job_id, "step": "Materialising recurring tasks", "status": "done"})
             event_sink({"type": "job_complete", "job_id": job_id, "title": "Recurring task materialization", "summary": summary})

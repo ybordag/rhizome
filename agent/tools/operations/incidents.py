@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from langchain.tools import tool
@@ -14,7 +14,7 @@ from agent.domain.incidents import (
 )
 from agent.domain.notifications import push_event
 from db.database import SessionLocal, current_user_id
-from db.models import IncidentReport, IncidentSubject, TreatmentPlan
+from db.models import IncidentReport, IncidentSubject, MonitorAlert, TreatmentPlan
 
 
 def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -146,6 +146,32 @@ def draft_treatment_plan(incident_id: str) -> str:
             f"- Status: {plan.status}\n"
             f"- Approach: {plan.approach_summary}"
         )
+        # Persist this so a user disconnected from the notification stream when
+        # the job completes can still discover it via GET /notifications —
+        # job_complete alone only reaches an active SSE connection (#130 audit).
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        alert = MonitorAlert(
+            expires_at=now + timedelta(hours=48),
+            user_id=user_id,
+            alert_type="treatment_plan",
+            severity="medium",
+            title="Treatment plan drafted",
+            body=plan.approach_summary,
+            source_type="treatment_plan",
+            source_id=plan.id,
+        )
+        session.add(alert)
+        session.commit()
+        push_event(user_id, {
+            "type": "alert",
+            "payload": {
+                "id": alert.id,
+                "alert_type": alert.alert_type,
+                "severity": alert.severity,
+                "title": alert.title,
+                "body": alert.body,
+            },
+        })
         push_event(user_id, {
             "type": "job_complete", "job_id": job_id,
             "title": "Drafting treatment plan", "summary": f"Drafted plan {plan.id}",
