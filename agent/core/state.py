@@ -13,3 +13,4 @@ class GardenState(MessagesState):
     skip_tool_node: Optional[bool]
     user_id: Optional[int]
     monitor_alerts: Optional[list[dict]]
+    pinned_context_text: Optional[str]

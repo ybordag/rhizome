@@ -1201,6 +1201,7 @@ class Thread(Base):
     last_message_preview = Column(String, nullable=True)
     last_active_at = Column(DateTime, nullable=True)
     message_count = Column(Integer, nullable=False, default=0)
+    pinned_context = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 

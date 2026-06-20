@@ -106,6 +106,7 @@ class CreateThreadRequest(BaseModel):
     thread_id: str
     title: Optional[str] = None
     project_id: Optional[str] = None
+    initial_context: Optional[list[dict]] = None
 
 
 class CreateTaskRequest(BaseModel):
