@@ -1584,6 +1584,37 @@ def search_garden(user_id: str, query: str, subject_type: str = None):
     return {"result": _search.invoke({"query": query, "subject_type": subject_type})}
 
 
+@data_router.get("/search")
+def unified_search(
+    user_id: str,
+    q: str,
+    types: str = None,
+    limit: int = 5,
+):
+    from agent.api.views import SearchResultItemView, SearchResultsView
+    from agent.domain.search import search_entities
+
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="q must not be empty")
+    if limit < 1 or limit > 20:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 20")
+
+    type_list = [t.strip() for t in types.split(",")] if types else None
+    _set_user(user_id)
+    session = SessionLocal()
+    try:
+        data = search_entities(session, user_id=user_id, query=q.strip(), types=type_list, limit_per_type=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        session.close()
+
+    return SearchResultsView(
+        results=[SearchResultItemView(**r) for r in data["results"]],
+        by_type=data["by_type"],
+    )
+
+
 @data_router.get("/garden/locations/{location}")
 def list_by_location(location: str, user_id: str):
     _set_user(user_id)
@@ -1639,18 +1670,19 @@ def approve_weather_changes(changeset_id: str, user_id: str):
 # ---------------------------------------------------------------------------
 
 def _get_incident_for_user(session, incident_id: str, user_id: str):
-    """Return the incident if it belongs to the user, else None."""
+    """Return the incident if it belongs to the user, else None.
+
+    Project-less incidents (project_id IS NULL) cannot be scoped to an owner
+    and are therefore inaccessible through ownership-gated write endpoints.
+    """
     incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
-    if not incident:
+    if not incident or not incident.project_id:
         return None
-    if incident.project_id:
-        project = session.query(GardeningProject).filter(
-            GardeningProject.id == incident.project_id,
-            GardeningProject.user_id == user_id,
-        ).first()
-        if not project:
-            return None
-    return incident
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == incident.project_id,
+        GardeningProject.user_id == user_id,
+    ).first()
+    return incident if project else None
 
 
 @data_router.get("/incidents")
@@ -1675,10 +1707,7 @@ def list_incidents(
         user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
             GardeningProject.user_id == user_id).all()}
         query = session.query(IncidentReport).filter(
-            or_(
-                IncidentReport.project_id.in_(user_pids),
-                IncidentReport.project_id.is_(None),
-            )
+            IncidentReport.project_id.in_(user_pids)
         )
         if project_id:
             query = query.filter(IncidentReport.project_id == project_id)

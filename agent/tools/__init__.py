@@ -17,6 +17,7 @@ from agent.tools.garden.plants import (
     batch_add_plant_type, batch_update_plants, batch_remove_plants, list_batches,
     delete_plant, delete_batch)
 from agent.tools.garden.search import search_garden, list_by_location
+from agent.tools.operations.search import search_domain
 from agent.tools.operations.activity import (
     get_project_activity,
     list_project_activity,
@@ -128,6 +129,7 @@ tools = [
     delete_batch,
     search_garden,
     list_by_location,
+    search_domain,
     get_project_activity,
     list_project_activity,
     get_plant_activity,
