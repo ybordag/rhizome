@@ -257,6 +257,34 @@ main.py             — CLI entrypoint
 - ~~`user_id` type inconsistency (str vs int)~~ — fixed: `agent/domain/notifications.py`
   normalizes `user_id` to `str` at every entry point, and the misleading `int` type hints in
   `weather_job`/`triage_job`/`series_job`/`apply_weather_impacts`/etc. were corrected to `str`.
+- ~~`GardeningProject` resolved by id with no ownership check in domain-layer helpers~~ — fixed:
+  `_resolve_project` (`tools/projects/planning.py`), `_select_project` (`domain/planner.py`,
+  `domain/tracker.py`) now filter by `user_id == current_user_id.get()`. These gated most
+  project-planning agent tools, so the gap had wide blast radius — see audit below.
+- ~~`IncidentReport` had no `user_id` column~~ — fixed, same pattern as `InteractionRecord`
+  (migration `b2c3d4e5f6a7`). See audit below.
+- ~~`get_activity_for_subject` had no `user_id` filter~~ — fixed, scoped to `current_user_id`.
+- **`WeatherSnapshot`/`TriageSnapshot` have no `user_id` or `project_id` at all** — by design,
+  not a missed column. The weather monitor and daily triage assume a single garden/location per
+  install (`get_latest_weather_snapshot` has zero filters; `approve_weather_task_changes` can
+  span every active project across all users). Closing this means redesigning the weather/triage
+  subsystem for multi-garden/multi-user support, not adding a column. Revisit when multi-user
+  deployment is actually planned.
+
+### Post-#130 user_id audit (2026-06-20)
+
+Triggered by the `InteractionRecord` and `user_id` type findings above. Audited every model in
+`db/models.py` for missing/inconsistent user scoping. Findings, in order fixed:
+1. `GardeningProject` lookups without ownership checks (highest blast radius — root of most of
+   the schema; fixed).
+2. `IncidentReport` missing `user_id` (fixed, same shape as `InteractionRecord`).
+3. `get_activity_for_subject` missing scoping (fixed).
+4. `WeatherSnapshot`/`TriageSnapshot` single-tenant design (documented above, not fixed — out of
+   scope until multi-garden support is built).
+
+Everything else (`GardenProfile`, `Bed`, `Container`, `Plant`, `PlantBatch`, `Conversation`,
+`Thread`, `CalendarAnnotation`, `ProjectExpense`, `ShoppingItem`, `MonitorAlert`, `MonitorRun`)
+already had a `user_id` column with correctly scoped queries.
 
 ## Invariants — never violate
 - **Model access only through `agent/core/model.py`.** Never instantiate a model client directly or at import time anywhere else.
