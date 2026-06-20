@@ -581,7 +581,10 @@ def interaction_node(state: GardenState):
         if envelope is None:
             return {}
 
-        record = session.query(InteractionRecord).filter(InteractionRecord.id == envelope["id"]).first()
+        record = session.query(InteractionRecord).filter(
+            InteractionRecord.id == envelope["id"],
+            InteractionRecord.user_id == current_user_id.get(),
+        ).first()
         if not record:
             record = record_interaction_summary(
                 session,

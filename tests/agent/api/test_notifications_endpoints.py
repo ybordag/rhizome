@@ -206,6 +206,7 @@ def test_get_notifications_includes_pending_interaction(patched_sessionlocal, db
         title="Confirm deletion",
         summary="Delete bed X?",
         source_type="tool_call",
+        user_id=USER,
     )
     db_session.add(record)
     db_session.commit()

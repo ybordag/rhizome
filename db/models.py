@@ -1054,6 +1054,7 @@ class InteractionRecord(Base):
         Index("ix_interaction_record_status", "status"),
         Index("ix_interaction_record_project_id", "project_id"),
         Index("ix_interaction_record_type", "interaction_type"),
+        Index("ix_interaction_record_user_id", "user_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1063,6 +1064,7 @@ class InteractionRecord(Base):
     status = Column(String, nullable=False, default="pending")
     title = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
+    user_id = Column(String, nullable=True)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     source_type = Column(String, nullable=False)
     source_id = Column(String, nullable=True)

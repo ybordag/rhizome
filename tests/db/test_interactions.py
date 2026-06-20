@@ -117,6 +117,63 @@ def test_record_interaction_summary_does_not_push_for_non_pending_status(db_sess
         notifications.remove_user_queue("user-2")
 
 
+# ---------------------------------------------------------------------------
+# user_id scoping — InteractionRecord multi-tenancy fix
+# ---------------------------------------------------------------------------
+
+def test_record_interaction_summary_stamps_current_user_id(db_session):
+    from db.database import current_user_id
+
+    current_user_id.set("user-a")
+    interaction = build_confirmation_interaction(
+        [{"name": "delete_project", "args": {"project_id": "proj-1"}}]
+    )
+    record = record_interaction_summary(
+        db_session, interaction, source_type="confirmation", source_id="proj-1",
+    )
+    assert record.user_id == "user-a"
+
+
+def test_get_pending_interaction_record_scoped_to_current_user(db_session):
+    from agent.domain.interactions import get_pending_interaction_record
+    from db.database import current_user_id
+
+    current_user_id.set("user-a")
+    record_interaction_summary(
+        db_session,
+        build_confirmation_interaction([{"name": "delete_project", "args": {"project_id": "proj-1"}}]),
+        source_type="confirmation",
+        source_id="proj-1",
+    )
+    db_session.commit()
+
+    current_user_id.set("user-b")
+    assert get_pending_interaction_record(db_session) is None
+
+    current_user_id.set("user-a")
+    assert get_pending_interaction_record(db_session) is not None
+
+
+def test_list_recent_interaction_records_scoped_to_current_user(db_session):
+    from agent.domain.interactions import list_recent_interaction_records
+    from db.database import current_user_id
+
+    current_user_id.set("user-a")
+    record_interaction_summary(
+        db_session,
+        build_confirmation_interaction([{"name": "delete_project", "args": {"project_id": "proj-1"}}]),
+        source_type="confirmation",
+        source_id="proj-1",
+    )
+    db_session.commit()
+
+    current_user_id.set("user-b")
+    assert list_recent_interaction_records(db_session) == []
+
+    current_user_id.set("user-a")
+    assert len(list_recent_interaction_records(db_session)) == 1
+
+
 def test_build_proposal_review_interaction_includes_estimates(db_session):
     profile = make_profile(db_session)
     project = make_project(db_session, profile)

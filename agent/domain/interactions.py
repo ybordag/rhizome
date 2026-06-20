@@ -131,6 +131,7 @@ def record_interaction_summary(
         status=envelope["status"],
         title=envelope["title"],
         summary=envelope["summary"],
+        user_id=current_user_id.get(),
         project_id=project_id,
         source_type=source_type,
         source_id=source_id,
@@ -176,6 +177,7 @@ def find_pending_interaction_record(
     interaction_type: Optional[str] = None,
 ) -> Optional[InteractionRecord]:
     query = session.query(InteractionRecord).filter(
+        InteractionRecord.user_id == current_user_id.get(),
         InteractionRecord.source_type == source_type,
         InteractionRecord.status == INTERACTION_PENDING,
     )
@@ -481,14 +483,17 @@ def build_triage_view_interaction(session, snapshot: TriageSnapshot) -> dict[str
 def get_pending_interaction_record(session) -> Optional[InteractionRecord]:
     return (
         session.query(InteractionRecord)
-        .filter(InteractionRecord.status == INTERACTION_PENDING)
+        .filter(
+            InteractionRecord.user_id == current_user_id.get(),
+            InteractionRecord.status == INTERACTION_PENDING,
+        )
         .order_by(InteractionRecord.created_at.desc())
         .first()
     )
 
 
 def list_recent_interaction_records(session, *, limit: int = 20, interaction_type: Optional[str] = None, project_id: Optional[str] = None):
-    query = session.query(InteractionRecord)
+    query = session.query(InteractionRecord).filter(InteractionRecord.user_id == current_user_id.get())
     if interaction_type:
         query = query.filter(InteractionRecord.interaction_type == interaction_type)
     if project_id:

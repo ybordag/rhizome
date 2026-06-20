@@ -356,12 +356,9 @@ def get_notifications(user_id: str, since: str = None):
             alert_query = alert_query.filter(MonitorAlert.created_at > since_dt)
         alerts = alert_query.order_by(MonitorAlert.severity, MonitorAlert.created_at.desc()).all()
 
-        # NOTE: InteractionRecord has no user_id column — pending interactions
-        # are not scoped per-user here, matching the pre-existing behavior of
-        # GET /interactions/pending. This is a known multi-tenancy gap, not
-        # introduced by this endpoint; see CLAUDE.md known issues.
         interaction_query = session.query(InteractionRecord).filter(
-            InteractionRecord.status == "pending"
+            InteractionRecord.user_id == uid,
+            InteractionRecord.status == "pending",
         )
         if since_dt:
             interaction_query = interaction_query.filter(InteractionRecord.created_at > since_dt)
