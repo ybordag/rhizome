@@ -249,28 +249,26 @@ main.py             — CLI entrypoint
 - `ActivityEvent.revision_id` FK is defined in the model; enforced in Postgres (staging/prod), not SQLite (dev/test)
 - JSON columns use `Column(JSON, ...)` — JSONB would give better indexing; deferred to Intelligence track
 - `public` schema is empty; all tables are in `rhizome` schema ✓
-- **`InteractionRecord` has no `user_id` column.** `get_pending_interaction_record` and
-  `list_recent_interaction_records` (and the new `GET /notifications` sync endpoint) query
-  globally across all users — in a multi-user deployment, one user's pending interaction is
-  visible to any other user calling these. `project_id` is nullable and most interactions
-  (confirmations, triage reviews) aren't project-scoped, so excluding null-project rows (the
-  fix used for project-less incidents in zinnia) would hide almost everything — this needs an
-  actual `user_id` column + migration + backfill, not a query-level fix. Discovered while
-  building the notification sync endpoint (#130); not introduced by it.
-- **`user_id` type inconsistency (str vs int) risks silent notification drops.** `weather_job`,
-  `triage_job`, `series_job`, and `apply_weather_impacts` type-hint `user_id: int`, but
-  `agent/domain/notifications.py`'s per-user queue dict keys on whatever's actually passed.
-  The SSE stream endpoint always receives `user_id` as `str` (FastAPI query param). If a job
-  is ever invoked with a real Python `int` for the same logical user, `push_event` looks up the
-  wrong dict key and silently drops the event — no error, just a missing notification. Currently
-  low-risk because the only live callers (CLI argparse with `type=str`, agent tools reading
-  `current_user_id` which is always a string) pass strings consistently, but the `int` type hints
-  are misleading and the next person to call these with a literal int will hit this silently.
+- ~~`InteractionRecord` has no `user_id` column~~ — fixed: `user_id` column added
+  (migration `a1b2c3d4e5f6`), `record_interaction_summary` stamps it from `current_user_id`,
+  and every read path (`get_pending_interaction_record`, `list_recent_interaction_records`,
+  `find_pending_interaction_record`, `GET /notifications`, and the by-id lookups in
+  `nodes.py`/`tools/operations/interactions.py`) is now scoped to the current user.
+- ~~`user_id` type inconsistency (str vs int)~~ — fixed: `agent/domain/notifications.py`
+  normalizes `user_id` to `str` at every entry point, and the misleading `int` type hints in
+  `weather_job`/`triage_job`/`series_job`/`apply_weather_impacts`/etc. were corrected to `str`.
 
 ## Invariants — never violate
 - **Model access only through `agent/core/model.py`.** Never instantiate a model client directly or at import time anywhere else.
 - **No hardcoded user identity.** Never write `user_id == 1` or any literal user identity. User identity flows from `graph.config["configurable"]["user_id"]`.
 - **Every DB query on user-owned data must be scoped to the owning user.** Filtering by entity `id` alone is a bug.
+- **Every new model/table needs a `user_id` column at creation time.** Don't rely on a nullable
+  FK chain (e.g. `project_id`) for scoping — if the FK is ever null (common for objects that
+  aren't always project-attached, like confirmations or triage interactions), there's no way to
+  scope the row to a user without a schema change later. Add `user_id` directly on the model
+  when it's created, even if it duplicates what's derivable via a join. `InteractionRecord`
+  shipped without one and silently leaked every user's pending interactions to every other user
+  until it was retrofitted (migration `a1b2c3d4e5f6`) — don't repeat that mistake.
 - **Untrusted content writes go through `interaction_node`.** Any tool writing data derived from external sources must create an interaction envelope and wait for user confirmation before persisting.
 - **Never call `datetime.utcnow()`.** Use `datetime.now(timezone.utc).replace(tzinfo=None)` for DB columns (naive UTC). For non-DB use, plain `datetime.now(timezone.utc)` is fine.
 - **Status transition guards.** `complete_task`, `skip_task`, `defer_task` reject `done`/`superseded` targets. `start_task` rejects `done`/`skipped`/`superseded`. Do not bypass these guards.
