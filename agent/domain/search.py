@@ -88,11 +88,11 @@ def _search_plants(session, user_id: str, query: str, is_id: bool, limit: int) -
     container_ids = {p.container_id for p in rows if p.container_id}
     bed_names = {
         b.id: b.name
-        for b in session.query(Bed).filter(Bed.id.in_(bed_ids)).all()
+        for b in session.query(Bed).filter(Bed.id.in_(bed_ids), Bed.user_id == user_id).all()
     } if bed_ids else {}
     container_names = {
         c.id: c.name
-        for c in session.query(Container).filter(Container.id.in_(container_ids)).all()
+        for c in session.query(Container).filter(Container.id.in_(container_ids), Container.user_id == user_id).all()
     } if container_ids else {}
 
     results = []
@@ -136,7 +136,7 @@ def _search_beds(session, user_id: str, query: str, is_id: bool, limit: int) -> 
     bed_ids = [b.id for b in rows]
     plant_counts = dict(
         session.query(Plant.bed_id, func.count(Plant.id))
-        .filter(Plant.bed_id.in_(bed_ids), Plant.status != "removed")
+        .filter(Plant.bed_id.in_(bed_ids), Plant.user_id == user_id, Plant.status != "removed")
         .group_by(Plant.bed_id)
         .all()
     )
@@ -174,7 +174,7 @@ def _search_containers(session, user_id: str, query: str, is_id: bool, limit: in
     container_ids = [c.id for c in rows]
     plant_counts = dict(
         session.query(Plant.container_id, func.count(Plant.id))
-        .filter(Plant.container_id.in_(container_ids), Plant.status != "removed")
+        .filter(Plant.container_id.in_(container_ids), Plant.user_id == user_id, Plant.status != "removed")
         .group_by(Plant.container_id)
         .all()
     )
@@ -294,10 +294,13 @@ def _search_incidents(session, user_id: str, query: str, is_id: bool, limit: int
     }
     search = f"%{query}%"
 
-    base_filter = or_(
-        IncidentReport.project_id.in_(user_pids),
-        IncidentReport.project_id.is_(None),
-    )
+    # Project-less incidents (project_id IS NULL) have no user_id and cannot
+    # be scoped to an owner, so they are excluded from search. list_incidents
+    # includes them for historical reasons; a discovery endpoint should not.
+    if not user_pids:
+        return []
+
+    base_filter = IncidentReport.project_id.in_(user_pids)
 
     if is_id:
         rows = session.query(IncidentReport).filter(
