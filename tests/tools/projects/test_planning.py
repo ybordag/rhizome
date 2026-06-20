@@ -16,6 +16,7 @@ from agent.tools.projects.planning import (
     save_project_proposal,
     update_project_brief,
 )
+from db.database import current_user_id
 from db.models import ActivityEvent, ProjectBrief, ProjectExecutionSpec, ProjectProposal, ProjectRevision
 from tests.support.factories import (
     link_container_to_project,
@@ -456,3 +457,18 @@ def test_preview_project_schedule_from_proposal_does_not_create_revision_or_exec
     assert "Project schedule preview:" in preview
     assert db_session.query(ProjectRevision).count() == 0
     assert db_session.query(ProjectExecutionSpec).count() == 0
+
+
+def test_resolve_project_rejects_another_users_project(db_session, patched_sessionlocal):
+    """_resolve_project gates every tool in this module on ownership — a project_id
+    belonging to a different user must be treated as not found, not silently served."""
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile, user_id="owner-a")
+    db_session.commit()
+
+    current_user_id.set("owner-b")
+    try:
+        result = get_or_create_project_brief.invoke({"project_id": project.id})
+        assert "No project found" in result
+    finally:
+        current_user_id.set("1")

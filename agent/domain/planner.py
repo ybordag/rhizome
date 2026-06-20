@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from db.database import current_user_id
 from db.models import (
     ActivityEvent,
     Bed,
@@ -152,7 +153,10 @@ def _days_to_completion(plan_input: dict[str, Any]) -> int:
 
 
 def _select_project(session, project_id: str) -> GardeningProject:
-    project = session.query(GardeningProject).filter(GardeningProject.id == project_id).first()
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == current_user_id.get(),
+    ).first()
     if not project:
         raise ValueError(f"No project found with id {project_id}.")
     return project

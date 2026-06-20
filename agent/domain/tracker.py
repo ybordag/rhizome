@@ -140,7 +140,10 @@ def _run_subject(run_id: str, role: str = "primary") -> dict[str, str]:
 
 
 def _select_project(session, project_id: str) -> GardeningProject:
-    project = session.query(GardeningProject).filter(GardeningProject.id == project_id).first()
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == current_user_id.get(),
+    ).first()
     if not project:
         raise ValueError(f"No project found with id {project_id}.")
     return project

@@ -243,3 +243,18 @@ def test_task_activity_events_are_queryable_and_generation_rolls_back_on_failure
     assert "task_created" in project_history
     assert "Failed to generate project tasks" in failed
     assert db_session.query(ActivityEvent).filter(ActivityEvent.event_type == "task_generation_run_created").count() == 1
+
+
+def test_generate_project_tasks_rejects_another_users_project(db_session, patched_sessionlocal):
+    from db.database import current_user_id
+
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile, user_id="owner-a")
+    db_session.commit()
+
+    current_user_id.set("owner-b")
+    try:
+        result = generate_project_tasks.invoke({"project_id": project.id})
+        assert "No project found" in result
+    finally:
+        current_user_id.set("1")

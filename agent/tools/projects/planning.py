@@ -35,7 +35,7 @@ from agent.domain.planner import (
     list_candidate_plant_material_data,
     parse_optional_date,
 )
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import GardenProfile, GardeningProject, ProjectBrief, ProjectExecutionSpec, ProjectProposal, ProjectRevision
 
 
@@ -68,7 +68,10 @@ def _validate_non_negative_budget(value: Optional[float]) -> Optional[str]:
 
 
 def _resolve_project(session, project_id: str) -> GardeningProject:
-    project = session.query(GardeningProject).filter(GardeningProject.id == project_id).first()
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == current_user_id.get(),
+    ).first()
     if not project:
         raise ValueError(f"No project found with id {project_id}.")
     return project
