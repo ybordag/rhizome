@@ -281,3 +281,20 @@ class ShoppingItemView(BaseModel):
     expense_id: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Unified search
+# ---------------------------------------------------------------------------
+
+class SearchResultItemView(BaseModel):
+    subject_type: str
+    subject_id: str
+    label: str
+    secondary_label: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class SearchResultsView(BaseModel):
+    results: list[SearchResultItemView]
+    by_type: dict[str, int]

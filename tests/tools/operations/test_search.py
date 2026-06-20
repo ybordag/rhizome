@@ -1,9 +1,14 @@
-"""Tests for agent/domain/search.py — search_entities()."""
+"""Tests for agent/domain/search.py — search_entities() and GET /search."""
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
+from agent.api.app import app
 from agent.domain.search import search_entities
+
+client = TestClient(app)
+USER = "1"
 from tests.support.factories import (
     make_bed,
     make_container,
@@ -464,3 +469,66 @@ def test_no_results_returns_empty(db_session):
     result = search_entities(db_session, "1", "zzznomatch")
     assert result["results"] == []
     assert all(v == 0 for v in result["by_type"].values())
+
+
+# ---------------------------------------------------------------------------
+# GET /internal/data/search — API endpoint (Part 4/5)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_api_search_returns_structured_results(patched_sessionlocal, db_session):
+    profile = make_profile(db_session)
+    make_plant(db_session, profile, name="Sungold Tomato")
+
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=sungold")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "results" in data
+    assert "by_type" in data
+    assert any(r["subject_type"] == "plant" for r in data["results"])
+    hit = next(r for r in data["results"] if r["subject_type"] == "plant")
+    assert "subject_id" in hit
+    assert "label" in hit
+
+
+@pytest.mark.integration
+def test_api_search_types_filter(patched_sessionlocal, db_session):
+    profile = make_profile(db_session)
+    make_plant(db_session, profile, name="Filterme Plant")
+    make_bed(db_session, profile, name="Filterme Bed")
+
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=filterme&types=plant")
+    assert resp.status_code == 200
+    data = resp.json()
+    types = {r["subject_type"] for r in data["results"]}
+    assert types == {"plant"}
+
+
+@pytest.mark.integration
+def test_api_search_empty_q_returns_400(patched_sessionlocal, db_session):
+    make_profile(db_session)
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=")
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_api_search_limit_out_of_range_returns_400(patched_sessionlocal, db_session):
+    make_profile(db_session)
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=tomato&limit=50")
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_api_search_unknown_type_returns_400(patched_sessionlocal, db_session):
+    make_profile(db_session)
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=tomato&types=widget")
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_api_search_by_type_counts_present_for_all_types(patched_sessionlocal, db_session):
+    make_profile(db_session)
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=anything")
+    assert resp.status_code == 200
+    by_type = resp.json()["by_type"]
+    assert set(by_type.keys()) == {"plant", "bed", "container", "task", "project", "incident"}
