@@ -55,6 +55,68 @@ def test_record_and_resolve_interaction_summary(db_session):
     assert stored.record_metadata["actions"][0]["label"] == "Confirm"
 
 
+# ---------------------------------------------------------------------------
+# record_interaction_summary — notification push (#130)
+# ---------------------------------------------------------------------------
+
+def test_record_interaction_summary_pushes_interaction_pending(db_session):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    current_user_id.set("user-1")
+    queue = notifications.get_or_create_user_queue("user-1")
+    try:
+        interaction = build_confirmation_interaction(
+            [{"name": "delete_project", "args": {"project_id": "proj-1"}}]
+        )
+        record = record_interaction_summary(
+            db_session, interaction, source_type="confirmation", source_id="proj-1",
+        )
+
+        event = queue.get_nowait()
+        assert event["type"] == "interaction_pending"
+        assert event["payload"]["id"] == record.id
+        assert event["payload"]["interaction_type"] == "confirmation_request"
+    finally:
+        notifications.remove_user_queue("user-1")
+
+
+def test_record_interaction_summary_push_noop_without_active_queue(db_session):
+    """No active queue (no SSE connection) — must not raise."""
+    from db.database import current_user_id
+
+    current_user_id.set("user-without-queue")
+    interaction = build_confirmation_interaction(
+        [{"name": "delete_project", "args": {"project_id": "proj-1"}}]
+    )
+    record = record_interaction_summary(
+        db_session, interaction, source_type="confirmation", source_id="proj-1",
+    )
+    assert record.id is not None
+
+
+def test_record_interaction_summary_does_not_push_for_non_pending_status(db_session):
+    """Only freshly-created pending interactions push — resolved ones (rare at
+    creation time, but the status check should still hold) do not."""
+    from agent.domain import notifications
+    from agent.domain.interactions import INTERACTION_RESOLVED
+    from db.database import current_user_id
+
+    current_user_id.set("user-2")
+    queue = notifications.get_or_create_user_queue("user-2")
+    try:
+        interaction = build_confirmation_interaction(
+            [{"name": "delete_project", "args": {"project_id": "proj-1"}}]
+        )
+        interaction["status"] = INTERACTION_RESOLVED
+        record_interaction_summary(
+            db_session, interaction, source_type="confirmation", source_id="proj-1",
+        )
+        assert queue.empty()
+    finally:
+        notifications.remove_user_queue("user-2")
+
+
 def test_build_proposal_review_interaction_includes_estimates(db_session):
     profile = make_profile(db_session)
     project = make_project(db_session, profile)

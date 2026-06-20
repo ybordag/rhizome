@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -11,7 +12,8 @@ from agent.domain.incidents import (
     draft_treatment_plan as draft_treatment_plan_data,
     resolve_incident as resolve_incident_data,
 )
-from db.database import SessionLocal
+from agent.domain.notifications import push_event
+from db.database import SessionLocal, current_user_id
 from db.models import IncidentReport, IncidentSubject, TreatmentPlan
 
 
@@ -128,18 +130,29 @@ def report_incident(
 @tool
 def draft_treatment_plan(incident_id: str) -> str:
     """Draft an approval-gated treatment plan for a reported incident."""
+    user_id = current_user_id.get()
+    job_id = f"treatment_plan_{uuid.uuid4().hex[:8]}"
+    push_event(user_id, {"type": "job_started", "job_id": job_id, "title": "Drafting treatment plan"})
+
     session = SessionLocal()
     try:
         plan = draft_treatment_plan_data(session, incident_id)
         session.commit()
-        return (
+        result = (
             f"Drafted treatment plan {plan.id}.\n"
             f"- Status: {plan.status}\n"
             f"- Approach: {plan.approach_summary}"
         )
+        push_event(user_id, {
+            "type": "job_complete", "job_id": job_id,
+            "title": "Drafting treatment plan", "summary": f"Drafted plan {plan.id}",
+        })
+        return result
     except Exception as e:
         session.rollback()
-        return f"Failed to draft treatment plan: {str(e)}"
+        error = str(e)
+        push_event(user_id, {"type": "job_failed", "job_id": job_id, "title": "Drafting treatment plan", "error": error})
+        return f"Failed to draft treatment plan: {error}"
     finally:
         session.close()
 

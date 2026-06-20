@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_create_event, record_update_event, snapshot_model
 from agent.core.temporal import DEFAULT_TIMEZONE, profile_weather_location
+from agent.domain.notifications import push_event
 from db.database import current_user_id
 from db.models import (
     GardenProfile,
@@ -189,14 +190,24 @@ def refresh_weather_snapshot(
     *,
     timezone: str = DEFAULT_TIMEZONE,
     fetcher=fetch_open_meteo_forecast,
+    event_sink: Optional[Callable[[str, str], None]] = None,
 ) -> WeatherSnapshot:
+    def _step(step: str, status: str) -> None:
+        if event_sink:
+            event_sink(step, status)
+
     profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
     location = profile_weather_location(profile)
     if not location:
         raise ValueError("Garden profile is missing latitude/longitude. Update the weather location first.")
 
+    _step("Fetching forecast", "running")
     payload = fetcher(latitude=location["latitude"], longitude=location["longitude"], timezone=timezone)
+    _step("Fetching forecast", "done")
+
+    _step("Deriving impacts", "running")
     impacts, actions, conditions_summary, alerts_summary = derive_weather_impacts(payload)
+    _step("Deriving impacts", "done")
     daily = payload.get("daily") or {}
     dates = daily.get("time") or []
     start = datetime.fromisoformat(dates[0]) if dates else datetime.now(timezone.utc).replace(tzinfo=None)
@@ -233,12 +244,13 @@ def load_or_refresh_weather_snapshot(
     timezone: str = DEFAULT_TIMEZONE,
     freshness_hours: int = WEATHER_FRESHNESS_HOURS,
     fetcher=fetch_open_meteo_forecast,
+    event_sink: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[WeatherSnapshot]:
     latest = get_latest_weather_snapshot(session)
     if latest and latest.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=freshness_hours):
         return latest
     try:
-        return refresh_weather_snapshot(session, timezone=timezone, fetcher=fetcher)
+        return refresh_weather_snapshot(session, timezone=timezone, fetcher=fetcher, event_sink=event_sink)
     except Exception:
         return latest
 
@@ -380,6 +392,17 @@ def _write_monitor_alert(
         alert_metadata=metadata,
     )
     session.add(alert)
+    session.flush()
+    push_event(user_id, {
+        "type": "alert",
+        "payload": {
+            "id": alert.id,
+            "alert_type": alert.alert_type,
+            "severity": alert.severity,
+            "title": alert.title,
+            "body": alert.body,
+        },
+    })
     return alert
 
 
@@ -400,6 +423,7 @@ def apply_weather_impacts(
     *,
     snapshot: WeatherSnapshot,
     user_id: int,
+    event_sink: Optional[Callable[[str, str], None]] = None,
 ) -> dict[str, Any]:
     """
     Auto-apply critical weather impacts and queue moderate ones for user review.
@@ -434,9 +458,13 @@ def apply_weather_impacts(
         )
 
     # Task-level impacts — split by criticality
+    if event_sink:
+        event_sink("Identifying affected tasks", "running")
     task_impacts = evaluate_weather_task_impacts(session, weather_snapshot=snapshot)
     critical = [i for i in task_impacts if _is_critical_task_impact(i)]
     advisory = [i for i in task_impacts if not _is_critical_task_impact(i)]
+    if event_sink:
+        event_sink("Identifying affected tasks", "done")
 
     if critical:
         cs = _create_changeset(session, snapshot, critical)

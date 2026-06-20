@@ -3,6 +3,7 @@ Agent router  — POST /internal/agent
 Data router   — CRUD endpoints under /internal/data/
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -50,6 +51,10 @@ from db.models import (
 )
 from pydantic import BaseModel as _BaseModel
 from sqlalchemy import func, or_
+
+# Heartbeat interval for the notifications SSE stream — module-level so tests
+# can monkeypatch it to a tiny value instead of waiting out a real 30s window.
+NOTIFICATION_HEARTBEAT_SECONDS = 30.0
 
 # ---------------------------------------------------------------------------
 # Agent router
@@ -299,6 +304,88 @@ def dismiss_alert(alert_id: str, user_id: str):
         alert.dismissed_at = now
         session.commit()
         return {"status": "dismissed"}
+    finally:
+        session.close()
+
+
+@data_router.get("/notifications/stream")
+async def notification_stream(user_id: str):
+    """
+    Long-lived SSE stream. Frontend opens once on app mount and keeps it open
+    for the session. Emits a heartbeat every 30s when no event is pending.
+    """
+    from agent.domain.notifications import get_or_create_user_queue, remove_user_queue
+
+    queue = get_or_create_user_queue(user_id)
+
+    async def generate():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=NOTIFICATION_HEARTBEAT_SECONDS)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        finally:
+            remove_user_queue(user_id)
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@data_router.get("/notifications")
+def get_notifications(user_id: str, since: str = None):
+    """
+    Current-state snapshot — called on app mount and on stream reconnection.
+    `since` (ISO datetime, optional) limits alerts/interactions to those
+    created after that timestamp.
+    """
+    from agent.domain.notifications import get_active_jobs
+    from db.models import InteractionRecord
+
+    uid = _set_user(user_id)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    since_dt = datetime.fromisoformat(since).replace(tzinfo=None) if since else None
+    session = SessionLocal()
+    try:
+        alert_query = session.query(MonitorAlert).filter(
+            MonitorAlert.user_id == uid,
+            MonitorAlert.status == "pending",
+            MonitorAlert.expires_at > now,
+        )
+        if since_dt:
+            alert_query = alert_query.filter(MonitorAlert.created_at > since_dt)
+        alerts = alert_query.order_by(MonitorAlert.severity, MonitorAlert.created_at.desc()).all()
+
+        # NOTE: InteractionRecord has no user_id column — pending interactions
+        # are not scoped per-user here, matching the pre-existing behavior of
+        # GET /interactions/pending. This is a known multi-tenancy gap, not
+        # introduced by this endpoint; see CLAUDE.md known issues.
+        interaction_query = session.query(InteractionRecord).filter(
+            InteractionRecord.status == "pending"
+        )
+        if since_dt:
+            interaction_query = interaction_query.filter(InteractionRecord.created_at > since_dt)
+        interactions = interaction_query.order_by(InteractionRecord.created_at.desc()).all()
+
+        return {
+            "alerts": [
+                {
+                    "id": a.id,
+                    "alert_type": a.alert_type,
+                    "severity": a.severity,
+                    "title": a.title,
+                    "body": a.body,
+                    "created_at": a.created_at.isoformat(),
+                    "expires_at": a.expires_at.isoformat(),
+                }
+                for a in alerts
+            ],
+            "pending_interactions": [
+                {"id": i.id, "title": i.title, "interaction_type": i.interaction_type}
+                for i in interactions
+            ],
+            "active_jobs": get_active_jobs(uid),
+        }
     finally:
         session.close()
 

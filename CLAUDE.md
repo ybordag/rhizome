@@ -214,16 +214,58 @@ main.py             — CLI entrypoint
   _get_incident_for_user() ownership helper for all write endpoints.
 - 529 tests passing; test_groupb_endpoints.py has 28 tests.
 
+**Unified entity search complete (zinnia → main, 2026-06):**
+- `#126` closed via PR #131. See `docs/current_work/zinnia_unified_search.md`.
+
+**Thread pinned context complete (verbena, 2026-06):**
+- `#127` closed — implemented on `verbena`, not yet merged to main.
+- `Thread.pinned_context` JSON column; POST/DELETE `/threads/{id}/context`; `initial_context`
+  on thread creation; `session_context_intake` injects a "Pinned context" summary per turn.
+
+**Notification SSE complete (verbena, 2026-06):**
+- `#130` closed — implemented on `verbena`, not yet merged to main.
+- `agent/domain/notifications.py`: per-user `asyncio.Queue` event bus (process-local), `push_event()`
+  best-effort delivery, in-memory `active_jobs` registry, `make_event_sink()`.
+- `GET /internal/data/notifications/stream` — SSE, 30s heartbeat, queue created on connect,
+  removed on disconnect (generator `finally`).
+- `GET /internal/data/notifications` — sync snapshot: pending alerts, pending interactions,
+  active jobs. Optional `since` filter.
+- Job instrumentation (`event_sink` param, `None` by default — cron/CLI usage unchanged):
+  `build_triage_snapshot` (4 steps), `refresh_weather_snapshot`/`apply_weather_impacts` (3 steps),
+  `materialize_task_series` wrapper in `series_job` (1 step), `draft_treatment_plan` tool
+  (job_started/job_complete/job_failed only, no intermediate steps).
+- Alert push wired into both `MonitorAlert` creation points (`agent/domain/weather.py`
+  `_write_monitor_alert`, `scripts/monitor.py` `_write_alert`); interaction push wired into
+  `record_interaction_summary` via `current_user_id.get()`.
+- 50 new tests (663 total). SSE endpoint tested at the async-generator level, not through
+  `TestClient` — see `tests/DEFERRED_TESTS.md` ("GET /internal/data/notifications/stream").
+
 **Next in Rhizome:**
-- Unified entity search (`#126`)
-- Thread pinned context (`#127`)
-- Notification SSE via Postgres LISTEN/NOTIFY (`#130`)
+- Garden spatial layout model and map endpoints (`#118`)
+- Media/image attachments for garden objects (`#117`)
 - Pest intelligence (deferred from calendula Phase 5): iNaturalist + image-based pest ID + RAG
 
 ## Known issues
 - `ActivityEvent.revision_id` FK is defined in the model; enforced in Postgres (staging/prod), not SQLite (dev/test)
 - JSON columns use `Column(JSON, ...)` — JSONB would give better indexing; deferred to Intelligence track
 - `public` schema is empty; all tables are in `rhizome` schema ✓
+- **`InteractionRecord` has no `user_id` column.** `get_pending_interaction_record` and
+  `list_recent_interaction_records` (and the new `GET /notifications` sync endpoint) query
+  globally across all users — in a multi-user deployment, one user's pending interaction is
+  visible to any other user calling these. `project_id` is nullable and most interactions
+  (confirmations, triage reviews) aren't project-scoped, so excluding null-project rows (the
+  fix used for project-less incidents in zinnia) would hide almost everything — this needs an
+  actual `user_id` column + migration + backfill, not a query-level fix. Discovered while
+  building the notification sync endpoint (#130); not introduced by it.
+- **`user_id` type inconsistency (str vs int) risks silent notification drops.** `weather_job`,
+  `triage_job`, `series_job`, and `apply_weather_impacts` type-hint `user_id: int`, but
+  `agent/domain/notifications.py`'s per-user queue dict keys on whatever's actually passed.
+  The SSE stream endpoint always receives `user_id` as `str` (FastAPI query param). If a job
+  is ever invoked with a real Python `int` for the same logical user, `push_event` looks up the
+  wrong dict key and silently drops the event — no error, just a missing notification. Currently
+  low-risk because the only live callers (CLI argparse with `type=str`, agent tools reading
+  `current_user_id` which is always a string) pass strings consistently, but the `int` type hints
+  are misleading and the next person to call these with a literal int will hit this silently.
 
 ## Invariants — never violate
 - **Model access only through `agent/core/model.py`.** Never instantiate a model client directly or at import time anywhere else.

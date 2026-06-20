@@ -7,6 +7,8 @@ import json
 import uuid
 
 from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_activity_event
+from agent.domain.notifications import push_event
+from db.database import current_user_id
 from db.models import (
     InteractionRecord,
     ProjectProposal,
@@ -154,6 +156,15 @@ def record_interaction_summary(
     )
     session.add(record)
     session.flush()
+    if record.status == INTERACTION_PENDING:
+        push_event(current_user_id.get(), {
+            "type": "interaction_pending",
+            "payload": {
+                "id": record.id,
+                "title": record.title,
+                "interaction_type": record.interaction_type,
+            },
+        })
     return record
 
 

@@ -193,6 +193,85 @@ def test_draft_treatment_plan_reuses_existing_active_plan(db_session, patched_se
     assert plans[0].id in second
 
 
+# ---------------------------------------------------------------------------
+# draft_treatment_plan — job event push (#130)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_draft_treatment_plan_pushes_job_started_and_complete(db_session, patched_sessionlocal):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    current_user_id.set("1")
+    queue = notifications.get_or_create_user_queue("1")
+    try:
+        project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+        reported = report_incident.invoke({
+            "incident_type": "pest",
+            "summary": "Aphids on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        })
+        incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+        draft_treatment_plan.invoke({"incident_id": incident.id})
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        types = [e["type"] for e in events]
+        assert "job_started" in types
+        assert "job_complete" in types
+        started = next(e for e in events if e["type"] == "job_started")
+        complete = next(e for e in events if e["type"] == "job_complete")
+        assert started["title"] == "Drafting treatment plan"
+        assert started["job_id"] == complete["job_id"]
+    finally:
+        notifications.remove_user_queue("1")
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_pushes_job_failed_on_error(db_session, patched_sessionlocal, monkeypatch):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    monkeypatch.setattr(
+        "agent.tools.operations.incidents.draft_treatment_plan_data",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    current_user_id.set("1")
+    queue = notifications.get_or_create_user_queue("1")
+    try:
+        result = draft_treatment_plan.invoke({"incident_id": "nonexistent"})
+        assert "Failed to draft treatment plan" in result
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        assert events[-1]["type"] == "job_failed"
+        assert events[-1]["error"] == "boom"
+    finally:
+        notifications.remove_user_queue("1")
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_works_without_active_queue(db_session, patched_sessionlocal):
+    """No active queue (no SSE connection) — must not raise."""
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    report_incident.invoke({
+        "incident_type": "pest",
+        "summary": "Aphids on tomato leaves",
+        "project_id": project.id,
+        "severity": "medium",
+        "subjects": [],
+    })
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+    result = draft_treatment_plan.invoke({"incident_id": incident.id})
+    assert "Drafted treatment plan" in result
+
+
 @pytest.mark.integration
 def test_report_incident_reuses_existing_open_incident_for_same_issue(db_session, patched_sessionlocal):
     project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")

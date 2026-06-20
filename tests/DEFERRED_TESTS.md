@@ -125,3 +125,11 @@ Tests that are known gaps but consciously deferred. Each entry explains why it w
 Neither is trivial. The non-streaming agent endpoint has the same gap — streaming makes it more visible.
 
 **Re-enable when:** The router is refactored to accept an injectable `agent` via FastAPI `Depends`, allowing `TestClient` tests to inject the `fresh_test_graph`. At that point, streaming tests can verify the full event sequence end-to-end with a fake model.
+
+### GET /internal/data/notifications/stream — full HTTP-level test
+
+**What:** Driving `GET /notifications/stream` through `TestClient` end-to-end (real ASGI transport, real HTTP headers, multiple chunks read over the wire).
+
+**Why deferred:** Confirmed by hand that `TestClient.stream()` hangs against this route's infinite async generator — the same underlying limitation as `/internal/agent/stream` above (long-lived generators don't drive cleanly through Starlette's `TestClient`). `tests/agent/api/test_notifications_endpoints.py` instead calls the route function directly and drives `response.body_iterator` manually (`__anext__()`, `aclose()`), which exercises the exact same code (queue creation, heartbeat timeout, event delivery, cleanup-on-close) without the transport layer.
+
+**Re-enable when:** Same trigger as the `/agent/stream` entry — once there's a clean pattern for testing long-lived SSE through `TestClient`, apply it here too.

@@ -1,26 +1,39 @@
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
 from langchain.tools import tool
 
 from agent.core.temporal import DEFAULT_TIMEZONE
+from agent.domain.notifications import push_event
 from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import TriageSnapshot
 
 
 @tool
 def run_daily_triage(opener: str, timezone: str = DEFAULT_TIMEZONE) -> str:
     """Run a daily triage pass based on the user's opening message, time context, and latest weather."""
+    user_id = current_user_id.get()
+    job_id = f"triage_{uuid.uuid4().hex[:8]}"
+    push_event(user_id, {"type": "job_started", "job_id": job_id, "title": "Daily triage"})
+
+    def sink(step: str, status: str) -> None:
+        push_event(user_id, {"type": "job_step", "job_id": job_id, "step": step, "status": status})
+
     session = SessionLocal()
     try:
-        snapshot = build_triage_snapshot(session, opener=opener, timezone=timezone)
+        snapshot = build_triage_snapshot(session, opener=opener, timezone=timezone, event_sink=sink)
         session.commit()
-        return format_triage_snapshot(session, snapshot)
+        result = format_triage_snapshot(session, snapshot)
+        push_event(user_id, {"type": "job_complete", "job_id": job_id, "title": "Daily triage", "summary": result[:200]})
+        return result
     except Exception as e:
         session.rollback()
-        return f"Failed to run daily triage: {str(e)}"
+        error = str(e)
+        push_event(user_id, {"type": "job_failed", "job_id": job_id, "title": "Daily triage", "error": error})
+        return f"Failed to run daily triage: {error}"
     finally:
         session.close()
 
