@@ -356,3 +356,44 @@ def test_create_manual_treatment_plan_wrong_user_returns_404(patched_sessionloca
     resp = client.post(f"/internal/data/incidents/{incident.id}/treatment/manual?user_id=other-user",
                        json={"approach_summary": "Unauthorized", "recommended_steps": []})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Project-less incident isolation (zinnia fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_list_incidents_excludes_projectless(patched_sessionlocal, db_session, seed_garden_profile):
+    # Incidents with no project_id must not appear in any user's list.
+    orphan = make_incident_report(db_session, project_id=None, incident_type="pest")
+
+    resp = client.get(f"/internal/data/incidents?user_id={USER}")
+    assert resp.status_code == 200
+    ids = [i["id"] for i in resp.json()]
+    assert orphan.id not in ids
+
+
+@pytest.mark.integration
+def test_patch_projectless_incident_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None)
+
+    resp = client.patch(f"/internal/data/incidents/{orphan.id}?user_id={USER}",
+                        json={"severity": "high"})
+    assert resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_delete_projectless_incident_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None)
+
+    resp = client.delete(f"/internal/data/incidents/{orphan.id}?user_id={USER}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_manual_treatment_plan_on_projectless_incident_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None)
+
+    resp = client.post(f"/internal/data/incidents/{orphan.id}/treatment/manual?user_id={USER}",
+                       json={"approach_summary": "Fix it", "recommended_steps": []})
+    assert resp.status_code == 404

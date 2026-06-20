@@ -1670,18 +1670,19 @@ def approve_weather_changes(changeset_id: str, user_id: str):
 # ---------------------------------------------------------------------------
 
 def _get_incident_for_user(session, incident_id: str, user_id: str):
-    """Return the incident if it belongs to the user, else None."""
+    """Return the incident if it belongs to the user, else None.
+
+    Project-less incidents (project_id IS NULL) cannot be scoped to an owner
+    and are therefore inaccessible through ownership-gated write endpoints.
+    """
     incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
-    if not incident:
+    if not incident or not incident.project_id:
         return None
-    if incident.project_id:
-        project = session.query(GardeningProject).filter(
-            GardeningProject.id == incident.project_id,
-            GardeningProject.user_id == user_id,
-        ).first()
-        if not project:
-            return None
-    return incident
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == incident.project_id,
+        GardeningProject.user_id == user_id,
+    ).first()
+    return incident if project else None
 
 
 @data_router.get("/incidents")
@@ -1706,10 +1707,7 @@ def list_incidents(
         user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
             GardeningProject.user_id == user_id).all()}
         query = session.query(IncidentReport).filter(
-            or_(
-                IncidentReport.project_id.in_(user_pids),
-                IncidentReport.project_id.is_(None),
-            )
+            IncidentReport.project_id.in_(user_pids)
         )
         if project_id:
             query = query.filter(IncidentReport.project_id == project_id)
