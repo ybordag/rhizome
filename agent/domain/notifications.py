@@ -15,6 +15,15 @@ All state here is process-local. A cron-triggered job running in a separate
 OS process (scripts/monitor.py) cannot reach into a live web server's queue —
 its alerts and interactions still land in the DB and are picked up by the
 next sync poll or session_context_intake; only the SSE push is best-effort.
+
+user_id is normalized to str at every entry point below. The canonical type
+for user_id everywhere in Rhizome is str (every `user_id` DB column is
+String; `current_user_id: ContextVar[str]`) but some call sites upstream
+still carry stale `int` type hints. Without normalization here, an int caller
+and a str caller for the "same" user would silently land in different dict
+keys (`1` != `"1"`) and a push would vanish with no error — this happened
+in practice during development. Normalizing here closes the gap regardless
+of what any individual caller gets right.
 """
 
 from __future__ import annotations
@@ -28,7 +37,8 @@ _active_jobs: dict[str, dict[str, dict]] = {}
 EventSink = Optional[Callable[[dict[str, Any]], None]]
 
 
-def get_or_create_user_queue(user_id: str) -> "asyncio.Queue[dict]":
+def get_or_create_user_queue(user_id: str | int) -> "asyncio.Queue[dict]":
+    user_id = str(user_id)
     queue = _user_queues.get(user_id)
     if queue is None:
         queue = asyncio.Queue()
@@ -36,16 +46,17 @@ def get_or_create_user_queue(user_id: str) -> "asyncio.Queue[dict]":
     return queue
 
 
-def remove_user_queue(user_id: str) -> None:
-    _user_queues.pop(user_id, None)
+def remove_user_queue(user_id: str | int) -> None:
+    _user_queues.pop(str(user_id), None)
 
 
-def has_active_queue(user_id: str) -> bool:
-    return user_id in _user_queues
+def has_active_queue(user_id: str | int) -> bool:
+    return str(user_id) in _user_queues
 
 
-def push_event(user_id: str, event: dict[str, Any]) -> None:
+def push_event(user_id: str | int, event: dict[str, Any]) -> None:
     """Best-effort push: no-op if the user has no active queue in this process."""
+    user_id = str(user_id)
     etype = event.get("type")
     if etype == "job_started":
         jobs = _active_jobs.setdefault(user_id, {})
@@ -62,10 +73,11 @@ def push_event(user_id: str, event: dict[str, Any]) -> None:
         queue.put_nowait(event)
 
 
-def get_active_jobs(user_id: str) -> list[dict]:
-    return list(_active_jobs.get(user_id, {}).values())
+def get_active_jobs(user_id: str | int) -> list[dict]:
+    return list(_active_jobs.get(str(user_id), {}).values())
 
 
-def make_event_sink(user_id: str) -> Callable[[dict[str, Any]], None]:
+def make_event_sink(user_id: str | int) -> Callable[[dict[str, Any]], None]:
     """Returns a callable bound to user_id for passing as a job's event_sink."""
+    user_id = str(user_id)
     return lambda event: push_event(user_id, event)

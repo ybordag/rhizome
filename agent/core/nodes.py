@@ -243,7 +243,7 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         session.close()
 
 
-def _upsert_thread(session, user_id: int, thread_id: str, state: GardenState, now) -> None:
+def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, now) -> None:
     """Create or update thread metadata at the start of each turn."""
     # Extract preview from the last AI message in prior turns
     preview = None

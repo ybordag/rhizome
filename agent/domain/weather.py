@@ -369,7 +369,7 @@ def _is_critical_task_impact(impact: dict) -> bool:
 def _write_monitor_alert(
     session,
     *,
-    user_id: int,
+    user_id: str,
     alert_type: str,
     severity: str,
     title: str,
@@ -422,7 +422,7 @@ def apply_weather_impacts(
     session,
     *,
     snapshot: WeatherSnapshot,
-    user_id: int,
+    user_id: str,
     event_sink: Optional[Callable[[str, str], None]] = None,
 ) -> dict[str, Any]:
     """

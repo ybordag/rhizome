@@ -38,7 +38,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _start_run(session, run_type: str, user_id: int) -> MonitorRun:
+def _start_run(session, run_type: str, user_id: str) -> MonitorRun:
     run = MonitorRun(run_type=run_type, status="started", user_id=user_id)
     session.add(run)
     session.commit()
@@ -97,7 +97,7 @@ def _write_alert(
     return alert
 
 
-def weather_job(session, user_id: int, event_sink=None) -> str:
+def weather_job(session, user_id: str, event_sink=None) -> str:
     """
     Refresh the weather snapshot if stale, then auto-apply critical impacts
     and queue advisory ones. Writes MonitorAlert records for all categories.
@@ -168,7 +168,7 @@ def weather_job(session, user_id: int, event_sink=None) -> str:
         raise
 
 
-def triage_job(session, user_id: int, event_sink=None) -> str:
+def triage_job(session, user_id: str, event_sink=None) -> str:
     """
     Build a triage snapshot and write a MonitorAlert when urgent tasks exist.
     The alert surfaces at the next session start via session_context_intake.
@@ -231,7 +231,7 @@ def triage_job(session, user_id: int, event_sink=None) -> str:
         raise
 
 
-def series_job(session, user_id: int, event_sink=None) -> str:
+def series_job(session, user_id: str, event_sink=None) -> str:
     """
     Materialize any recurring task series whose next_generation_date has
     entered the rolling 14-day horizon. Idempotent: existing task dates are
@@ -276,7 +276,7 @@ _JOBS = {
 }
 
 
-def run(user_id: int, job: str) -> None:
+def run(user_id: str, job: str) -> None:
     jobs = list(_JOBS.items()) if job == "all" else [(job, _JOBS[job])]
     session = SessionLocal()
     try:
