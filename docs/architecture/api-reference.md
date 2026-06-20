@@ -202,6 +202,15 @@ All objects at a named location.
 
 ---
 
+## Unified entity search
+
+### `GET /api/v1/search`
+Search across multiple entity types in one call (plants, beds, containers, tasks, projects, incidents) — distinct from `GET /api/v1/garden/search`, which is garden-objects-only.
+**Query params:** `q` (required, non-empty), `types` (optional comma-separated filter), `limit` (per-type, default 5, max 20)
+**Response:** `SearchResultsView` — `results: SearchResultItemView[]` + `by_type` counts.
+
+---
+
 ## Tasks
 
 ### `GET /api/v1/tasks`
@@ -591,6 +600,20 @@ Monitor run detail.
 
 ### `POST /api/v1/tasks/series/run`
 Trigger the series materialization cron job.
+
+---
+
+## Notifications
+
+Two complementary surfaces backing the frontend's notification drawer — see `agent/domain/notifications.py` for the underlying per-user event bus.
+
+### `GET /api/v1/notifications/stream`
+Long-lived SSE connection. Frontend opens once on app mount and keeps it open for the session. Emits `{"type": "heartbeat"}` every 30s when idle, and live events as they happen: `job_started`, `job_step`, `job_complete`, `job_failed`, `alert` (a freshly-written `MonitorAlert`). Delivery is **best-effort and process-local** — if the user has no active connection in the process handling a given background job (e.g. disconnected, or the job runs in a different process via `scripts/monitor.py`), the live push is silently dropped. `MonitorAlert`/`InteractionRecord` rows are the durable fallback; `active_jobs` (in-memory only) is not.
+
+### `GET /api/v1/notifications`
+Sync snapshot — called on app mount and on stream reconnection to catch up on anything missed while disconnected.
+**Query params:** `since` (ISO datetime, optional — limits alerts/interactions to those created after this timestamp)
+**Response:** `{"alerts": [...], "pending_interactions": [...], "active_jobs": [...]}`. `alerts` = pending, non-expired `MonitorAlert` rows. `active_jobs` is a point-in-time snapshot only (not `since`-filtered) — a job that fully starts and completes during a disconnect window leaves no trace here; check `alerts` for anything that job wrote on completion (see `series_job`/`draft_treatment_plan` in `scripts/monitor.py` / `agent/tools/operations/incidents.py`).
 
 ---
 

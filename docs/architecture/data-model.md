@@ -41,9 +41,12 @@ IncidentReport (status: reported → approved → resolved)
         └── (generates Tasks on approval)
 
 InteractionRecord  (status: pending → resolved/dismissed)
-WeatherSnapshot    (7-day forecast + derived impacts)
+WeatherSnapshot    (7-day forecast + derived impacts, scoped to garden_profile_id)
 WeatherTaskChangeSet (status: draft → approved)
-TriageSnapshot     (session-start triage output)
+TriageSnapshot     (session-start triage output, scoped to garden_profile_id)
+
+MonitorRun   (cron job execution record: status started → completed/failed)
+MonitorAlert (pending → dismissed; expires_at TTL; surfaced via notification stream/sync)
 
 ActivityEvent      (every state change, scoped to user_id)
   └── ActivitySubject  (links event to affected entities)
@@ -136,7 +139,7 @@ Provenance record for a group of plants sown together. Tracks supplier, seed lot
 ## Incident models
 
 ### IncidentReport
-User or agent-reported problem: pest, blight, weed. Linked to affected subjects via `IncidentSubject`. Statuses: `reported → approved → resolved`.
+User or agent-reported problem: pest, blight, weed. Linked to affected subjects via `IncidentSubject`. Statuses: `reported → approved → resolved`. Carries a direct `user_id` column (added in the post-#130 multi-tenancy audit — `project_id` is nullable, so a project-chain-only scope would have left projectless incidents unscoped).
 
 ### TreatmentPlan
 Agent-drafted treatment approach. `recommended_steps` is a JSON list of `{title, task_type, estimated_minutes, days_from_approval}`. On approval, tasks are auto-generated for each step.
@@ -146,16 +149,22 @@ Agent-drafted treatment approach. `recommended_steps` is a JSON list of `{title,
 ## Interaction and event models
 
 ### InteractionRecord
-Persisted record of every structured interaction presented to the user. Tracks interaction type, status (pending/resolved/dismissed), resolution action, and resolution summary.
+Persisted record of every structured interaction presented to the user. Tracks interaction type, status (pending/resolved/dismissed), resolution action, and resolution summary. Carries a direct `user_id` column (retrofitted via migration `a1b2c3d4e5f6` — it originally shipped without one and silently leaked every user's pending interactions to every other user; see the Invariants section of `CLAUDE.md`).
 
 ### WeatherSnapshot
-7-day Open-Meteo forecast + derived impacts (`derived_impacts` JSON) + recommended actions. Refreshed on demand; all tasks that reference weather load the latest snapshot.
+7-day Open-Meteo forecast + derived impacts (`derived_impacts` JSON) + recommended actions. Refreshed on demand; all tasks that reference weather load the latest snapshot. Scoped via `garden_profile_id` (migration `c3d4e5f6a7b8`) rather than `user_id` directly, since location lives on `GardenProfile` — this was originally a single shared row across all users until the 2026-06-20 multi-tenancy audit.
 
 ### WeatherTaskChangeSet
-Proposed batch of weather-driven task adjustments. Approval-gated via the interaction system.
+Proposed batch of weather-driven task adjustments. Approval-gated via the interaction system. `approve_weather_task_changes` joins through `WeatherSnapshot.garden_profile_id → GardenProfile.user_id` to verify ownership rather than trusting `change_set_id` alone.
 
 ### TriageSnapshot
-Session-start output: recommended task IDs, urgent/routine/project groupings, weather snapshot reference, reasoning summary.
+Session-start output: recommended task IDs, urgent/routine/project groupings, weather snapshot reference, reasoning summary. Scoped via `garden_profile_id`, same shape and same audit as `WeatherSnapshot`.
+
+### MonitorRun
+One row per cron job execution (`weather` | `triage` | `series_materialization`). Tracks `status` (started → completed/failed), `summary`/`error`, `completed_at`. Written by `scripts/monitor.py`'s `_start_run`/`_finish_run`/`_fail_run`.
+
+### MonitorAlert
+A persisted, recoverable notification. Written whenever a background job or tool completes something a disconnected user needs to learn about later (e.g. urgent triage tasks, critical weather impacts, recurring tasks materialized, a treatment plan drafted). Fields: `alert_type`, `severity`, `title`, `body`, `status` (pending/dismissed), `expires_at` (TTL), `source_type`/`source_id` (loose pointer back to the originating row). Surfaced to the frontend via `GET /internal/data/notifications` (sync snapshot, optional `since` filter) and pushed live over `GET /internal/data/notifications/stream` (SSE) when the owning user has an active connection — see `agent/domain/notifications.py`. The live push is process-local and best-effort; the `MonitorAlert` row is what survives a disconnect.
 
 ---
 
@@ -209,9 +218,13 @@ Purchasing list — standalone or project-scoped. `status`: needed|ordered|purch
 | CalendarAnnotation | (user_id, date) |
 | ProjectExpense | user_id, project_id |
 | ShoppingItem | user_id, project_id, status |
-| InteractionRecord | created_at, status, project_id, interaction_type |
-| IncidentReport | project_id, status |
+| InteractionRecord | created_at, status, project_id, interaction_type, user_id |
+| IncidentReport | project_id, status, user_id |
 | TreatmentPlan | incident_id, status |
+| WeatherSnapshot | garden_profile_id |
+| TriageSnapshot | garden_profile_id |
+| MonitorRun | created_at, user_id |
+| MonitorAlert | created_at, user_id, status |
 
 ---
 
