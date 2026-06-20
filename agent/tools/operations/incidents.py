@@ -28,7 +28,7 @@ def list_incidents(project_id: Optional[str] = None, status: Optional[str] = Non
     """List incident reports, optionally filtered by project or status."""
     session = SessionLocal()
     try:
-        query = session.query(IncidentReport)
+        query = session.query(IncidentReport).filter(IncidentReport.user_id == current_user_id.get())
         if project_id:
             query = query.filter(IncidentReport.project_id == project_id)
         if status:
@@ -55,7 +55,10 @@ def get_incident(incident_id: str) -> str:
     """Show full details for a specific incident report including subjects and treatment plan status."""
     session = SessionLocal()
     try:
-        incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
+        incident = session.query(IncidentReport).filter(
+            IncidentReport.id == incident_id,
+            IncidentReport.user_id == current_user_id.get(),
+        ).first()
         if not incident:
             return f"No incident found with id {incident_id}."
         subjects = (
@@ -162,7 +165,12 @@ def get_treatment_plan(treatment_plan_id: str) -> str:
     """Show a treatment plan and its follow-up strategy."""
     session = SessionLocal()
     try:
-        plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == treatment_plan_id).first()
+        plan = (
+            session.query(TreatmentPlan)
+            .join(IncidentReport, TreatmentPlan.incident_id == IncidentReport.id)
+            .filter(TreatmentPlan.id == treatment_plan_id, IncidentReport.user_id == current_user_id.get())
+            .first()
+        )
         if not plan:
             return f"No treatment plan found with id {treatment_plan_id}."
         lines = [

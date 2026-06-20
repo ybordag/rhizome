@@ -359,13 +359,26 @@ def test_create_manual_treatment_plan_wrong_user_returns_404(patched_sessionloca
 
 
 # ---------------------------------------------------------------------------
-# Project-less incident isolation (zinnia fix)
+# Project-less incident isolation
+#
+# IncidentReport now carries its own user_id column (audit fix, post-#130) —
+# project-less incidents are scoped to their owner directly rather than being
+# universally inaccessible (the old zinnia-era workaround).
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_list_incidents_excludes_projectless(patched_sessionlocal, db_session, seed_garden_profile):
-    # Incidents with no project_id must not appear in any user's list.
-    orphan = make_incident_report(db_session, project_id=None, incident_type="pest")
+def test_list_incidents_includes_owned_projectless(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, incident_type="pest", user_id=USER)
+
+    resp = client.get(f"/internal/data/incidents?user_id={USER}")
+    assert resp.status_code == 200
+    ids = [i["id"] for i in resp.json()]
+    assert orphan.id in ids
+
+
+@pytest.mark.integration
+def test_list_incidents_excludes_projectless_owned_by_other_user(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, incident_type="pest", user_id="other-user")
 
     resp = client.get(f"/internal/data/incidents?user_id={USER}")
     assert resp.status_code == 200
@@ -374,8 +387,17 @@ def test_list_incidents_excludes_projectless(patched_sessionlocal, db_session, s
 
 
 @pytest.mark.integration
-def test_patch_projectless_incident_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
-    orphan = make_incident_report(db_session, project_id=None)
+def test_patch_owned_projectless_incident_succeeds(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, user_id=USER)
+
+    resp = client.patch(f"/internal/data/incidents/{orphan.id}?user_id={USER}",
+                        json={"severity": "high"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_patch_projectless_incident_owned_by_other_user_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, user_id="other-user")
 
     resp = client.patch(f"/internal/data/incidents/{orphan.id}?user_id={USER}",
                         json={"severity": "high"})
@@ -383,16 +405,25 @@ def test_patch_projectless_incident_returns_404(patched_sessionlocal, db_session
 
 
 @pytest.mark.integration
-def test_delete_projectless_incident_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
-    orphan = make_incident_report(db_session, project_id=None)
+def test_delete_projectless_incident_owned_by_other_user_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, user_id="other-user")
 
     resp = client.delete(f"/internal/data/incidents/{orphan.id}?user_id={USER}")
     assert resp.status_code == 404
 
 
 @pytest.mark.integration
-def test_manual_treatment_plan_on_projectless_incident_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
-    orphan = make_incident_report(db_session, project_id=None)
+def test_manual_treatment_plan_on_owned_projectless_incident_succeeds(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, user_id=USER)
+
+    resp = client.post(f"/internal/data/incidents/{orphan.id}/treatment/manual?user_id={USER}",
+                       json={"approach_summary": "Fix it", "recommended_steps": []})
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_manual_treatment_plan_on_projectless_incident_owned_by_other_user_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
+    orphan = make_incident_report(db_session, project_id=None, user_id="other-user")
 
     resp = client.post(f"/internal/data/incidents/{orphan.id}/treatment/manual?user_id={USER}",
                        json={"approach_summary": "Fix it", "recommended_steps": []})

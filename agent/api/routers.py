@@ -1755,19 +1755,11 @@ def approve_weather_changes(changeset_id: str, user_id: str):
 # ---------------------------------------------------------------------------
 
 def _get_incident_for_user(session, incident_id: str, user_id: str):
-    """Return the incident if it belongs to the user, else None.
-
-    Project-less incidents (project_id IS NULL) cannot be scoped to an owner
-    and are therefore inaccessible through ownership-gated write endpoints.
-    """
-    incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
-    if not incident or not incident.project_id:
-        return None
-    project = session.query(GardeningProject).filter(
-        GardeningProject.id == incident.project_id,
-        GardeningProject.user_id == user_id,
+    """Return the incident if it belongs to the user, else None."""
+    return session.query(IncidentReport).filter(
+        IncidentReport.id == incident_id,
+        IncidentReport.user_id == user_id,
     ).first()
-    return incident if project else None
 
 
 @data_router.get("/incidents")
@@ -1789,11 +1781,7 @@ def list_incidents(
     # The tool returns a string; for the new filters we query directly
     session = SessionLocal()
     try:
-        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
-            GardeningProject.user_id == user_id).all()}
-        query = session.query(IncidentReport).filter(
-            IncidentReport.project_id.in_(user_pids)
-        )
+        query = session.query(IncidentReport).filter(IncidentReport.user_id == user_id)
         if project_id:
             query = query.filter(IncidentReport.project_id == project_id)
         if status:
@@ -2083,12 +2071,8 @@ def _verify_entity_owner(session, user_id: str, subject_type: str, subject_id: s
             .first()
         ) is not None
     if subject_type == "incident":
-        incident = session.query(IncidentReport).filter(IncidentReport.id == subject_id).first()
-        if not incident or not incident.project_id:
-            return False
-        return session.query(GardeningProject).filter(
-            GardeningProject.id == incident.project_id,
-            GardeningProject.user_id == user_id,
+        return session.query(IncidentReport).filter(
+            IncidentReport.id == subject_id, IncidentReport.user_id == user_id
         ).first() is not None
     return False
 

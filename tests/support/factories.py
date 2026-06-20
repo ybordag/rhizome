@@ -496,6 +496,7 @@ def make_weather_task_change_set(session, weather_snapshot: WeatherSnapshot, **o
 
 def make_incident_report(session, **overrides: Any) -> IncidentReport:
     data = {
+        "user_id": "1",
         "project_id": None,
         "incident_type": "pest",
         "status": "reported",

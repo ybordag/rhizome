@@ -84,6 +84,37 @@ def test_get_task_activity_shows_task_events(db_session, patched_sessionlocal):
 
 
 @pytest.mark.integration
+def test_get_task_activity_scoped_to_current_user(db_session, patched_sessionlocal):
+    """get_activity_for_subject (audit fix) must not leak another user's
+    activity events for a subject_id guessed/known across users."""
+    from db.database import current_user_id
+
+    profile, project, revision, run = _base(db_session)
+    task = make_task(db_session, project=project, revision=revision, generation_run=run,
+                     generator_key="test.cross_user_activity", title="Water Tomato", status="pending")
+
+    current_user_id.set("owner-a")
+    try:
+        _record_event(db_session, project.id, "task_started", "task", "task", task.id)
+    finally:
+        current_user_id.set("1")
+
+    current_user_id.set("owner-b")
+    try:
+        result = get_task_activity.invoke({"task_id": task.id})
+        assert "No activity found" in result
+    finally:
+        current_user_id.set("1")
+
+    current_user_id.set("owner-a")
+    try:
+        result = get_task_activity.invoke({"task_id": task.id})
+        assert "task_started" in result
+    finally:
+        current_user_id.set("1")
+
+
+@pytest.mark.integration
 def test_get_task_activity_empty_when_no_events(db_session, patched_sessionlocal):
     profile, project, revision, run = _base(db_session)
     task = make_task(db_session, project=project, revision=revision, generation_run=run,

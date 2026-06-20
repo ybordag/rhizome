@@ -1085,10 +1085,12 @@ class IncidentReport(Base):
     __table_args__ = (
         Index("ix_incident_report_project_id", "project_id"),
         Index("ix_incident_report_status", "status"),
+        Index("ix_incident_report_user_id", "user_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    user_id = Column(String, nullable=True)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     incident_type = Column(String, nullable=False)
     status = Column(String, nullable=False, default="reported")

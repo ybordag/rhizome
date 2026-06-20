@@ -161,15 +161,12 @@ def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
                 if obj:
                     lines.append(f"- project: {obj.name} · status: {obj.status or 'active'}")
             elif stype == "incident":
-                incident = session.query(IncidentReport).filter(IncidentReport.id == sid).first()
-                if incident and incident.project_id:
-                    proj = session.query(GardeningProject).filter(
-                        GardeningProject.id == incident.project_id,
-                        GardeningProject.user_id == user_id,
-                    ).first()
-                    if proj:
-                        summary = f" · {incident.summary[:60]}" if incident.summary else ""
-                        lines.append(f"- incident: {incident.incident_type}{summary}")
+                incident = session.query(IncidentReport).filter(
+                    IncidentReport.id == sid, IncidentReport.user_id == user_id
+                ).first()
+                if incident:
+                    summary = f" · {incident.summary[:60]}" if incident.summary else ""
+                    lines.append(f"- incident: {incident.incident_type}{summary}")
         except Exception:
             pass
     return "\n".join(lines)

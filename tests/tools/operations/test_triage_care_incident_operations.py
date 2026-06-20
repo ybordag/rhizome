@@ -353,6 +353,7 @@ def test_approving_treatment_plan_supersedes_other_draft_plans_for_same_project_
     first_plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.asc()).first()
 
     duplicate_incident = IncidentReport(
+        user_id="1",
         project_id=project.id,
         incident_type="blight",
         status="reported",

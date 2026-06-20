@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from agent.domain.activity_log import record_create_event, record_update_event, snapshot_model
+from db.database import current_user_id
 from db.models import (
     IncidentReport,
     IncidentSubject,
@@ -48,6 +49,7 @@ def _find_existing_incident(
     candidates = (
         session.query(IncidentReport)
         .filter(
+            IncidentReport.user_id == current_user_id.get(),
             IncidentReport.project_id == project_id,
             IncidentReport.incident_type == incident_type,
             IncidentReport.status.in_(OPEN_INCIDENT_STATUSES),
@@ -132,6 +134,7 @@ def create_incident_report(
     if existing:
         return existing
     incident = IncidentReport(
+        user_id=current_user_id.get(),
         project_id=project_id,
         incident_type=incident_type,
         status="reported",
@@ -191,7 +194,10 @@ def _treatment_steps(incident: IncidentReport) -> tuple[list[dict[str, Any]], li
 
 
 def draft_treatment_plan(session, incident_id: str) -> TreatmentPlan:
-    incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
+    incident = session.query(IncidentReport).filter(
+        IncidentReport.id == incident_id,
+        IncidentReport.user_id == current_user_id.get(),
+    ).first()
     if not incident:
         raise ValueError(f"No incident report found with id {incident_id}.")
     existing = (
@@ -266,7 +272,12 @@ def _incident_generation_run(session, *, project_id: str, revision_id: str, summ
 
 
 def approve_treatment_plan(session, treatment_plan_id: str) -> TreatmentPlan:
-    plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == treatment_plan_id).first()
+    plan = (
+        session.query(TreatmentPlan)
+        .join(IncidentReport, TreatmentPlan.incident_id == IncidentReport.id)
+        .filter(TreatmentPlan.id == treatment_plan_id, IncidentReport.user_id == current_user_id.get())
+        .first()
+    )
     if not plan:
         raise ValueError(f"No treatment plan found with id {treatment_plan_id}.")
     if plan.status != "draft":
@@ -397,7 +408,10 @@ def approve_treatment_plan(session, treatment_plan_id: str) -> TreatmentPlan:
 
 
 def resolve_incident(session, incident_id: str, notes: Optional[str] = None) -> IncidentReport:
-    incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
+    incident = session.query(IncidentReport).filter(
+        IncidentReport.id == incident_id,
+        IncidentReport.user_id == current_user_id.get(),
+    ).first()
     if not incident:
         raise ValueError(f"No incident report found with id {incident_id}.")
     before = snapshot_model(incident)

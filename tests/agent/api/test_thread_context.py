@@ -407,7 +407,7 @@ def test_add_incident_to_context(patched_sessionlocal, db_session, seed_garden_p
 @pytest.mark.integration
 def test_add_incident_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
     other_proj = make_project(db_session, seed_garden_profile, user_id="other-user")
-    incident = make_incident_report(db_session, project_id=other_proj.id)
+    incident = make_incident_report(db_session, project_id=other_proj.id, user_id="other-user")
     _make_thread(db_session)
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",
@@ -417,9 +417,20 @@ def test_add_incident_owned_by_other_user_returns_400(patched_sessionlocal, db_s
 
 
 @pytest.mark.integration
-def test_add_projectless_incident_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
-    # Incident with NULL project_id can't be scoped to any user
-    incident = make_incident_report(db_session, project_id=None)
+def test_add_owned_projectless_incident_succeeds(patched_sessionlocal, db_session, seed_garden_profile):
+    # IncidentReport.user_id (audit fix) scopes project-less incidents directly.
+    incident = make_incident_report(db_session, project_id=None, user_id=USER)
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "incident", "subject_id": incident.id},
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.integration
+def test_add_projectless_incident_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    incident = make_incident_report(db_session, project_id=None, user_id="other-user")
     _make_thread(db_session)
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",

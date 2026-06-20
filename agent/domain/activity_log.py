@@ -516,10 +516,13 @@ def record_delete_event(
 
 
 def get_activity_for_subject(session, *, subject_type: str, subject_id: str, limit: int = 20, event_type: Optional[str] = None):
+    from db.database import current_user_id
+
     query = (
         session.query(ActivityEvent)
         .join(ActivitySubject, ActivityEvent.id == ActivitySubject.event_id)
         .filter(
+            ActivityEvent.user_id == current_user_id.get(),
             ActivitySubject.subject_type == subject_type,
             ActivitySubject.subject_id == subject_id,
         )
