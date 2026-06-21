@@ -14,4 +14,3 @@ management domain.
 
 This domain describes generated task graphs, daily work execution, lifecycle
 transitions, recurrence, dependencies, and task side effects.
-

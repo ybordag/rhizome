@@ -61,4 +61,3 @@ garden constraints.
   partial sun location?
 - Should weather conditions at capture time be used to discount cloudy-day
   photos?
-

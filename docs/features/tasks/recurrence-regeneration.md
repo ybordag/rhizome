@@ -16,4 +16,3 @@ tasks while preserving user-modified tasks.
 - Regeneration rules
 - Preservation of manual changes
 - Open questions
-

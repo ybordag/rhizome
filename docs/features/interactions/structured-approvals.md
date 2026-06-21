@@ -15,4 +15,3 @@ review, treatment plan review, weather change review, and triage views.
 - API behavior
 - Frontend expectations
 - Open questions
-

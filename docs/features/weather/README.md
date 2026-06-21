@@ -13,4 +13,3 @@ domain.
 
 This domain describes weather fetching, forecast interpretation, task impact
 analysis, and approval-gated weather-driven schedule changes.
-

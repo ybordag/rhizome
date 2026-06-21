@@ -63,4 +63,3 @@ produces masks; the reasoning layer interprets symptoms in garden context.
 - Should species candidates be validated against a local plant database,
   PlantNet, iNaturalist, or a user-specific plant inventory first?
 - How should Rhizome represent "suspected disease" before incident confirmation?
-

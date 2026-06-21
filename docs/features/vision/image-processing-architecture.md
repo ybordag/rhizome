@@ -572,4 +572,3 @@ The next design checkpoint should define:
   storage, strengths, limitations, feature mapping, and evaluation criteria.
 - Hybrid pipeline: how LocateAnything boxes/points seed SAM 3 masks, and when
   the added cost is justified.
-

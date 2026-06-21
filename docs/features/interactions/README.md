@@ -13,4 +13,3 @@ structured interaction domain.
 
 This domain describes the confirmation and review layer that prevents Rhizome
 from making consequential changes without user intent.
-

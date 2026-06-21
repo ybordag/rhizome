@@ -14,4 +14,3 @@ incidents, and projects.
 - Pagination behavior
 - User workflows
 - Open questions
-

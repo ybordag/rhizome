@@ -13,4 +13,3 @@ and navigation domain.
 
 This domain describes how users and the agent find existing garden records and
 navigate projects, locations, and related context.
-

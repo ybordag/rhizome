@@ -67,4 +67,3 @@ Rhizome records.
   enhancement?
 - How should Rhizome represent "suspected duplicate" records before user
   cleanup?
-

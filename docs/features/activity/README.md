@@ -13,4 +13,3 @@ history domain.
 
 This domain describes Rhizome's append-only history model for state changes,
 care events, decisions, generated work, and project progress.
-

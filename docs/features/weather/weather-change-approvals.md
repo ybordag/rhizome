@@ -15,4 +15,3 @@ monitoring policy.
 - Auto-apply exceptions
 - Activity events
 - Open questions
-

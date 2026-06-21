@@ -15,4 +15,3 @@ Approval creates treatment tasks linked to the incident's project.
 - Task generation from treatment steps
 - Revision/rejection behavior
 - Open questions
-

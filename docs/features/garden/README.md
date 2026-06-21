@@ -14,4 +14,3 @@ model.
 
 This domain describes the persistent representation of the user's physical
 garden: profile, locations, containers, plants, batches, and care state.
-

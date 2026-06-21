@@ -167,4 +167,3 @@ Rhizome needs a reconciliation path:
   `VisionJob` failed with an actionable error
 
 This keeps the product behavior reliable without requiring Temporal for v1.
-

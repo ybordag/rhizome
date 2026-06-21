@@ -12,4 +12,3 @@ triage domain.
 
 This domain describes how Rhizome decides what the user should focus on now,
 using tasks, weather, temporal context, urgency, and session context.
-

@@ -17,4 +17,3 @@ growth state, and care fields.
 - Status transitions
 - Bulk operations
 - Open questions
-

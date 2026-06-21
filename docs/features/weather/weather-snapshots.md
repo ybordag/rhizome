@@ -14,4 +14,3 @@ impacts, recommendations, and raw payload.
 - Snapshot fields
 - Failure and stale-data behavior
 - Open questions
-

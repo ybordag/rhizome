@@ -15,4 +15,3 @@ constraints, soft preferences, and notes.
 - Confirmation and validation rules
 - Activity/history behavior
 - Open questions
-

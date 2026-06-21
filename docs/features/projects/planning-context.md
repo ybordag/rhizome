@@ -15,4 +15,3 @@ material, and resource usage before proposal generation.
 - Resource accounting
 - How context is presented to the agent
 - Open questions
-

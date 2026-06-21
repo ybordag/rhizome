@@ -14,4 +14,3 @@ alignment, and blocked-state penalties.
 - Filtering and limits
 - Relationship to triage snapshots
 - Open questions
-

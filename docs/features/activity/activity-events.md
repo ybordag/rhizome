@@ -15,4 +15,3 @@ subjects.
 - Before/after metadata
 - Actor semantics
 - Open questions
-

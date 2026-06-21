@@ -14,4 +14,3 @@ planning domain.
 
 This domain describes how Rhizome turns a user's gardening goal into a scoped,
 reviewable, versioned project plan.
-

@@ -65,4 +65,3 @@ record-only sighting or an incident candidate.
   symptom is real but taxonomy is unclear?
 - Should sightings be deduplicated by date, subject, and likely organism?
 - Which external local-observation sources should enrich sighting confidence?
-

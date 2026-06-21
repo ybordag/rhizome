@@ -14,4 +14,3 @@ cursor pagination, and linked subjects.
 - Pagination contract
 - Frontend display expectations
 - Open questions
-

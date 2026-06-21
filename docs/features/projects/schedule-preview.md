@@ -14,4 +14,3 @@ created from a proposal or active revision without writing tasks.
 - Difference from task generation
 - User workflows
 - Open questions
-

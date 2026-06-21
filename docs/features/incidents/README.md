@@ -12,4 +12,3 @@ and treatment domain.
 
 This domain describes how Rhizome tracks garden problems, drafts treatment
 plans, and turns approved treatments into tasks.
-

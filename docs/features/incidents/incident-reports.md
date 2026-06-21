@@ -15,4 +15,3 @@ summary, notes, project links, subjects, reporter, and detected time.
 - Status lifecycle
 - Resolution behavior
 - Open questions
-

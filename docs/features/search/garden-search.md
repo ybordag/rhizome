@@ -14,4 +14,3 @@ location, and status filters.
 - User workflows
 - Future full-text/vector search relationship
 - Open questions
-

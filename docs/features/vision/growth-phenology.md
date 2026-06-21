@@ -62,4 +62,3 @@ gardening stages and task readiness.
   angle, same distance, same container, or explicit user confirmation?
 - Should Rhizome store derived measurements separately from free-form notes?
 - How should low-confidence counts affect inventory reconciliation?
-

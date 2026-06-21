@@ -15,4 +15,3 @@ budget, effort preference, propagation preference, priorities, and notes.
 - User workflows
 - Tools and endpoints
 - Open questions
-

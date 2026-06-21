@@ -15,4 +15,3 @@ pending envelopes, and records resolution activity.
 - Activity events
 - Notification behavior
 - Open questions
-

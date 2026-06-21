@@ -14,4 +14,3 @@ health, budget, blockers, beds, containers, plants, and batches.
 - Progress summary rules
 - Navigation links
 - Open questions
-

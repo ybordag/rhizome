@@ -15,4 +15,3 @@ soil, mobility, notes, project assignment, and care history.
 - Availability/conflict behavior
 - Update and removal rules
 - Open questions
-

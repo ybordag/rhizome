@@ -13,4 +13,3 @@ containers, and beds.
 - Result grouping
 - Relationship to bed/container/project pages
 - Open questions
-

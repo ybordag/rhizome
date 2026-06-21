@@ -14,4 +14,3 @@ windows, then identifies materially affected tasks.
 - Task matching logic
 - Working window advisories
 - Open questions
-

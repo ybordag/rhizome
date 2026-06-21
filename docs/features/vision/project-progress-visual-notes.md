@@ -59,4 +59,3 @@ the reasoning layer decides whether anything should affect Rhizome state.
   user does not specify one?
 - Should project progress images be included in future planning context by
   default?
-

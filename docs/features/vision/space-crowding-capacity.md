@@ -62,4 +62,3 @@ constraints.
 - How should container size be inferred when pot labels or reference objects are
   not visible?
 - Where should long-lived visual planning constraints be stored?
-

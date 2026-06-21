@@ -16,4 +16,3 @@ temporal context.
 - Persistence and display
 - Failure behavior
 - Open questions
-

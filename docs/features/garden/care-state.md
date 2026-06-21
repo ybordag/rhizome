@@ -15,4 +15,3 @@ care-related tasks updates linked subjects automatically.
 - Care history display
 - Interaction with triage
 - Open questions
-

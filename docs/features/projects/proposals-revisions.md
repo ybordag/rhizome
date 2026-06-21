@@ -16,4 +16,3 @@ proposal creates a `ProjectRevision` and `ProjectExecutionSpec`.
 - Superseding old revisions
 - Interaction card behavior
 - Open questions
-

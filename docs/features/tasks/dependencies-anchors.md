@@ -15,4 +15,3 @@ germination or transplant readiness.
 - Cascade defer behavior
 - Display and explanation behavior
 - Open questions
-
