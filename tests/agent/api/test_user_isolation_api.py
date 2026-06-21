@@ -330,3 +330,134 @@ def test_alert_list_excludes_other_user(patched_sessionlocal, db_session):
     assert resp.status_code == 200
     assert "Their alert" not in str(resp.json())
     assert "My alert" in str(resp.json())
+
+
+# ---------------------------------------------------------------------------
+# Triage snapshot (GET /triage/latest) — different users have different
+# garden locations, so triage data must not be shared between them.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_triage_latest_scoped_to_current_user(patched_sessionlocal, db_session):
+    from db.models import TriageSnapshot
+
+    profile_1 = _profile(USER_1)
+    profile_2 = _profile(USER_2)
+    db_session.add_all([profile_1, profile_2])
+    db_session.commit()
+
+    snapshot_1 = TriageSnapshot(
+        id=_uid(), garden_profile_id=profile_1.id, timezone="America/Los_Angeles",
+        reasoning_summary="User 1 plan", user_focus_summary="user-1 session",
+    )
+    snapshot_2 = TriageSnapshot(
+        id=_uid(), garden_profile_id=profile_2.id, timezone="America/Los_Angeles",
+        reasoning_summary="User 2 plan", user_focus_summary="user-2 session",
+    )
+    db_session.add_all([snapshot_1, snapshot_2])
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/triage/latest?user_id={USER_1}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["user_focus_summary"] == "user-1 session"
+    assert body["id"] == snapshot_1.id
+
+
+@pytest.mark.integration
+def test_triage_latest_no_profile_returns_null(patched_sessionlocal, db_session):
+    resp = client.get(f"/internal/data/triage/latest?user_id={USER_1}")
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+# ---------------------------------------------------------------------------
+# Weather (#133) — different users have different garden locations, so
+# weather snapshots, impacted tasks, and change sets must not be shared.
+# ---------------------------------------------------------------------------
+
+def _weather_snapshot(garden_profile_id: str, **overrides) -> "WeatherSnapshot":
+    from db.models import WeatherSnapshot
+
+    data = {
+        "id": _uid(),
+        "garden_profile_id": garden_profile_id,
+        "timezone": "America/Los_Angeles",
+        "location_label": "Test Garden",
+        "forecast_start_date": _now(),
+        "forecast_end_date": _now() + timedelta(days=6),
+        "conditions_summary": "Mild and sunny.",
+        "derived_impacts": [],
+        "recommended_actions": [],
+    }
+    data.update(overrides)
+    return WeatherSnapshot(**data)
+
+
+@pytest.mark.integration
+def test_weather_latest_scoped_to_current_user(patched_sessionlocal, db_session):
+    profile_1 = _profile(USER_1)
+    profile_2 = _profile(USER_2)
+    db_session.add_all([profile_1, profile_2])
+    db_session.commit()
+
+    snapshot_1 = _weather_snapshot(profile_1.id, location_label="User 1's Garden")
+    snapshot_2 = _weather_snapshot(profile_2.id, location_label="User 2's Garden")
+    db_session.add_all([snapshot_1, snapshot_2])
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/weather/latest?user_id={USER_1}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == snapshot_1.id
+    assert body["location_label"] == "User 1's Garden"
+
+
+@pytest.mark.integration
+def test_weather_impacted_tasks_excludes_other_users_tasks(patched_sessionlocal, db_session):
+    from db.models import GardeningProject, Task
+
+    profile_1 = _profile(USER_1)
+    profile_2 = _profile(USER_2)
+    db_session.add_all([profile_1, profile_2])
+    db_session.commit()
+
+    project_2 = GardeningProject(id=_uid(), garden_profile_id=profile_2.id, user_id=USER_2, name="User 2 Project", goal="grow")
+    db_session.add(project_2)
+    db_session.commit()
+    task_2 = Task(
+        id=_uid(), project_id=project_2.id, title="Water tomatoes", type="maintenance",
+        status="pending", generator_key="water.tomato",
+    )
+    db_session.add(task_2)
+    snapshot_2 = _weather_snapshot(
+        profile_2.id,
+        derived_impacts=[{"date": "2026-06-22", "impact_type": "heat", "severity": "high", "summary": "Heat stress likely."}],
+    )
+    db_session.add(snapshot_2)
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/weather/tasks/impacted?user_id={USER_1}")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.integration
+def test_approve_weather_changes_404_for_other_users_change_set(patched_sessionlocal, db_session):
+    from db.models import WeatherTaskChangeSet
+
+    profile_2 = _profile(USER_2)
+    db_session.add(profile_2)
+    db_session.commit()
+    snapshot_2 = _weather_snapshot(profile_2.id)
+    db_session.add(snapshot_2)
+    db_session.commit()
+    change_set_2 = WeatherTaskChangeSet(
+        id=_uid(), weather_snapshot_id=snapshot_2.id, status="draft",
+        summary="User 2's weather changes", proposed_changes=[],
+    )
+    db_session.add(change_set_2)
+    db_session.commit()
+
+    resp = client.patch(f"/internal/data/weather/changesets/{change_set_2.id}/approve?user_id={USER_1}")
+    assert resp.status_code == 404

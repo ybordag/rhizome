@@ -18,8 +18,7 @@ from agent.domain.activity_log import (
 from db.database import SessionLocal, current_user_id
 from db.models import (
     GardenProfile, GardeningProject, Bed, Container,
-    Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
-    ProjectExecutionSpec, ProjectRevision, Task,
+    Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant, Task,
 )
 from typing import Optional
 from datetime import datetime, timezone
@@ -1044,86 +1043,32 @@ def get_project_progress(project_id: str) -> str:
     """Show task completion progress, timeline status, and budget tracking for a project."""
     session = SessionLocal()
     try:
-        project = session.query(GardeningProject).filter(
-            GardeningProject.id == project_id,
-            GardeningProject.user_id == current_user_id.get()
-        ).first()
-        if not project:
+        from agent.domain.projects import get_project_progress_data
+        data = get_project_progress_data(session, project_id)
+        if not data:
             return f"No project found with id {project_id}."
 
-        revision = (
-            session.query(ProjectRevision)
-            .filter(ProjectRevision.project_id == project_id, ProjectRevision.status == "active")
-            .order_by(ProjectRevision.revision_number.desc())
-            .first()
-        )
-        spec = (
-            session.query(ProjectExecutionSpec)
-            .filter(
-                ProjectExecutionSpec.project_id == project_id,
-                ProjectExecutionSpec.status == "active",
-            )
-            .order_by(ProjectExecutionSpec.updated_at.desc())
-            .first()
-        ) if revision else None
-
-        all_tasks = (
-            session.query(Task)
-            .filter(Task.project_id == project_id, Task.status != "superseded")
-            .all()
-        )
-        leaf_tasks = [t for t in all_tasks if t.parent_task_id is not None]
-        total = len(leaf_tasks)
-        done = sum(1 for t in leaf_tasks if t.status == "done")
-        skipped = sum(1 for t in leaf_tasks if t.status == "skipped")
-        blocked = sum(1 for t in leaf_tasks if t.status == "blocked")
-        in_progress = sum(1 for t in leaf_tasks if t.status == "in_progress")
-        pct = round((done + skipped) / total * 100) if total else 0
-
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
         lines = [
-            f"Progress: {project.name} ({project.status})",
+            f"Progress: {data['project_name']} ({data['status']})",
             f"",
-            f"Tasks: {done} done, {skipped} skipped, {in_progress} in progress, {blocked} blocked of {total} total ({pct}% complete)",
+            f"Tasks: {data['tasks_done']} done, {data['tasks_skipped']} skipped, "
+            f"{data['tasks_in_progress']} in progress, {data['tasks_blocked']} blocked "
+            f"of {data['tasks_total']} total ({data['percent_complete']}% complete)",
         ]
 
-        if spec:
-            windows = spec.timing_windows or {}
-            start = windows.get("expected_first_action_date")
-            completion = windows.get("expected_completion_date")
-            if start and completion:
-                try:
-                    start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
-                    end_dt = datetime.fromisoformat(completion) if isinstance(completion, str) else completion
-                    total_days = max((end_dt - start_dt).days, 1)
-                    elapsed_days = max((now - start_dt).days, 0)
-                    schedule_pct = round(min(elapsed_days / total_days * 100, 100))
-                    days_remaining = max((end_dt - now).days, 0)
-                    on_track = pct >= schedule_pct - 10
-                    lines.append(f"Timeline: {schedule_pct}% of planned duration elapsed, {days_remaining} days remaining")
-                    lines.append(f"Schedule health: {'on track' if on_track else 'behind schedule'} (work {pct}% done, time {schedule_pct}% elapsed)")
-                except (ValueError, TypeError):
-                    pass
+        if data["schedule_percent_elapsed"] is not None:
+            lines.append(f"Timeline: {data['schedule_percent_elapsed']}% of planned duration elapsed, {data['days_remaining']} days remaining")
+            lines.append(f"Schedule health: {'on track' if data['on_track'] else 'behind schedule'} (work {data['percent_complete']}% done, time {data['schedule_percent_elapsed']}% elapsed)")
 
-        if revision:
-            plan = revision.approved_plan or {}
-            cost_estimate = plan.get("cost_estimate") or {}
-            budget_cap = project.budget_ceiling
-            estimated_cost = cost_estimate.get("total_estimated_cost")
-            if budget_cap and estimated_cost:
-                lines.append(f"Budget: ${estimated_cost:.0f} estimated of ${budget_cap:.0f} cap ({round(estimated_cost / budget_cap * 100)}% of budget)")
+        if data["budget_percent_used"] is not None:
+            lines.append(f"Budget: ${data['estimated_cost']:.0f} estimated of ${data['budget_cap']:.0f} cap ({data['budget_percent_used']}% of budget)")
 
-        blocker_tasks = [t for t in leaf_tasks if t.status not in {"done", "skipped", "superseded", "deferred"}]
-        from agent.domain.tracker import compute_task_urgency
-        critical_tasks = [
-            t for t in blocker_tasks
-            if compute_task_urgency(t, now) == "blocker"
-        ]
+        critical_tasks = data["critical_tasks"]
         if critical_tasks:
             lines.append(f"")
             lines.append(f"Overdue/blocker tasks ({len(critical_tasks)}):")
             for t in critical_tasks[:5]:
-                lines.append(f"  - {t.title} [{t.status}] | id={t.id}")
+                lines.append(f"  - {t['title']} [{t['status']}] | id={t['id']}")
 
         return "\n".join(lines)
     except Exception as e:

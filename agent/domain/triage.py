@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone as dt_timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from agent.domain.activity_log import record_create_event
 from agent.core.model import get_triage_model
 from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
 from agent.domain.tracker import build_due_task_view, compute_task_urgency
 from agent.domain.weather import evaluate_weather_task_impacts, get_latest_weather_snapshot
-from db.models import Task, TriageSnapshot
+from db.database import current_user_id
+from db.models import GardenProfile, Task, TriageSnapshot
 from langchain.messages import HumanMessage, SystemMessage
 
 
@@ -260,13 +261,24 @@ def build_triage_snapshot(
     timezone: str = DEFAULT_TIMEZONE,
     days_ahead: int = 7,
     now: Optional[datetime] = None,
+    event_sink: Optional[Callable[[str, str], None]] = None,
 ) -> TriageSnapshot:
+    def _step(step: str, status: str) -> None:
+        if event_sink:
+            event_sink(step, status)
+
+    _step("Loading garden state", "running")
     temporal_context = build_temporal_context(session, timezone=timezone, now=now, days_ahead=days_ahead)
     session_context = infer_session_context(session, opener, timezone=timezone)
+    _step("Loading garden state", "done")
+
+    _step("Checking weather impacts", "running")
     weather_snapshot = get_latest_weather_snapshot(session)
     weather_impacts = evaluate_weather_task_impacts(session, weather_snapshot=weather_snapshot)
     impacts_by_task = _weather_impacts_by_task(weather_impacts)
+    _step("Checking weather impacts", "done")
 
+    _step("Scoring tasks", "running")
     rows = build_due_task_view(session, days_ahead=days_ahead, now=now)
     filtered_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -303,7 +315,9 @@ def build_triage_snapshot(
             routine_ids.append(task.id)
         else:
             project_ids.append(task.id)
+    _step("Scoring tasks", "done")
 
+    _step("Generating recommendations", "running")
     focus_summary = []
     if session_context.get("available_minutes") is not None:
         focus_summary.append(f"{session_context['available_minutes']} minutes available")
@@ -311,7 +325,9 @@ def build_triage_snapshot(
     if session_context.get("focus_project_id"):
         focus_summary.append(f"focused on project {session_context['focus_project_id']}")
 
+    profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
     snapshot = TriageSnapshot(
+        garden_profile_id=profile.id if profile else None,
         timezone=timezone,
         session_context=session_context,
         temporal_context=temporal_context,
@@ -343,7 +359,20 @@ def build_triage_snapshot(
         metadata={"recommended_count": len(snapshot.recommended_task_ids)},
         subjects=[{"subject_type": "triage_snapshot", "subject_id": snapshot.id, "role": "primary"}],
     )
+    _step("Generating recommendations", "done")
     return snapshot
+
+
+def get_latest_triage_snapshot(session) -> Optional[TriageSnapshot]:
+    profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
+    if not profile:
+        return None
+    return (
+        session.query(TriageSnapshot)
+        .filter(TriageSnapshot.garden_profile_id == profile.id)
+        .order_by(TriageSnapshot.created_at.desc())
+        .first()
+    )
 
 
 def format_triage_snapshot(session, snapshot: TriageSnapshot) -> str:
@@ -368,3 +397,23 @@ def format_triage_snapshot(session, snapshot: TriageSnapshot) -> str:
     if snapshot.user_focus_summary:
         sections.append(f"Context: {snapshot.user_focus_summary}")
     return "\n".join(sections)
+
+
+def triage_snapshot_to_view_data(session, snapshot: TriageSnapshot) -> dict[str, Any]:
+    """Structured-JSON shape for GET /triage/latest (#133)."""
+    all_ids = list(snapshot.urgent_task_ids or []) + list(snapshot.routine_task_ids or []) + list(snapshot.project_task_ids or [])
+    tasks_by_id = {task.id: task for task in session.query(Task).filter(Task.id.in_(all_ids or [""])).all()}
+
+    def _views(ids: list[str]) -> list[dict[str, Any]]:
+        return [tasks_by_id[tid].to_summary_view() for tid in ids if tid in tasks_by_id]
+
+    return {
+        "id": snapshot.id,
+        "created_at": snapshot.created_at,
+        "reasoning_summary": snapshot.reasoning_summary,
+        "user_focus_summary": snapshot.user_focus_summary,
+        "weather_snapshot_id": snapshot.weather_snapshot_id,
+        "urgent_tasks": _views(snapshot.urgent_task_ids or []),
+        "routine_tasks": _views(snapshot.routine_task_ids or []),
+        "project_tasks": _views(snapshot.project_task_ids or []),
+    }

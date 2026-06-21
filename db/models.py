@@ -203,6 +203,24 @@ class ProjectBrief(Base):
             f"Target completion: {_fmt_date(self.target_completion)}"
         )
 
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "status": self.status,
+            "goal": self.goal,
+            "desired_outcome": self.desired_outcome,
+            "target_start": self.target_start,
+            "target_completion": self.target_completion,
+            "budget_cap": self.budget_cap,
+            "effort_preference": self.effort_preference,
+            "propagation_preference": self.propagation_preference,
+            "priority_preferences": self.priority_preferences or [],
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
 
 class ProjectProposal(Base):
     __tablename__ = "project_proposal"
@@ -248,6 +266,44 @@ class ProjectProposal(Base):
             f"  Estimated effort: {effort} hours\n"
             f"  Summary: {self.summary}"
         )
+
+    def to_summary_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "brief_id": self.brief_id,
+            "version": self.version,
+            "status": self.status,
+            "title": self.title,
+            "summary": self.summary,
+            "total_estimated_cost": (self.cost_estimate or {}).get("total_estimated_cost"),
+            "expected_completion_date": (self.timeline_estimate or {}).get("expected_completion_date"),
+            "total_estimated_hours": (self.effort_estimate or {}).get("total_hours"),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def to_detail_view(self) -> dict:
+        d = self.to_summary_view()
+        d.update({
+            "recommended_approach": self.recommended_approach,
+            "selected_locations": self.selected_locations or [],
+            "selected_plants": self.selected_plants or [],
+            "material_strategy": self.material_strategy or {},
+            "propagation_strategy": self.propagation_strategy or {},
+            "assumptions": self.assumptions or [],
+            "tradeoffs": self.tradeoffs or [],
+            "risks": self.risks or [],
+            "feasibility_notes": self.feasibility_notes or [],
+            "cost_estimate": self.cost_estimate or {},
+            "timeline_estimate": self.timeline_estimate or {},
+            "effort_estimate": self.effort_estimate or {},
+            "maintenance_assumptions": self.maintenance_assumptions or {},
+            "resource_assumptions": self.resource_assumptions or {},
+            "budget_assumptions": self.budget_assumptions or {},
+            "timing_anchors": self.timing_anchors or {},
+        })
+        return d
 
 
 class ProjectRevision(Base):
@@ -992,10 +1048,12 @@ class WeatherSnapshot(Base):
     __tablename__ = "weather_snapshot"
     __table_args__ = (
         Index("ix_weather_snapshot_created_at", "created_at"),
+        Index("ix_weather_snapshot_garden_profile_id", "garden_profile_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=True)
     timezone = Column(String, nullable=False)
     location_label = Column(String, nullable=False)
     forecast_start_date = Column(DateTime, nullable=False)
@@ -1030,10 +1088,12 @@ class TriageSnapshot(Base):
     __tablename__ = "triage_snapshot"
     __table_args__ = (
         Index("ix_triage_snapshot_created_at", "created_at"),
+        Index("ix_triage_snapshot_garden_profile_id", "garden_profile_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    garden_profile_id = Column(String, ForeignKey("garden_profile.id"), nullable=True)
     timezone = Column(String, nullable=False)
     session_context = Column(JSON, default=dict)
     temporal_context = Column(JSON, default=dict)
@@ -1054,6 +1114,7 @@ class InteractionRecord(Base):
         Index("ix_interaction_record_status", "status"),
         Index("ix_interaction_record_project_id", "project_id"),
         Index("ix_interaction_record_type", "interaction_type"),
+        Index("ix_interaction_record_user_id", "user_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1063,6 +1124,7 @@ class InteractionRecord(Base):
     status = Column(String, nullable=False, default="pending")
     title = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
+    user_id = Column(String, nullable=True)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     source_type = Column(String, nullable=False)
     source_id = Column(String, nullable=True)
@@ -1083,10 +1145,12 @@ class IncidentReport(Base):
     __table_args__ = (
         Index("ix_incident_report_project_id", "project_id"),
         Index("ix_incident_report_status", "status"),
+        Index("ix_incident_report_user_id", "user_id"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False)
+    user_id = Column(String, nullable=True)
     project_id = Column(String, ForeignKey("gardening_project.id"), nullable=True)
     incident_type = Column(String, nullable=False)
     status = Column(String, nullable=False, default="reported")
@@ -1168,6 +1232,7 @@ class MonitorAlert(Base):
     expires_at = Column(DateTime, nullable=False)
     user_id = Column(String, nullable=False)
     # 'weather_critical' | 'weather_advisory' | 'working_window' | 'triage' | 'pest'
+    # | 'series' | 'treatment_plan'
     alert_type = Column(String, nullable=False)
     # 'critical' | 'high' | 'medium' | 'low'
     severity = Column(String, nullable=False)
@@ -1176,7 +1241,7 @@ class MonitorAlert(Base):
     # 'pending' | 'dismissed'
     status = Column(String, nullable=False, default="pending")
     dismissed_at = Column(DateTime, nullable=True)
-    # 'weather_snapshot' | 'triage_snapshot' | 'monitor_run'
+    # 'weather_snapshot' | 'triage_snapshot' | 'monitor_run' | 'treatment_plan'
     source_type = Column(String, nullable=True)
     source_id = Column(String, nullable=True)
     alert_metadata = Column("metadata", JSON, nullable=True)
@@ -1201,8 +1266,21 @@ class Thread(Base):
     last_message_preview = Column(String, nullable=True)
     last_active_at = Column(DateTime, nullable=True)
     message_count = Column(Integer, nullable=False, default=0)
+    pinned_context = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_view(self) -> dict:
+        return {
+            "thread_id": self.id,
+            "title": self.title,
+            "project_id": self.project_id,
+            "last_message_preview": self.last_message_preview,
+            "last_active_at": self.last_active_at,
+            "message_count": self.message_count,
+            "pinned_context": self.pinned_context or [],
+            "created_at": self.created_at,
+        }
 
 
 class CalendarAnnotation(Base):

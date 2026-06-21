@@ -33,7 +33,7 @@ Cambium (Go, port 8080)
 Rhizome (Python — FastAPI + LangGraph, port 8001)
     │
     │  in-process Python calls
-    ├── agent/tools/*          — 93 tools across garden, projects, operations
+    ├── agent/tools/*          — 94 tools across garden, projects, operations
     │
     │  HTTP  OpenAI-compatible  /v1/chat/completions
     ▼
@@ -78,7 +78,7 @@ agent/
                 interactions, activity_log)
   tools/
     garden/     — profile, plants, beds_containers, search
-    projects/   — projects, planning, tracker (93 tools total)
+    projects/   — projects, planning, tracker (94 tools total)
     operations/ — triage, care, incidents, interactions, weather, activity
 ```
 

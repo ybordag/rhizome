@@ -14,7 +14,12 @@ from datetime import datetime, timedelta
 import pytest
 
 from agent.domain.tracker import cascade_defer_to_dependents, get_daily_priority_tasks
-from agent.tools.operations.incidents import get_incident, list_incidents
+from agent.tools.operations.incidents import (
+    get_incident,
+    get_treatment_plan,
+    list_incidents,
+    resolve_incident,
+)
 from agent.tools.projects.planning import get_project_proposal
 from agent.tools.projects.projects import get_project_progress
 from agent.tools.projects.tracker import (
@@ -432,6 +437,22 @@ def test_list_incidents_empty(db_session, patched_sessionlocal):
     assert "No incidents found" in result
 
 
+@pytest.mark.integration
+def test_list_incidents_excludes_other_users_incidents(db_session, patched_sessionlocal):
+    """IncidentReport.user_id (audit fix) must scope list_incidents per user."""
+    from db.database import current_user_id
+
+    make_incident_report(db_session, user_id="owner-a", summary="Owner A's aphids")
+
+    current_user_id.set("owner-b")
+    try:
+        result = list_incidents.invoke({})
+        assert "No incidents found" in result
+        assert "Owner A's aphids" not in result
+    finally:
+        current_user_id.set("1")
+
+
 # ─── get_incident ──────────────────────────────────────────────────────────────
 
 @pytest.mark.integration
@@ -467,6 +488,88 @@ def test_get_incident_shows_no_plan_when_absent(db_session, patched_sessionlocal
 def test_get_incident_not_found(db_session, patched_sessionlocal):
     result = get_incident.invoke({"incident_id": "nonexistent-id"})
     assert "No incident found" in result
+
+
+@pytest.mark.integration
+def test_get_incident_rejects_another_users_incident(db_session, patched_sessionlocal):
+    """IncidentReport.user_id (audit fix) must gate get_incident — a known incident_id
+    belonging to a different user must be treated as not found, not silently served."""
+    from db.database import current_user_id
+
+    incident = make_incident_report(db_session, user_id="owner-a", summary="Owner A's aphids")
+
+    current_user_id.set("owner-b")
+    try:
+        result = get_incident.invoke({"incident_id": incident.id})
+        assert "No incident found" in result
+    finally:
+        current_user_id.set("1")
+
+
+# ─── get_treatment_plan ─────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+def test_get_treatment_plan_returns_detail(db_session, patched_sessionlocal):
+    incident = make_incident_report(db_session)
+    plan = make_treatment_plan(db_session, incident)
+
+    result = get_treatment_plan.invoke({"treatment_plan_id": plan.id})
+    assert plan.id in result
+    assert plan.approach_summary in result
+
+
+@pytest.mark.integration
+def test_get_treatment_plan_not_found(db_session, patched_sessionlocal):
+    result = get_treatment_plan.invoke({"treatment_plan_id": "nonexistent-id"})
+    assert "No treatment plan found" in result
+
+
+@pytest.mark.integration
+def test_get_treatment_plan_rejects_another_users_plan(db_session, patched_sessionlocal):
+    """get_treatment_plan joins through IncidentReport.user_id — a plan whose incident
+    belongs to a different user must be treated as not found."""
+    from db.database import current_user_id
+
+    incident = make_incident_report(db_session, user_id="owner-a")
+    plan = make_treatment_plan(db_session, incident)
+
+    current_user_id.set("owner-b")
+    try:
+        result = get_treatment_plan.invoke({"treatment_plan_id": plan.id})
+        assert "No treatment plan found" in result
+    finally:
+        current_user_id.set("1")
+
+
+# ─── resolve_incident ───────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+def test_resolve_incident_marks_resolved(db_session, patched_sessionlocal):
+    incident = make_incident_report(db_session)
+
+    result = resolve_incident.invoke({"incident_id": incident.id, "notes": "Treated and cleared"})
+
+    assert f"Resolved incident {incident.id}" in result
+    db_session.refresh(incident)
+    assert incident.status == "resolved"
+    assert "Treated and cleared" in incident.notes
+
+
+@pytest.mark.integration
+def test_resolve_incident_rejects_another_users_incident(db_session, patched_sessionlocal):
+    from db.database import current_user_id
+
+    incident = make_incident_report(db_session, user_id="owner-a")
+
+    current_user_id.set("owner-b")
+    try:
+        result = resolve_incident.invoke({"incident_id": incident.id})
+        assert "Failed to resolve incident" in result
+    finally:
+        current_user_id.set("1")
+
+    db_session.refresh(incident)
+    assert incident.status != "resolved"
 
 
 # ─── get_project_proposal ─────────────────────────────────────────────────────

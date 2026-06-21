@@ -3,10 +3,13 @@ Agent router  — POST /internal/agent
 Data router   — CRUD endpoints under /internal/data/
 """
 
+import asyncio
 import json
+import re
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
@@ -28,6 +31,7 @@ from agent.api.models import (
     DeferTaskRequest,
     RecordCareRequest,
     ReportIncidentRequest,
+    ResolveIncidentRequest,
     ResumeRequest,
     ResolveInteractionRequest,
     TaskActionRequest,
@@ -45,10 +49,16 @@ from agent.core.graph import agent
 from db.database import SessionLocal, current_user_id
 from db.models import (
     Bed, CalendarAnnotation, Container, GardenProfile, GardeningProject,
-    IncidentReport, MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
-    ProjectExpense, ShoppingItem, Task, TaskDependency, TaskSeries, TreatmentPlan,
+    IncidentReport, MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectBrief, ProjectContainer,
+    ProjectExpense, ProjectPlant, ProjectProposal, ShoppingItem, Task, TaskDependency,
+    TaskSeries, Thread, TreatmentPlan,
 )
+from pydantic import BaseModel as _BaseModel
 from sqlalchemy import func, or_
+
+# Heartbeat interval for the notifications SSE stream — module-level so tests
+# can monkeypatch it to a tiny value instead of waiting out a real 30s window.
+NOTIFICATION_HEARTBEAT_SECONDS = 30.0
 
 # ---------------------------------------------------------------------------
 # Agent router
@@ -126,8 +136,28 @@ def resume_agent(req: ResumeRequest):
     return AgentResponse(thread_id=req.thread_id, response=response_text, interaction=None)
 
 
+def get_streaming_agent(request: Request):
+    """Dependency indirection so tests can override this with a graph built
+    on a test-scoped async checkpointer (`app.dependency_overrides`) instead
+    of the real one built in agent/api/app.py's lifespan — see #141."""
+    return request.app.state.streaming_agent
+
+
+def _is_user_visible_llm_stream_event(event: dict) -> bool:
+    """Only expose tokens from the final assistant LLM node.
+
+    `astream_events()` also includes internal chat-model calls, such as the
+    triage summary model used while building context. Those are valid graph
+    internals but must not be streamed as user-facing assistant text (#142).
+    """
+    return (
+        event.get("event") == "on_chat_model_stream"
+        and (event.get("metadata") or {}).get("langgraph_node") == "llm_call"
+    )
+
+
 @agent_router.post("/agent/stream")
-async def stream_agent(req: AgentRequest):
+async def stream_agent(req: AgentRequest, streaming_agent=Depends(get_streaming_agent)):
     """
     Stream a LangGraph agent turn via SSE.
 
@@ -150,18 +180,21 @@ async def stream_agent(req: AgentRequest):
     }
 
     async def generate():
-        async for event in agent.astream_events(
+        async for event in streaming_agent.astream_events(
             {"messages": [HumanMessage(content=req.message)]},
             config=config,
             version="v2",
         ):
-            if event["event"] == "on_chat_model_stream":
+            if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
-        # After stream ends, check for a graph interrupt (interaction node)
-        state = agent.get_state(config)
+        # After stream ends, check for a graph interrupt (interaction node).
+        # Must use the async accessor — calling the sync .get_state() here
+        # would run on the same event loop driving this generator, which the
+        # async checkpointer classes explicitly reject (#141).
+        state = await streaming_agent.aget_state(config)
         if state.next:
             interrupts = [i for task in state.tasks for i in task.interrupts]
             if interrupts and isinstance(interrupts[0].value, dict):
@@ -173,7 +206,7 @@ async def stream_agent(req: AgentRequest):
 
 
 @agent_router.post("/agent/resume/stream")
-async def resume_agent_stream(req: ResumeRequest):
+async def resume_agent_stream(req: ResumeRequest, streaming_agent=Depends(get_streaming_agent)):
     """
     Resume a paused graph with SSE streaming.
     Same event format as /agent/stream.
@@ -181,17 +214,17 @@ async def resume_agent_stream(req: ResumeRequest):
     config = {"configurable": {"thread_id": req.thread_id, "user_id": req.user_id}}
 
     async def generate():
-        async for event in agent.astream_events(
+        async for event in streaming_agent.astream_events(
             Command(resume=req.resolution),
             config=config,
             version="v2",
         ):
-            if event["event"] == "on_chat_model_stream":
+            if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
-        state = agent.get_state(config)
+        state = await streaming_agent.aget_state(config)
         if state.next:
             interrupts = [i for task in state.tasks for i in task.interrupts]
             if interrupts and isinstance(interrupts[0].value, dict):
@@ -247,6 +280,40 @@ def _result_or_404(result) -> dict:
     return {"result": result}
 
 
+_UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+
+def _mutation_error_status(result) -> Optional[int]:
+    """Classify a tool's string result as an HTTP error status, or None on success.
+
+    Mutation tools return human-readable strings for both success and failure
+    (they're read by the LLM, so their return type can't change). The router
+    needs to tell the two apart to decide whether to build a structured view
+    or raise an HTTPException.
+    """
+    if not isinstance(result, str):
+        return None
+    lower = result.lower()
+    if re.search(r"\bno [a-z_ ]*found\b", lower) or "not found" in lower or "not assigned" in lower:
+        return 404
+    if (
+        lower.startswith("error")
+        or lower.startswith("invalid")
+        or lower.startswith("failed")
+        or "cannot " in lower
+        or "must be" in lower
+        or "must contain" in lower
+        or "but only" in lower
+    ):
+        return 400
+    return None
+
+
+def _extract_id_after(result: str, marker: str) -> Optional[str]:
+    match = re.search(rf"{re.escape(marker)} ({_UUID_RE})", result)
+    return match.group(1) if match else None
+
+
 # --- Alerts ---
 
 @data_router.get("/alerts")
@@ -298,6 +365,85 @@ def dismiss_alert(alert_id: str, user_id: str):
         alert.dismissed_at = now
         session.commit()
         return {"status": "dismissed"}
+    finally:
+        session.close()
+
+
+@data_router.get("/notifications/stream")
+async def notification_stream(user_id: str):
+    """
+    Long-lived SSE stream. Frontend opens once on app mount and keeps it open
+    for the session. Emits a heartbeat every 30s when no event is pending.
+    """
+    from agent.domain.notifications import get_or_create_user_queue, remove_user_queue
+
+    queue = get_or_create_user_queue(user_id)
+
+    async def generate():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=NOTIFICATION_HEARTBEAT_SECONDS)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        finally:
+            remove_user_queue(user_id)
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@data_router.get("/notifications")
+def get_notifications(user_id: str, since: str = None):
+    """
+    Current-state snapshot — called on app mount and on stream reconnection.
+    `since` (ISO datetime, optional) limits alerts/interactions to those
+    created after that timestamp.
+    """
+    from agent.domain.notifications import get_active_jobs
+    from db.models import InteractionRecord
+
+    uid = _set_user(user_id)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    since_dt = datetime.fromisoformat(since).replace(tzinfo=None) if since else None
+    session = SessionLocal()
+    try:
+        alert_query = session.query(MonitorAlert).filter(
+            MonitorAlert.user_id == uid,
+            MonitorAlert.status == "pending",
+            MonitorAlert.expires_at > now,
+        )
+        if since_dt:
+            alert_query = alert_query.filter(MonitorAlert.created_at > since_dt)
+        alerts = alert_query.order_by(MonitorAlert.severity, MonitorAlert.created_at.desc()).all()
+
+        interaction_query = session.query(InteractionRecord).filter(
+            InteractionRecord.user_id == uid,
+            InteractionRecord.status == "pending",
+        )
+        if since_dt:
+            interaction_query = interaction_query.filter(InteractionRecord.created_at > since_dt)
+        interactions = interaction_query.order_by(InteractionRecord.created_at.desc()).all()
+
+        return {
+            "alerts": [
+                {
+                    "id": a.id,
+                    "alert_type": a.alert_type,
+                    "severity": a.severity,
+                    "title": a.title,
+                    "body": a.body,
+                    "created_at": a.created_at.isoformat(),
+                    "expires_at": a.expires_at.isoformat(),
+                }
+                for a in alerts
+            ],
+            "pending_interactions": [
+                {"id": i.id, "title": i.title, "interaction_type": i.interaction_type}
+                for i in interactions
+            ],
+            "active_jobs": get_active_jobs(uid),
+        }
     finally:
         session.close()
 
@@ -441,8 +587,20 @@ def list_due_tasks(user_id: str, project_id: str = None, days_ahead: int = 7):
 @data_router.get("/tasks/blocked")
 def list_blocked_tasks(user_id: str, project_id: str = None):
     _set_user(user_id)
-    from agent.tools.projects.tracker import list_blocked_tasks as _list_blocked_tasks
-    return {"result": _list_blocked_tasks.invoke({"project_id": project_id})}
+    from agent.domain.tracker import build_blocked_task_view as _domain_blocked
+    session = SessionLocal()
+    try:
+        rows = _domain_blocked(session, project_id=project_id)
+        return [
+            row["task"].to_summary_view(
+                urgency=row["urgency"],
+                blocked=row["blocked"],
+                due_date=row["due_date"],
+            )
+            for row in rows
+        ]
+    finally:
+        session.close()
 
 
 @data_router.get("/tasks/{task_id}")
@@ -496,7 +654,21 @@ def update_task(task_id: str, user_id: str, body: UpdateTaskRequest = None):
     params = {"task_id": task_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return _result_or_404(_update_task.invoke(params))
+    result = _update_task.invoke(params)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        task = session.query(Task).filter(Task.id == task_id).first()
+        if not task or task.project_id not in [
+            pid for (pid,) in session.query(GardeningProject.id).filter(
+                GardeningProject.user_id == user_id).all()
+        ]:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return task.to_detail_view()
+    finally:
+        session.close()
 
 
 @data_router.post("/tasks/{task_id}/dependencies")
@@ -566,8 +738,21 @@ def explain_task_blockers(task_id: str, user_id: str):
 @data_router.get("/tasks/{task_id}/activity")
 def get_task_activity(task_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_task_activity as _get_task_activity
-    return _result_or_404(_get_task_activity.invoke({"task_id": task_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        task = session.query(Task).filter(Task.id == task_id).first()
+        if not task or task.project_id not in [
+            pid for (pid,) in session.query(GardeningProject.id).filter(
+                GardeningProject.user_id == user_id).all()
+        ]:
+            raise HTTPException(status_code=404, detail="Task not found")
+        events = get_activity_for_subject(session, subject_type="task", subject_id=task_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 @data_router.post("/tasks/materialize")
@@ -640,7 +825,21 @@ def update_task_series(series_id: str, user_id: str, body: UpdateTaskSeriesReque
     params = {"series_id": series_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return _result_or_404(_update_series.invoke(params))
+    result = _update_series.invoke(params)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        series = session.query(TaskSeries).filter(TaskSeries.id == series_id).first()
+        if not series or series.project_id not in [
+            pid for (pid,) in session.query(GardeningProject.id).filter(
+                GardeningProject.user_id == user_id).all()
+        ]:
+            raise HTTPException(status_code=404, detail="Task series not found")
+        return series.to_view()
+    finally:
+        session.close()
 
 
 # --- Projects ---
@@ -708,8 +907,16 @@ def get_project(project_id: str, user_id: str):
 @data_router.get("/projects/{project_id}/progress")
 def get_project_progress(project_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.projects import get_project_progress
-    return _result_or_404(get_project_progress.invoke({"project_id": project_id}))
+    from agent.api.views import ProjectProgressView
+    from agent.domain.projects import get_project_progress_data
+    session = SessionLocal()
+    try:
+        data = get_project_progress_data(session, project_id)
+        if not data:
+            raise HTTPException(status_code=404, detail=f"No project found with id {project_id}.")
+        return ProjectProgressView(**data)
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/tasks")
@@ -789,66 +996,204 @@ def bulk_update_project_tasks(project_id: str, user_id: str, body: BulkTaskUpdat
         session.close()
 
 
+def _project_detail_view(session, project_id: str, user_id: str):
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == user_id,
+    ).first()
+    if not project:
+        return None
+    plant_count = session.query(func.count(ProjectPlant.id)).filter(
+        ProjectPlant.project_id == project_id, ProjectPlant.removed_at == None).scalar() or 0
+    bed_count = session.query(func.count(ProjectBed.id)).filter(
+        ProjectBed.project_id == project_id).scalar() or 0
+    container_count = session.query(func.count(ProjectContainer.id)).filter(
+        ProjectContainer.project_id == project_id).scalar() or 0
+    batch_count = session.query(func.count(PlantBatch.id)).filter(
+        PlantBatch.project_id == project_id).scalar() or 0
+    return project.to_detail_view(
+        plant_count=plant_count, bed_count=bed_count,
+        container_count=container_count, batch_count=batch_count,
+    )
+
+
+def _project_or_404(session, project_id: str, user_id: str):
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == user_id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
 @data_router.post("/projects")
 def create_project(user_id: str, body: CreateProjectRequest):
     _set_user(user_id)
+    from agent.api.views import ProjectDetailView
     from agent.tools.projects.projects import create_project as _create
-    return {"result": _create.invoke(body.model_dump(exclude_none=True))}
+    result = _create.invoke(body.model_dump(exclude_none=True))
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    project_id = _extract_id_after(result, "with id")
+    session = SessionLocal()
+    try:
+        view = _project_detail_view(session, project_id, user_id)
+        if not view:
+            raise HTTPException(status_code=500, detail="Project was created but could not be re-fetched")
+        return ProjectDetailView(**view)
+    finally:
+        session.close()
 
 
 @data_router.patch("/projects/{project_id}")
 def update_project(project_id: str, user_id: str, body: UpdateProjectRequest = None):
     _set_user(user_id)
+    from agent.api.views import ProjectDetailView
     from agent.tools.projects.projects import update_project as _update
     params = {"project_id": project_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return _result_or_404(_update.invoke(params))
+    result = _update.invoke(params)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        view = _project_detail_view(session, project_id, user_id)
+        if not view:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return ProjectDetailView(**view)
+    finally:
+        session.close()
 
 
 @data_router.delete("/projects/{project_id}")
 def delete_project(project_id: str, user_id: str):
     _set_user(user_id)
+    from agent.api.views import ProjectDetailView
     from agent.tools.projects.projects import delete_project as _delete
-    return _result_or_404(_delete.invoke({"project_id": project_id}))
+    session = SessionLocal()
+    try:
+        view = _project_detail_view(session, project_id, user_id)
+        if not view:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        session.close()
+    result = _delete.invoke({"project_id": project_id})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    return ProjectDetailView(**view)
 
 
 @data_router.get("/projects/{project_id}/brief")
 def get_project_brief(project_id: str, user_id: str):
     _set_user(user_id)
+    from agent.api.views import ProjectBriefView
     from agent.tools.projects.planning import get_project_brief as _get_brief
-    return _result_or_404(_get_brief.invoke({"project_id": project_id}))
+    result = _get_brief.invoke({"project_id": project_id})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        brief = session.query(ProjectBrief).filter(ProjectBrief.project_id == project_id).first()
+        if not brief:
+            raise HTTPException(status_code=404, detail=f"No brief found for project {project_id}.")
+        return ProjectBriefView(**brief.to_view())
+    finally:
+        session.close()
 
 
 @data_router.patch("/projects/{project_id}/brief")
 def update_project_brief(project_id: str, user_id: str, body: UpdateBriefRequest = None):
     _set_user(user_id)
+    from agent.api.views import ProjectBriefView
     from agent.tools.projects.planning import update_project_brief as _update_brief
     params = {"project_id": project_id}
     if body:
-        params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return _result_or_404(_update_brief.invoke(params))
+        supported = {
+            "desired_outcome", "target_start", "target_completion", "budget_cap",
+            "effort_preference", "propagation_preference", "priority_preferences",
+            "notes", "status",
+        }
+        params.update({k: v for k, v in body.model_dump().items() if k in supported and v is not None})
+    result = _update_brief.invoke(params)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        brief = session.query(ProjectBrief).filter(ProjectBrief.project_id == project_id).first()
+        if not brief:
+            raise HTTPException(status_code=404, detail=f"No brief found for project {project_id}.")
+        return ProjectBriefView(**brief.to_view())
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/proposals")
 def list_project_proposals(project_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.planning import list_project_proposals as _list
-    return _result_or_404(_list.invoke({"project_id": project_id}))
+    from agent.api.views import ProposalSummaryView
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        proposals = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.project_id == project_id)
+            .order_by(ProjectProposal.version.desc())
+            .all()
+        )
+        return [ProposalSummaryView(**p.to_summary_view()) for p in proposals]
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/proposals/{proposal_id}")
 def get_project_proposal(project_id: str, proposal_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.planning import get_project_proposal as _get
-    return _result_or_404(_get.invoke({"proposal_id": proposal_id}))
+    from agent.api.views import ProposalDetailView
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        proposal = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.id == proposal_id, ProjectProposal.project_id == project_id)
+            .first()
+        )
+        if not proposal:
+            raise HTTPException(status_code=404, detail=f"No proposal found with id {proposal_id} for project {project_id}.")
+        return ProposalDetailView(**proposal.to_detail_view())
+    finally:
+        session.close()
 
 
 @data_router.post("/projects/{project_id}/proposals/{proposal_id}/accept")
 def accept_project_proposal(project_id: str, proposal_id: str, user_id: str):
     _set_user(user_id)
+    from agent.api.views import ProposalDetailView
     from agent.tools.projects.planning import accept_project_proposal as _accept
-    return _result_or_404(_accept.invoke({"proposal_id": proposal_id}))
+    result = _accept.invoke({"project_id": project_id, "proposal_id": proposal_id})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        proposal = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.id == proposal_id, ProjectProposal.project_id == project_id)
+            .first()
+        )
+        if not proposal:
+            raise HTTPException(status_code=404, detail=f"No proposal found with id {proposal_id} for project {project_id}.")
+        return ProposalDetailView(**proposal.to_detail_view())
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/series")
@@ -981,11 +1326,25 @@ def get_project_activity(
     since: str = None, before_timestamp: str = None, limit: int = 20,
 ):
     _set_user(user_id)
-    from agent.tools.operations.activity import list_project_activity
-    return {"result": list_project_activity.invoke({
-        "project_id": project_id, "category": category, "event_type": event_type,
-        "since": since, "before_timestamp": before_timestamp, "limit": limit,
-    })}
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, list_recent_activity_entries
+
+    session = SessionLocal()
+    try:
+        project = session.query(GardeningProject).filter(
+            GardeningProject.id == project_id, GardeningProject.user_id == user_id
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        since_dt = datetime.fromisoformat(since) if since else None
+        before_dt = datetime.fromisoformat(before_timestamp) if before_timestamp else None
+        events = list_recent_activity_entries(
+            session, project_id=project_id, category=category, event_type=event_type,
+            since=since_dt, before_timestamp=before_dt, limit=limit,
+        )
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # --- Monitor ---
@@ -1064,7 +1423,16 @@ def get_garden_profile(user_id: str):
 def update_garden_profile(user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.profile import update_garden_profile as _update
-    return {"result": _update.invoke(body or {})}
+    result = _update.invoke(body or {})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        profile = session.query(GardenProfile).filter(GardenProfile.user_id == user_id).first()
+        return profile.to_view()
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1139,7 +1507,16 @@ def get_bed(bed_id: str, user_id: str):
 def update_bed(bed_id: str, user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import update_bed as _update
-    return _result_or_404(_update.invoke({"bed_id": bed_id, **(body or {})}))
+    result = _update.invoke({"bed_id": bed_id, **(body or {})})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        bed = session.query(Bed).filter(Bed.id == bed_id, Bed.user_id == user_id).first()
+        return bed.to_view()
+    finally:
+        session.close()
 
 
 @data_router.delete("/garden/beds/{bed_id}")
@@ -1172,8 +1549,18 @@ def get_bed_care_history(bed_id: str, user_id: str, limit: int = 10):
 @data_router.get("/garden/beds/{bed_id}/activity")
 def get_bed_activity(bed_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_bed_activity as _get
-    return _result_or_404(_get.invoke({"bed_id": bed_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        bed = session.query(Bed).filter(Bed.id == bed_id, Bed.user_id == user_id).first()
+        if not bed:
+            raise HTTPException(status_code=404, detail="Bed not found")
+        events = get_activity_for_subject(session, subject_type="bed", subject_id=bed_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1217,14 +1604,37 @@ def get_container(container_id: str, user_id: str):
 def add_container(user_id: str, body: dict):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import add_container as _add
-    return {"result": _add.invoke(body)}
+    result = _add.invoke(body)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    container_id = _extract_id_after(result, "with id")
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.id == container_id, Container.user_id == user_id
+        ).first()
+        return container.to_view()
+    finally:
+        session.close()
 
 
 @data_router.patch("/garden/containers/{container_id}")
 def update_container(container_id: str, user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.beds_containers import update_container as _update
-    return _result_or_404(_update.invoke({"container_id": container_id, **(body or {})}))
+    result = _update.invoke({"container_id": container_id, **(body or {})})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.id == container_id, Container.user_id == user_id
+        ).first()
+        return container.to_view()
+    finally:
+        session.close()
 
 
 
@@ -1259,8 +1669,20 @@ def get_container_care_history(container_id: str, user_id: str, limit: int = 10)
 @data_router.get("/garden/containers/{container_id}/activity")
 def get_container_activity(container_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_container_activity as _get
-    return _result_or_404(_get.invoke({"container_id": container_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        container = session.query(Container).filter(
+            Container.id == container_id, Container.user_id == user_id
+        ).first()
+        if not container:
+            raise HTTPException(status_code=404, detail="Container not found")
+        events = get_activity_for_subject(session, subject_type="container", subject_id=container_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1344,14 +1766,161 @@ def get_plant(plant_id: str, user_id: str):
 def add_plant(user_id: str, body: dict):
     _set_user(user_id)
     from agent.tools.garden.plants import add_plant as _add
-    return {"result": _add.invoke(body)}
+    result = _add.invoke(body)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    plant_id = _extract_id_after(result, "with id")
+    session = SessionLocal()
+    try:
+        plant = session.query(Plant).filter(Plant.id == plant_id, Plant.user_id == user_id).first()
+        return plant.to_detail_view()
+    finally:
+        session.close()
+
+
+@data_router.post("/garden/plants/batch")
+def batch_add_plants(user_id: str, body: dict):
+    _set_user(user_id)
+    from agent.api.views import PlantBatchResultView
+    from agent.tools.garden.plants import batch_add_plant_type
+    result = batch_add_plant_type.invoke(body)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    match = re.search(rf"\(id: ({_UUID_RE})\)", result)
+    batch_id = match.group(1) if match else None
+    session = SessionLocal()
+    try:
+        batch = session.query(PlantBatch).filter(
+            PlantBatch.id == batch_id, PlantBatch.user_id == user_id
+        ).first()
+        plants = session.query(Plant).filter(Plant.batch_id == batch_id).all()
+        return PlantBatchResultView(
+            batch_id=batch.id,
+            batch_name=batch.name,
+            plant_name=batch.plant_name,
+            variety=batch.variety,
+            quantity_sown=batch.quantity_sown,
+            project_id=batch.project_id,
+            created_at=batch.created_at,
+            plants=[p.to_summary_view() for p in plants],
+        )
+    finally:
+        session.close()
+
+
+# NOTE: these /garden/plants/batch* routes must be registered before the
+# /garden/plants/{plant_id} routes below — Starlette matches path routes in
+# registration order, and {plant_id} happily matches the literal "batch"
+# segment, which would otherwise shadow these routes entirely.
+@data_router.patch("/garden/plants/batch")
+def batch_update_plants(user_id: str, body: dict):
+    _set_user(user_id)
+    from agent.tools.garden.plants import batch_update_plants as _batch_update
+
+    # Capture which plants match the filter *before* mutating, using the same
+    # predicate the tool applies, so we know exactly which rows it touched —
+    # the tool's return string doesn't include plant ids.
+    session = SessionLocal()
+    try:
+        query = session.query(Plant).filter(
+            Plant.user_id == user_id,
+            Plant.name.ilike(f"%{body.get('name', '')}%"),
+            Plant.status != "removed",
+        )
+        if body.get("variety"):
+            query = query.filter(Plant.variety.ilike(f"%{body['variety']}%"))
+        if body.get("current_status"):
+            query = query.filter(Plant.status == body["current_status"])
+        if body.get("project_id"):
+            query = query.join(ProjectPlant, Plant.id == ProjectPlant.plant_id).filter(
+                ProjectPlant.project_id == body["project_id"],
+                ProjectPlant.removed_at == None,
+            )
+        candidates = query.order_by(Plant.created_at.asc()).all()
+        if body.get("quantity") is not None and body["quantity"] <= len(candidates):
+            candidates = candidates[: body["quantity"]]
+        affected_ids = [p.id for p in candidates]
+    finally:
+        session.close()
+
+    result = _batch_update.invoke(body)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+
+    session = SessionLocal()
+    try:
+        plants = session.query(Plant).filter(Plant.id.in_(affected_ids)).all() if affected_ids else []
+        return [p.to_summary_view() for p in plants]
+    finally:
+        session.close()
+
+
+@data_router.patch("/garden/plants/batch/remove")
+def batch_remove_plants(user_id: str, body: dict):
+    """Soft delete for multiple plants — marks all as removed with a required reason."""
+    _set_user(user_id)
+    from agent.tools.garden.plants import batch_remove_plants as _batch_remove
+
+    session = SessionLocal()
+    try:
+        query = session.query(Plant).filter(
+            Plant.user_id == user_id,
+            Plant.name.ilike(f"%{body.get('name', '')}%"),
+            Plant.status != "removed",
+        )
+        if body.get("variety"):
+            query = query.filter(Plant.variety.ilike(f"%{body['variety']}%"))
+        if body.get("current_status"):
+            query = query.filter(Plant.status == body["current_status"])
+        if body.get("project_id"):
+            query = query.join(ProjectPlant, Plant.id == ProjectPlant.plant_id).filter(
+                ProjectPlant.project_id == body["project_id"],
+                ProjectPlant.removed_at == None,
+            )
+        candidates = query.order_by(Plant.created_at.asc()).all()
+        if body.get("quantity") is not None and body["quantity"] <= len(candidates):
+            candidates = candidates[: body["quantity"]]
+        affected_ids = [p.id for p in candidates]
+    finally:
+        session.close()
+
+    result = _batch_remove.invoke(body)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+
+    session = SessionLocal()
+    try:
+        plants = (
+            session.query(Plant)
+            .filter(Plant.id.in_(affected_ids), Plant.user_id == user_id)
+            .order_by(Plant.created_at.asc())
+            .all()
+            if affected_ids
+            else []
+        )
+        return [p.to_summary_view() for p in plants]
+    finally:
+        session.close()
 
 
 @data_router.patch("/garden/plants/{plant_id}")
 def update_plant(plant_id: str, user_id: str, body: dict = None):
     _set_user(user_id)
     from agent.tools.garden.plants import update_plant as _update
-    return _result_or_404(_update.invoke({"plant_id": plant_id, **(body or {})}))
+    result = _update.invoke({"plant_id": plant_id, **(body or {})})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        plant = session.query(Plant).filter(Plant.id == plant_id, Plant.user_id == user_id).first()
+        return plant.to_detail_view()
+    finally:
+        session.close()
 
 
 @data_router.patch("/garden/plants/{plant_id}/remove")
@@ -1368,28 +1937,6 @@ def delete_plant(plant_id: str, user_id: str):
     _set_user(user_id)
     from agent.tools.garden.plants import delete_plant as _delete
     return _result_or_404(_delete.invoke({"plant_id": plant_id}))
-
-
-@data_router.post("/garden/plants/batch")
-def batch_add_plants(user_id: str, body: dict):
-    _set_user(user_id)
-    from agent.tools.garden.plants import batch_add_plant_type
-    return {"result": batch_add_plant_type.invoke(body)}
-
-
-@data_router.patch("/garden/plants/batch")
-def batch_update_plants(user_id: str, body: dict):
-    _set_user(user_id)
-    from agent.tools.garden.plants import batch_update_plants as _batch_update
-    return {"result": _batch_update.invoke(body)}
-
-
-@data_router.patch("/garden/plants/batch/remove")
-def batch_remove_plants(user_id: str, body: dict):
-    """Soft delete for multiple plants — marks all as removed with a required reason."""
-    _set_user(user_id)
-    from agent.tools.garden.plants import batch_remove_plants as _batch_remove
-    return {"result": _batch_remove.invoke(body)}
 
 
 @data_router.get("/garden/plants/{plant_id}/care/state")
@@ -1415,8 +1962,18 @@ def get_plant_care_history(plant_id: str, user_id: str, limit: int = 10):
 @data_router.get("/garden/plants/{plant_id}/activity")
 def get_plant_activity(plant_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_plant_activity as _get
-    return _result_or_404(_get.invoke({"plant_id": plant_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        plant = session.query(Plant).filter(Plant.id == plant_id, Plant.user_id == user_id).first()
+        if not plant:
+            raise HTTPException(status_code=404, detail="Plant not found")
+        events = get_activity_for_subject(session, subject_type="plant", subject_id=plant_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1569,8 +2126,20 @@ def delete_batch(batch_id: str, user_id: str):
 @data_router.get("/garden/batches/{batch_id}/activity")
 def get_batch_activity(batch_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_batch_activity as _get
-    return _result_or_404(_get.invoke({"batch_id": batch_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        batch = session.query(PlantBatch).filter(
+            PlantBatch.id == batch_id, PlantBatch.user_id == user_id
+        ).first()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        events = get_activity_for_subject(session, subject_type="batch", subject_id=batch_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1618,8 +2187,42 @@ def unified_search(
 @data_router.get("/garden/locations/{location}")
 def list_by_location(location: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.garden.search import list_by_location as _list
-    return {"result": _list.invoke({"location": location})}
+    from agent.api.views import LocationResultsView
+
+    session = SessionLocal()
+    try:
+        loc = f"%{location}%"
+        beds = session.query(Bed).filter(Bed.user_id == user_id, Bed.location.ilike(loc)).all()
+        containers = session.query(Container).filter(
+            Container.user_id == user_id, Container.location.ilike(loc)
+        ).all()
+
+        bed_ids = [b.id for b in beds]
+        container_ids = [c.id for c in containers]
+        plants = []
+        if bed_ids or container_ids:
+            from sqlalchemy import or_
+            plants = session.query(Plant).filter(
+                Plant.user_id == user_id,
+                Plant.status != "removed",
+                or_(Plant.bed_id.in_(bed_ids), Plant.container_id.in_(container_ids)),
+            ).all()
+
+        bed_names = {b.id: b.name for b in beds}
+        container_names = {c.id: c.name for c in containers}
+
+        def _location_name(p):
+            if p.container_id:
+                return container_names.get(p.container_id)
+            return bed_names.get(p.bed_id)
+
+        return LocationResultsView(
+            beds=[b.to_view() for b in beds],
+            containers=[c.to_view() for c in containers],
+            plants=[p.to_summary_view(location_name=_location_name(p)) for p in plants],
+        )
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1629,8 +2232,17 @@ def list_by_location(location: str, user_id: str):
 @data_router.get("/triage/latest")
 def get_triage_snapshot(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.triage import get_latest_triage_snapshot
-    return {"result": get_latest_triage_snapshot.invoke({})}
+    from agent.api.views import TriageSnapshotView
+    from agent.domain.triage import get_latest_triage_snapshot, triage_snapshot_to_view_data
+
+    session = SessionLocal()
+    try:
+        snapshot = get_latest_triage_snapshot(session)
+        if not snapshot:
+            return None
+        return TriageSnapshotView(**triage_snapshot_to_view_data(session, snapshot))
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1640,29 +2252,79 @@ def get_triage_snapshot(user_id: str):
 @data_router.get("/weather/latest")
 def get_weather_snapshot(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.weather import get_latest_weather_snapshot
-    return {"result": get_latest_weather_snapshot.invoke({})}
+    from agent.api.views import WeatherSnapshotView
+    from agent.domain.weather import get_latest_weather_snapshot, weather_snapshot_to_view_data
+
+    session = SessionLocal()
+    try:
+        snapshot = get_latest_weather_snapshot(session)
+        if not snapshot:
+            return None
+        return WeatherSnapshotView(**weather_snapshot_to_view_data(snapshot))
+    finally:
+        session.close()
 
 
 @data_router.post("/weather/refresh")
 def refresh_weather(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.weather import refresh_weather_snapshot
-    return {"result": refresh_weather_snapshot.invoke({})}
+    from agent.api.views import WeatherSnapshotView
+    from agent.domain.weather import refresh_weather_snapshot as _refresh, weather_snapshot_to_view_data
+
+    session = SessionLocal()
+    try:
+        snapshot = _refresh(session)
+        session.commit()
+        return WeatherSnapshotView(**weather_snapshot_to_view_data(snapshot))
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/weather/tasks/impacted")
-def weather_impacted_tasks(user_id: str):
+def weather_impacted_tasks(user_id: str, project_id: str = None):
     _set_user(user_id)
-    from agent.tools.operations.weather import list_weather_impacted_tasks
-    return {"result": list_weather_impacted_tasks.invoke({})}
+    from agent.api.views import WeatherImpactedTaskView
+    from agent.domain.weather import evaluate_weather_task_impacts
+
+    session = SessionLocal()
+    try:
+        impacts = evaluate_weather_task_impacts(session, project_id=project_id)
+        return [WeatherImpactedTaskView(**impact) for impact in impacts]
+    finally:
+        session.close()
 
 
 @data_router.patch("/weather/changesets/{changeset_id}/approve")
 def approve_weather_changes(changeset_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.weather import approve_weather_task_changes
-    return _result_or_404(approve_weather_task_changes.invoke({"change_set_id": changeset_id}))
+    from agent.api.views import WeatherTaskChangeSetView
+    from agent.domain.weather import approve_weather_task_changes as _approve
+
+    session = SessionLocal()
+    try:
+        change_set = _approve(session, changeset_id)
+        session.commit()
+        task_ids = [item.get("task_id") for item in (change_set.proposed_changes or []) if item.get("task_id")]
+        tasks = session.query(Task).filter(Task.id.in_(task_ids or [""])).all() if task_ids else []
+        return WeatherTaskChangeSetView(
+            id=change_set.id,
+            status=change_set.status,
+            summary=change_set.summary,
+            weather_snapshot_id=change_set.weather_snapshot_id,
+            created_at=change_set.created_at,
+            approved_at=change_set.approved_at,
+            affected_tasks=[t.to_summary_view() for t in tasks],
+        )
+    except ValueError as e:
+        session.rollback()
+        message = str(e)
+        status = 404 if message.lower().startswith("no ") else 400
+        raise HTTPException(status_code=status, detail=message)
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1670,19 +2332,11 @@ def approve_weather_changes(changeset_id: str, user_id: str):
 # ---------------------------------------------------------------------------
 
 def _get_incident_for_user(session, incident_id: str, user_id: str):
-    """Return the incident if it belongs to the user, else None.
-
-    Project-less incidents (project_id IS NULL) cannot be scoped to an owner
-    and are therefore inaccessible through ownership-gated write endpoints.
-    """
-    incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
-    if not incident or not incident.project_id:
-        return None
-    project = session.query(GardeningProject).filter(
-        GardeningProject.id == incident.project_id,
-        GardeningProject.user_id == user_id,
+    """Return the incident if it belongs to the user, else None."""
+    return session.query(IncidentReport).filter(
+        IncidentReport.id == incident_id,
+        IncidentReport.user_id == user_id,
     ).first()
-    return incident if project else None
 
 
 @data_router.get("/incidents")
@@ -1698,17 +2352,12 @@ def list_incidents(
     subject_id: str = None,
 ):
     _set_user(user_id)
-    from agent.tools.operations.incidents import list_incidents as _list
-    # Pass base params through the tool, apply additional filters in Python
-    result_str = _list.invoke({"project_id": project_id, "status": status})
-    # The tool returns a string; for the new filters we query directly
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import incident_to_view_data
+
     session = SessionLocal()
     try:
-        user_pids = {pid for (pid,) in session.query(GardeningProject.id).filter(
-            GardeningProject.user_id == user_id).all()}
-        query = session.query(IncidentReport).filter(
-            IncidentReport.project_id.in_(user_pids)
-        )
+        query = session.query(IncidentReport).filter(IncidentReport.user_id == user_id)
         if project_id:
             query = query.filter(IncidentReport.project_id == project_id)
         if status:
@@ -1728,20 +2377,7 @@ def list_incidents(
                 IncidentSubject.subject_id == subject_id,
             )
         incidents = query.order_by(IncidentReport.created_at.desc()).all()
-        return [
-            {
-                "id": inc.id,
-                "incident_type": inc.incident_type,
-                "status": inc.status,
-                "severity": inc.severity,
-                "summary": inc.summary,
-                "notes": inc.notes,
-                "project_id": inc.project_id,
-                "detected_at": inc.detected_at,
-                "created_at": inc.created_at,
-            }
-            for inc in incidents
-        ]
+        return [IncidentView(**incident_to_view_data(inc)) for inc in incidents]
     finally:
         session.close()
 
@@ -1749,20 +2385,52 @@ def list_incidents(
 @data_router.post("/incidents")
 def report_incident(user_id: str, body: ReportIncidentRequest):
     _set_user(user_id)
-    from agent.tools.operations.incidents import report_incident as _report
-    return {"result": _report.invoke(body.model_dump(exclude_none=True))}
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import create_incident_report, incident_to_view_data
+
+    session = SessionLocal()
+    try:
+        incident = create_incident_report(
+            session,
+            project_id=None,
+            incident_type=body.incident_type,
+            severity=body.severity,
+            summary=body.summary,
+            notes=body.notes,
+            subjects=body.subjects,
+        )
+        session.commit()
+        session.refresh(incident)
+        return IncidentView(**incident_to_view_data(incident))
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/incidents/{incident_id}")
 def get_incident(incident_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.incidents import get_incident as _get
-    return _result_or_404(_get.invoke({"incident_id": incident_id}))
+    from agent.api.views import IncidentDetailView
+    from agent.domain.incidents import incident_detail_to_view_data
+
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return IncidentDetailView(**incident_detail_to_view_data(session, incident))
+    finally:
+        session.close()
 
 
 @data_router.patch("/incidents/{incident_id}")
 def update_incident(incident_id: str, user_id: str, body: UpdateIncidentRequest):
     _set_user(user_id)
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import incident_to_view_data
+
     session = SessionLocal()
     try:
         incident = _get_incident_for_user(session, incident_id, user_id)
@@ -1777,16 +2445,7 @@ def update_incident(incident_id: str, user_id: str, body: UpdateIncidentRequest)
         if body.incident_type is not None:
             incident.incident_type = body.incident_type
         session.commit()
-        return {
-            "id": incident.id,
-            "incident_type": incident.incident_type,
-            "status": incident.status,
-            "severity": incident.severity,
-            "summary": incident.summary,
-            "notes": incident.notes,
-            "project_id": incident.project_id,
-            "created_at": incident.created_at,
-        }
+        return IncidentView(**incident_to_view_data(incident))
     finally:
         session.close()
 
@@ -1817,22 +2476,64 @@ def delete_incident(incident_id: str, user_id: str):
 
 
 @data_router.patch("/incidents/{incident_id}/resolve")
-def resolve_incident(incident_id: str, user_id: str):
+def resolve_incident(incident_id: str, user_id: str, body: ResolveIncidentRequest = None):
     _set_user(user_id)
-    from agent.tools.operations.incidents import resolve_incident as _resolve
-    return _result_or_404(_resolve.invoke({"incident_id": incident_id}))
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import incident_to_view_data
+    from agent.domain.incidents import resolve_incident as _resolve_incident
+
+    session = SessionLocal()
+    try:
+        incident = _resolve_incident(session, incident_id, notes=body.notes if body else None)
+        session.commit()
+        session.refresh(incident)
+        return IncidentView(**incident_to_view_data(incident))
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/incidents/{incident_id}/treatment")
 def get_treatment_plan(incident_id: str, user_id: str):
+    """Latest treatment plan for an incident.
+
+    Bypasses the `get_treatment_plan` tool entirely — that tool takes a
+    `treatment_plan_id`, not an `incident_id`, so calling it from this route
+    (as the previous implementation did) raised a pydantic ValidationError on
+    every request (#135, same shape of bug as #136's `resolve_interaction`
+    mismatch). Querying directly here sidesteps the parameter mismatch rather
+    than papering over it.
+    """
     _set_user(user_id)
-    from agent.tools.operations.incidents import get_treatment_plan as _get
-    return _result_or_404(_get.invoke({"incident_id": incident_id}))
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import treatment_plan_to_view_data
+
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        plan = (
+            session.query(TreatmentPlan)
+            .filter(TreatmentPlan.incident_id == incident_id)
+            .order_by(TreatmentPlan.created_at.desc())
+            .first()
+        )
+        if not plan:
+            raise HTTPException(status_code=404, detail="No treatment plan found for this incident")
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
+    finally:
+        session.close()
 
 
 @data_router.post("/incidents/{incident_id}/treatment/manual")
 def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateManualTreatmentPlanRequest):
     _set_user(user_id)
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import treatment_plan_to_view_data
+
     session = SessionLocal()
     try:
         incident = _get_incident_for_user(session, incident_id, user_id)
@@ -1849,20 +2550,17 @@ def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateMan
             status="draft",
             approach_summary=body.approach_summary,
             recommended_steps=body.recommended_steps,
-            follow_up_strategy=[body.follow_up_strategy] if body.follow_up_strategy else [],
+            # AI-drafted plans always store follow_up_strategy as a list of
+            # {"title": ...} dicts (agent/domain/incidents.py's
+            # _treatment_steps) — wrap the manual string the same way instead
+            # of as a bare string, which crashed get_treatment_plan's prose
+            # renderer (`follow_up['title']` on a str) (#135).
+            follow_up_strategy=[{"title": body.follow_up_strategy}] if body.follow_up_strategy else [],
         )
         session.add(plan)
         session.commit()
         session.refresh(plan)
-        return {
-            "id": plan.id,
-            "incident_id": plan.incident_id,
-            "status": plan.status,
-            "approach_summary": plan.approach_summary,
-            "recommended_steps": plan.recommended_steps,
-            "follow_up_strategy": plan.follow_up_strategy,
-            "created_at": plan.created_at,
-        }
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
     finally:
         session.close()
 
@@ -1870,6 +2568,9 @@ def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateMan
 @data_router.patch("/treatment-plans/{plan_id}")
 def update_treatment_plan(plan_id: str, user_id: str, body: UpdateTreatmentPlanRequest):
     _set_user(user_id)
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import treatment_plan_to_view_data
+
     session = SessionLocal()
     try:
         plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == plan_id).first()
@@ -1885,18 +2586,14 @@ def update_treatment_plan(plan_id: str, user_id: str, body: UpdateTreatmentPlanR
         if body.recommended_steps is not None:
             plan.recommended_steps = body.recommended_steps
         if body.follow_up_strategy is not None:
-            plan.follow_up_strategy = [body.follow_up_strategy] if isinstance(body.follow_up_strategy, str) else body.follow_up_strategy
+            plan.follow_up_strategy = (
+                [{"title": body.follow_up_strategy}]
+                if isinstance(body.follow_up_strategy, str)
+                else body.follow_up_strategy
+            )
         session.commit()
         session.refresh(plan)
-        return {
-            "id": plan.id,
-            "incident_id": plan.incident_id,
-            "status": plan.status,
-            "approach_summary": plan.approach_summary,
-            "recommended_steps": plan.recommended_steps,
-            "follow_up_strategy": plan.follow_up_strategy,
-            "created_at": plan.created_at,
-        }
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
     finally:
         session.close()
 
@@ -1924,15 +2621,39 @@ def delete_treatment_plan(plan_id: str, user_id: str):
 @data_router.patch("/treatment-plans/{plan_id}/approve")
 def approve_treatment_plan(plan_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.incidents import approve_treatment_plan as _approve
-    return _result_or_404(_approve.invoke({"treatment_plan_id": plan_id}))
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import approve_treatment_plan as _approve_treatment_plan
+    from agent.domain.incidents import treatment_plan_to_view_data
+
+    session = SessionLocal()
+    try:
+        plan = _approve_treatment_plan(session, plan_id)
+        session.commit()
+        session.refresh(plan)
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
+    except ValueError as e:
+        session.rollback()
+        status = 404 if "no treatment plan found" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/incidents/{incident_id}/activity")
 def get_incident_activity(incident_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_incident_activity as _get
-    return _result_or_404(_get.invoke({"incident_id": incident_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        events = get_activity_for_subject(session, subject_type="incident_report", subject_id=incident_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1942,51 +2663,148 @@ def get_incident_activity(incident_id: str, user_id: str, limit: int = 20):
 @data_router.get("/interactions/pending")
 def get_pending_interaction(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.interactions import get_pending_interaction as _get
-    return {"result": _get.invoke({})}
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import get_pending_interaction_record, interaction_record_to_view_data
+
+    session = SessionLocal()
+    try:
+        record = get_pending_interaction_record(session)
+        if not record:
+            return None
+        return InteractionEnvelopeView(**interaction_record_to_view_data(record))
+    finally:
+        session.close()
 
 
 @data_router.get("/interactions/recent")
-def list_recent_interactions(user_id: str, limit: int = 10):
+def list_recent_interactions(user_id: str, limit: int = 10, interaction_type: str = None, project_id: str = None):
     _set_user(user_id)
-    from agent.tools.operations.interactions import list_recent_interactions as _list
-    return {"result": _list.invoke({"limit": limit})}
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import interaction_record_to_view_data, list_recent_interaction_records
+
+    session = SessionLocal()
+    try:
+        records = list_recent_interaction_records(
+            session, limit=limit, interaction_type=interaction_type, project_id=project_id,
+        )
+        return [InteractionEnvelopeView(**interaction_record_to_view_data(r)) for r in records]
+    finally:
+        session.close()
 
 
 @data_router.get("/interactions/{interaction_id}")
 def get_interaction(interaction_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.interactions import get_interaction_record
-    return _result_or_404(get_interaction_record.invoke({"interaction_id": interaction_id}))
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import get_interaction_record_for_user, interaction_record_to_view_data
+
+    session = SessionLocal()
+    try:
+        record = get_interaction_record_for_user(session, interaction_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Interaction record not found")
+        return InteractionEnvelopeView(**interaction_record_to_view_data(record))
+    finally:
+        session.close()
 
 
 @data_router.post("/interactions/{interaction_id}/resolve")
 def resolve_interaction(interaction_id: str, user_id: str, body: ResolveInteractionRequest):
     _set_user(user_id)
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import get_interaction_record_for_user, interaction_record_to_view_data
     from agent.tools.operations.interactions import resolve_interaction as _resolve
-    return _result_or_404(_resolve.invoke({"interaction_id": interaction_id, **body.model_dump(exclude_none=True)}))
+
+    session = SessionLocal()
+    try:
+        record = get_interaction_record_for_user(session, interaction_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Interaction record not found")
+    finally:
+        session.close()
+
+    # NOTE: ResolveInteractionRequest uses `action`/`notes` (frontend-facing names);
+    # the tool's parameters are `action_id`/`inputs`. This translation was previously
+    # missing here, so every call to this endpoint raised a pydantic ValidationError
+    # and 500'd before even reaching the tool body (#136 audit).
+    _resolve.invoke({
+        "interaction_id": interaction_id,
+        "action_id": body.action,
+        "inputs": {"note": body.notes} if body.notes else {},
+    })
+
+    session = SessionLocal()
+    try:
+        record = get_interaction_record_for_user(session, interaction_id)
+        return InteractionEnvelopeView(**interaction_record_to_view_data(record))
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
 # Threads — conversation management
 # ---------------------------------------------------------------------------
 
+_VALID_SUBJECT_TYPES = {"plant", "bed", "container", "task", "project", "incident"}
+
+
+class AddThreadContextRequest(_BaseModel):
+    subject_type: str
+    subject_id: str
+
+
+def _verify_entity_owner(session, user_id: str, subject_type: str, subject_id: str) -> bool:
+    if subject_type == "plant":
+        return session.query(Plant).filter(Plant.id == subject_id, Plant.user_id == user_id).first() is not None
+    if subject_type == "bed":
+        return session.query(Bed).filter(Bed.id == subject_id, Bed.user_id == user_id).first() is not None
+    if subject_type == "container":
+        return session.query(Container).filter(Container.id == subject_id, Container.user_id == user_id).first() is not None
+    if subject_type == "project":
+        return session.query(GardeningProject).filter(
+            GardeningProject.id == subject_id, GardeningProject.user_id == user_id
+        ).first() is not None
+    if subject_type == "task":
+        return (
+            session.query(Task)
+            .join(GardeningProject, Task.project_id == GardeningProject.id)
+            .filter(Task.id == subject_id, GardeningProject.user_id == user_id)
+            .first()
+        ) is not None
+    if subject_type == "incident":
+        return session.query(IncidentReport).filter(
+            IncidentReport.id == subject_id, IncidentReport.user_id == user_id
+        ).first() is not None
+    return False
+
+
 @data_router.post("/threads")
 def create_thread(user_id: str, body: CreateThreadRequest):
     """Register a thread ID generated by Cambium before the first chat turn."""
     uid = _set_user(user_id)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if body.initial_context and len(body.initial_context) > 10:
+        raise HTTPException(status_code=400, detail="initial_context cannot exceed 10 items")
     session = SessionLocal()
     try:
-        from db.models import Thread
         existing = session.query(Thread).filter(Thread.id == body.thread_id).first()
         if existing:
             return {"thread_id": existing.id, "created": False}
+        initial_pinned: list[dict] = []
+        for item in (body.initial_context or []):
+            stype = item.get("subject_type", "")
+            sid = item.get("subject_id", "")
+            if stype not in _VALID_SUBJECT_TYPES:
+                raise HTTPException(status_code=400, detail=f"Invalid subject_type: {stype!r}")
+            if not _verify_entity_owner(session, uid, stype, sid):
+                raise HTTPException(status_code=400, detail=f"Entity not found or not accessible: {stype}/{sid}")
+            initial_pinned.append({"subject_type": stype, "subject_id": sid})
         session.add(Thread(
             id=body.thread_id,
             user_id=uid,
             title=body.title,
             project_id=body.project_id,
+            pinned_context=initial_pinned,
             created_at=now,
             last_active_at=now,
         ))
@@ -1999,10 +2817,10 @@ def create_thread(user_id: str, body: CreateThreadRequest):
 @data_router.get("/threads")
 def list_threads(user_id: str, limit: int = 20):
     """List user's conversation threads, most recently active first."""
+    from agent.api.views import ThreadView
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
-        from db.models import Thread
         rows = (
             session.query(Thread)
             .filter(Thread.user_id == uid)
@@ -2010,18 +2828,7 @@ def list_threads(user_id: str, limit: int = 20):
             .limit(limit)
             .all()
         )
-        return [
-            {
-                "thread_id": r.id,
-                "title": r.title,
-                "project_id": r.project_id,
-                "last_message_preview": r.last_message_preview,
-                "last_active_at": r.last_active_at.isoformat() if r.last_active_at else None,
-                "message_count": r.message_count,
-                "created_at": r.created_at.isoformat(),
-            }
-            for r in rows
-        ]
+        return [ThreadView(**r.to_view()) for r in rows]
     finally:
         session.close()
 
@@ -2029,10 +2836,10 @@ def list_threads(user_id: str, limit: int = 20):
 @data_router.get("/threads/{thread_id}")
 def get_thread(thread_id: str, user_id: str):
     """Get metadata for a specific thread."""
+    from agent.api.views import ThreadView
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
-        from db.models import Thread
         thread = (
             session.query(Thread)
             .filter(Thread.id == thread_id, Thread.user_id == uid)
@@ -2040,15 +2847,7 @@ def get_thread(thread_id: str, user_id: str):
         )
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
-        return {
-            "thread_id": thread.id,
-            "title": thread.title,
-            "project_id": thread.project_id,
-            "last_message_preview": thread.last_message_preview,
-            "last_active_at": thread.last_active_at.isoformat() if thread.last_active_at else None,
-            "message_count": thread.message_count,
-            "created_at": thread.created_at.isoformat(),
-        }
+        return ThreadView(**thread.to_view())
     finally:
         session.close()
 
@@ -2082,7 +2881,6 @@ def delete_thread(thread_id: str, user_id: str):
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
-        from db.models import Thread
         thread = (
             session.query(Thread)
             .filter(Thread.id == thread_id, Thread.user_id == uid)
@@ -2093,6 +2891,52 @@ def delete_thread(thread_id: str, user_id: str):
         session.delete(thread)
         session.commit()
         return {"status": "deleted", "thread_id": thread_id}
+    finally:
+        session.close()
+
+
+@data_router.post("/threads/{thread_id}/context")
+def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextRequest):
+    """Pin an entity to a thread for persistent context injection."""
+    uid = _set_user(user_id)
+    if body.subject_type not in _VALID_SUBJECT_TYPES:
+        raise HTTPException(status_code=400, detail=f"subject_type must be one of {sorted(_VALID_SUBJECT_TYPES)}")
+    session = SessionLocal()
+    try:
+        thread = session.query(Thread).filter(Thread.id == thread_id, Thread.user_id == uid).first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        pinned = list(thread.pinned_context or [])
+        if len(pinned) >= 10:
+            raise HTTPException(status_code=400, detail="Thread context limit reached (max 10 items)")
+        if any(p["subject_type"] == body.subject_type and p["subject_id"] == body.subject_id for p in pinned):
+            raise HTTPException(status_code=409, detail="Entity already in thread context")
+        if not _verify_entity_owner(session, uid, body.subject_type, body.subject_id):
+            raise HTTPException(status_code=400, detail="Entity not found or not accessible")
+        pinned.append({"subject_type": body.subject_type, "subject_id": body.subject_id})
+        thread.pinned_context = pinned
+        session.commit()
+        return {"thread_id": thread_id, "pinned_context": thread.pinned_context}
+    finally:
+        session.close()
+
+
+@data_router.delete("/threads/{thread_id}/context/{subject_type}/{subject_id}")
+def remove_thread_context(thread_id: str, subject_type: str, subject_id: str, user_id: str):
+    """Remove a pinned entity from a thread's context."""
+    uid = _set_user(user_id)
+    session = SessionLocal()
+    try:
+        thread = session.query(Thread).filter(Thread.id == thread_id, Thread.user_id == uid).first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        pinned = list(thread.pinned_context or [])
+        updated = [p for p in pinned if not (p["subject_type"] == subject_type and p["subject_id"] == subject_id)]
+        if len(updated) == len(pinned):
+            raise HTTPException(status_code=404, detail="Context entry not found")
+        thread.pinned_context = updated
+        session.commit()
+        return {"thread_id": thread_id, "pinned_context": thread.pinned_context}
     finally:
         session.close()
 
@@ -2109,12 +2953,29 @@ def list_recent_activity(
     since: str = None, before_timestamp: str = None, limit: int = 20,
 ):
     _set_user(user_id)
-    from agent.tools.operations.activity import list_recent_activity as _list
-    return {"result": _list.invoke({
-        "category": category, "event_type": event_type,
-        "project_id": project_id, "subject_type": subject_type,
-        "since": since, "before_timestamp": before_timestamp, "limit": limit,
-    })}
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, list_recent_activity_entries
+
+    session = SessionLocal()
+    try:
+        try:
+            since_dt = datetime.fromisoformat(since) if since else None
+            before_dt = datetime.fromisoformat(before_timestamp) if before_timestamp else None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+        events = list_recent_activity_entries(
+            session,
+            project_id=project_id,
+            subject_type=subject_type,
+            event_type=event_type,
+            category=category,
+            since=since_dt,
+            before_timestamp=before_dt,
+            limit=limit,
+        )
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 @data_router.get("/activity/stats")

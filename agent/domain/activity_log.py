@@ -516,10 +516,13 @@ def record_delete_event(
 
 
 def get_activity_for_subject(session, *, subject_type: str, subject_id: str, limit: int = 20, event_type: Optional[str] = None):
+    from db.database import current_user_id
+
     query = (
         session.query(ActivityEvent)
         .join(ActivitySubject, ActivityEvent.id == ActivitySubject.event_id)
         .filter(
+            ActivityEvent.user_id == current_user_id.get(),
             ActivitySubject.subject_type == subject_type,
             ActivitySubject.subject_id == subject_id,
         )
@@ -676,3 +679,30 @@ def format_activity_feed(session, *, title: str, events: list[ActivityEvent]) ->
         if affected:
             lines.append(f"  Affected: {', '.join(affected)}")
     return "\n".join(lines)
+
+
+def activity_event_to_view_data(session, event: ActivityEvent) -> dict[str, Any]:
+    subjects = (
+        session.query(ActivitySubject)
+        .filter(ActivitySubject.event_id == event.id)
+        .all()
+    )
+    return {
+        "id": event.id,
+        "created_at": event.created_at,
+        "actor_type": event.actor_type,
+        "actor_label": event.actor_label,
+        "event_type": event.event_type,
+        "category": event.category,
+        "summary": event.summary,
+        "notes": event.notes,
+        "project_id": event.project_id,
+        "subjects": [
+            {"subject_type": s.subject_type, "subject_id": s.subject_id, "role": s.role}
+            for s in subjects
+        ],
+    }
+
+
+def activity_events_to_view_data(session, events: list[ActivityEvent]) -> list[dict[str, Any]]:
+    return [activity_event_to_view_data(session, event) for event in events]

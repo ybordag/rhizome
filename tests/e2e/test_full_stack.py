@@ -28,7 +28,7 @@ import uuid
 import pytest
 import requests
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 load_dotenv()
 
@@ -38,7 +38,12 @@ load_dotenv()
 
 CAMBIUM = os.environ.get("CAMBIUM_URL", "http://localhost:8080")
 RHIZOME = os.environ.get("RHIZOME_URL", "http://localhost:8001")
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# Read directly from .env rather than os.environ — tests/conftest.py forces
+# DATABASE_URL to a SQLite URL for the whole suite (see CLAUDE.md's #141
+# postmortem), and load_dotenv() only fills in keys absent from os.environ,
+# so the plain load_dotenv() call above can't recover the real Postgres DSN
+# this fixture actually needs.
+DATABASE_URL = dotenv_values(".env").get("DATABASE_URL", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
 

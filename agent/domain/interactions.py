@@ -7,6 +7,8 @@ import json
 import uuid
 
 from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, record_activity_event
+from agent.domain.notifications import push_event
+from db.database import current_user_id
 from db.models import (
     InteractionRecord,
     ProjectProposal,
@@ -129,6 +131,7 @@ def record_interaction_summary(
         status=envelope["status"],
         title=envelope["title"],
         summary=envelope["summary"],
+        user_id=current_user_id.get(),
         project_id=project_id,
         source_type=source_type,
         source_id=source_id,
@@ -154,6 +157,15 @@ def record_interaction_summary(
     )
     session.add(record)
     session.flush()
+    if record.status == INTERACTION_PENDING:
+        push_event(current_user_id.get(), {
+            "type": "interaction_pending",
+            "payload": {
+                "id": record.id,
+                "title": record.title,
+                "interaction_type": record.interaction_type,
+            },
+        })
     return record
 
 
@@ -165,6 +177,7 @@ def find_pending_interaction_record(
     interaction_type: Optional[str] = None,
 ) -> Optional[InteractionRecord]:
     query = session.query(InteractionRecord).filter(
+        InteractionRecord.user_id == current_user_id.get(),
         InteractionRecord.source_type == source_type,
         InteractionRecord.status == INTERACTION_PENDING,
     )
@@ -467,17 +480,28 @@ def build_triage_view_interaction(session, snapshot: TriageSnapshot) -> dict[str
     )
 
 
+def get_interaction_record_for_user(session, interaction_id: str) -> Optional[InteractionRecord]:
+    return (
+        session.query(InteractionRecord)
+        .filter(InteractionRecord.id == interaction_id, InteractionRecord.user_id == current_user_id.get())
+        .first()
+    )
+
+
 def get_pending_interaction_record(session) -> Optional[InteractionRecord]:
     return (
         session.query(InteractionRecord)
-        .filter(InteractionRecord.status == INTERACTION_PENDING)
+        .filter(
+            InteractionRecord.user_id == current_user_id.get(),
+            InteractionRecord.status == INTERACTION_PENDING,
+        )
         .order_by(InteractionRecord.created_at.desc())
         .first()
     )
 
 
 def list_recent_interaction_records(session, *, limit: int = 20, interaction_type: Optional[str] = None, project_id: Optional[str] = None):
-    query = session.query(InteractionRecord)
+    query = session.query(InteractionRecord).filter(InteractionRecord.user_id == current_user_id.get())
     if interaction_type:
         query = query.filter(InteractionRecord.interaction_type == interaction_type)
     if project_id:
@@ -500,6 +524,31 @@ def format_interaction_record(record: InteractionRecord) -> str:
         labels = ", ".join(action["label"] for action in actions)
         lines.append(f"  Actions: {labels}")
     return "\n".join(lines)
+
+
+def interaction_record_to_view_data(record: InteractionRecord) -> dict[str, Any]:
+    """Structured-JSON shape for the frontend interaction-card UI.
+
+    Mirrors what `rebuild_envelope_from_record` reconstructs for resumption,
+    but returns plain data (not the dataclass) so the API router can hand it
+    straight to `InteractionEnvelopeView` without an extra translation step.
+    """
+    metadata = record.record_metadata or {}
+    return {
+        "id": record.id,
+        "interaction_type": record.interaction_type,
+        "status": record.status,
+        "title": record.title,
+        "summary": record.summary,
+        "body": metadata.get("body"),
+        "sections": metadata.get("sections") or [],
+        "actions": metadata.get("actions") or [],
+        "context": metadata.get("context") or {},
+        "created_at": record.created_at,
+        "resolved_at": record.resolved_at,
+        "resolution_action": record.resolution_action,
+        "resolution_summary": record.resolution_summary,
+    }
 
 
 def stable_confirmation_source_id(tool_calls: list[dict[str, Any]]) -> str:

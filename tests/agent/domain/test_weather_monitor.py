@@ -340,3 +340,46 @@ def test_apply_weather_impacts_splits_critical_and_advisory(db_session, patched_
 
     assert result["critical_applied"] > 0
     assert result["advisory_queued"] > 0
+
+
+# ---------------------------------------------------------------------------
+# _write_monitor_alert — notification push (#130)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_apply_weather_impacts_pushes_alert_to_active_queue(db_session, patched_sessionlocal):
+    from agent.domain import notifications
+
+    _, project, revision, run = _setup_project(db_session)
+    _make_transplant_task(db_session, None, project, revision, run)
+
+    queue = notifications.get_or_create_user_queue(1)
+    try:
+        snapshot = make_weather_snapshot(db_session, derived_impacts=[
+            {"date": "2026-06-20", "impact_type": "frost", "severity": "high", "summary": "Frost risk."},
+        ])
+        apply_weather_impacts(db_session, snapshot=snapshot, user_id=1)
+        db_session.flush()
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        alert_events = [e for e in events if e["type"] == "alert"]
+        assert len(alert_events) == 1
+        assert alert_events[0]["payload"]["alert_type"] == "weather_critical"
+        assert alert_events[0]["payload"]["id"] is not None
+    finally:
+        notifications.remove_user_queue(1)
+
+
+@pytest.mark.integration
+def test_apply_weather_impacts_alert_push_noop_without_active_queue(db_session, patched_sessionlocal):
+    """No active queue (no SSE connection) — must not raise."""
+    _, project, revision, run = _setup_project(db_session)
+    _make_transplant_task(db_session, None, project, revision, run)
+
+    snapshot = make_weather_snapshot(db_session, derived_impacts=[
+        {"date": "2026-06-20", "impact_type": "frost", "severity": "high", "summary": "Frost risk."},
+    ])
+    result = apply_weather_impacts(db_session, snapshot=snapshot, user_id=1)
+    assert result["critical_applied"] > 0

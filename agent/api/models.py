@@ -74,7 +74,9 @@ class UpdateBriefRequest(BaseModel):
     budget_cap: Optional[float] = None
     effort_preference: Optional[str] = None
     propagation_preference: Optional[str] = None
+    priority_preferences: Optional[list[str]] = None
     notes: Optional[str] = None
+    status: Optional[str] = None
 
 
 class AssignLocationsRequest(BaseModel):
@@ -106,6 +108,7 @@ class CreateThreadRequest(BaseModel):
     thread_id: str
     title: Optional[str] = None
     project_id: Optional[str] = None
+    initial_context: Optional[list[dict]] = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -234,6 +237,10 @@ class UpdateIncidentRequest(BaseModel):
     severity: Optional[str] = None
     notes: Optional[str] = None
     incident_type: Optional[str] = None
+
+
+class ResolveIncidentRequest(BaseModel):
+    notes: Optional[str] = None
 
 
 class CreateManualTreatmentPlanRequest(BaseModel):

@@ -10,12 +10,16 @@ from agent.domain.interactions import (
     list_recent_interaction_records,
     resolve_interaction_record,
 )
-from db.database import SessionLocal
+from db.database import SessionLocal, current_user_id
 from db.models import InteractionRecord, TriageSnapshot
 
 
 def _load_record(session, interaction_id: str) -> InteractionRecord:
-    record = session.query(InteractionRecord).filter(InteractionRecord.id == interaction_id).first()
+    record = (
+        session.query(InteractionRecord)
+        .filter(InteractionRecord.id == interaction_id, InteractionRecord.user_id == current_user_id.get())
+        .first()
+    )
     if not record:
         raise ValueError(f"No interaction record found with id {interaction_id}.")
     return record

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from langchain.tools import tool
@@ -11,8 +12,9 @@ from agent.domain.incidents import (
     draft_treatment_plan as draft_treatment_plan_data,
     resolve_incident as resolve_incident_data,
 )
-from db.database import SessionLocal
-from db.models import IncidentReport, IncidentSubject, TreatmentPlan
+from agent.domain.notifications import push_event
+from db.database import SessionLocal, current_user_id
+from db.models import IncidentReport, IncidentSubject, MonitorAlert, TreatmentPlan
 
 
 def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -26,7 +28,7 @@ def list_incidents(project_id: Optional[str] = None, status: Optional[str] = Non
     """List incident reports, optionally filtered by project or status."""
     session = SessionLocal()
     try:
-        query = session.query(IncidentReport)
+        query = session.query(IncidentReport).filter(IncidentReport.user_id == current_user_id.get())
         if project_id:
             query = query.filter(IncidentReport.project_id == project_id)
         if status:
@@ -53,7 +55,10 @@ def get_incident(incident_id: str) -> str:
     """Show full details for a specific incident report including subjects and treatment plan status."""
     session = SessionLocal()
     try:
-        incident = session.query(IncidentReport).filter(IncidentReport.id == incident_id).first()
+        incident = session.query(IncidentReport).filter(
+            IncidentReport.id == incident_id,
+            IncidentReport.user_id == current_user_id.get(),
+        ).first()
         if not incident:
             return f"No incident found with id {incident_id}."
         subjects = (
@@ -128,18 +133,55 @@ def report_incident(
 @tool
 def draft_treatment_plan(incident_id: str) -> str:
     """Draft an approval-gated treatment plan for a reported incident."""
+    user_id = current_user_id.get()
+    job_id = f"treatment_plan_{uuid.uuid4().hex[:8]}"
+    push_event(user_id, {"type": "job_started", "job_id": job_id, "title": "Drafting treatment plan"})
+
     session = SessionLocal()
     try:
         plan = draft_treatment_plan_data(session, incident_id)
         session.commit()
-        return (
+        result = (
             f"Drafted treatment plan {plan.id}.\n"
             f"- Status: {plan.status}\n"
             f"- Approach: {plan.approach_summary}"
         )
+        # Persist this so a user disconnected from the notification stream when
+        # the job completes can still discover it via GET /notifications —
+        # job_complete alone only reaches an active SSE connection (#130 audit).
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        alert = MonitorAlert(
+            expires_at=now + timedelta(hours=48),
+            user_id=user_id,
+            alert_type="treatment_plan",
+            severity="medium",
+            title="Treatment plan drafted",
+            body=plan.approach_summary,
+            source_type="treatment_plan",
+            source_id=plan.id,
+        )
+        session.add(alert)
+        session.commit()
+        push_event(user_id, {
+            "type": "alert",
+            "payload": {
+                "id": alert.id,
+                "alert_type": alert.alert_type,
+                "severity": alert.severity,
+                "title": alert.title,
+                "body": alert.body,
+            },
+        })
+        push_event(user_id, {
+            "type": "job_complete", "job_id": job_id,
+            "title": "Drafting treatment plan", "summary": f"Drafted plan {plan.id}",
+        })
+        return result
     except Exception as e:
         session.rollback()
-        return f"Failed to draft treatment plan: {str(e)}"
+        error = str(e)
+        push_event(user_id, {"type": "job_failed", "job_id": job_id, "title": "Drafting treatment plan", "error": error})
+        return f"Failed to draft treatment plan: {error}"
     finally:
         session.close()
 
@@ -149,7 +191,12 @@ def get_treatment_plan(treatment_plan_id: str) -> str:
     """Show a treatment plan and its follow-up strategy."""
     session = SessionLocal()
     try:
-        plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == treatment_plan_id).first()
+        plan = (
+            session.query(TreatmentPlan)
+            .join(IncidentReport, TreatmentPlan.incident_id == IncidentReport.id)
+            .filter(TreatmentPlan.id == treatment_plan_id, IncidentReport.user_id == current_user_id.get())
+            .first()
+        )
         if not plan:
             return f"No treatment plan found with id {treatment_plan_id}."
         lines = [

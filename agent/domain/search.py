@@ -287,20 +287,8 @@ def _search_projects(session, user_id: str, query: str, is_id: bool, limit: int)
 
 
 def _search_incidents(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
-    user_pids = {
-        pid for (pid,) in session.query(GardeningProject.id)
-        .filter(GardeningProject.user_id == user_id)
-        .all()
-    }
     search = f"%{query}%"
-
-    # Project-less incidents (project_id IS NULL) have no user_id and cannot
-    # be scoped to an owner, so they are excluded from search. list_incidents
-    # includes them for historical reasons; a discovery endpoint should not.
-    if not user_pids:
-        return []
-
-    base_filter = IncidentReport.project_id.in_(user_pids)
+    base_filter = IncidentReport.user_id == user_id
 
     if is_id:
         rows = session.query(IncidentReport).filter(

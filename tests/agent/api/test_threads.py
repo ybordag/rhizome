@@ -1,5 +1,7 @@
 """Tests for thread management endpoints."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,6 +14,58 @@ client = TestClient(app)
 def _now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+THREAD_VIEW_FIELDS = (
+    "thread_id",
+    "title",
+    "project_id",
+    "last_message_preview",
+    "last_active_at",
+    "message_count",
+    "pinned_context",
+    "created_at",
+)
+THREAD_VIEW_KEYS = set(THREAD_VIEW_FIELDS)
+
+
+def _compact_json(value):
+    return json.dumps(value, separators=(",", ":"))
+
+
+# ---------------------------------------------------------------------------
+# Thread.to_view — #139 serializer contract
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_thread_to_view_preserves_existing_inline_serializer_contract():
+    now = _now()
+    thread = Thread(
+        id="serializer-thread",
+        user_id=1,
+        title="Serializer check",
+        project_id="project-1",
+        last_message_preview="Last message",
+        last_active_at=now,
+        message_count=4,
+        pinned_context=None,
+        created_at=now,
+    )
+
+    view = thread.to_view()
+
+    assert list(view) == list(THREAD_VIEW_FIELDS)
+    assert "id" not in view
+    assert view == {
+        "thread_id": "serializer-thread",
+        "title": "Serializer check",
+        "project_id": "project-1",
+        "last_message_preview": "Last message",
+        "last_active_at": now,
+        "message_count": 4,
+        "pinned_context": [],
+        "created_at": now,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +129,42 @@ def test_list_threads_returns_users_threads(patched_sessionlocal, db_session):
 
 
 @pytest.mark.integration
+def test_list_threads_preserves_thread_view_shape(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(
+        id="shape-thread",
+        user_id=1,
+        title="Shape check",
+        project_id="project-1",
+        last_message_preview="Last message",
+        last_active_at=now,
+        message_count=7,
+        pinned_context=[{"subject_type": "project", "subject_id": "project-1"}],
+        created_at=now,
+    ))
+    db_session.commit()
+
+    resp = client.get("/internal/data/threads?user_id=1")
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    expected = {
+        "thread_id": "shape-thread",
+        "title": "Shape check",
+        "project_id": "project-1",
+        "last_message_preview": "Last message",
+        "last_active_at": now.isoformat(),
+        "message_count": 7,
+        "pinned_context": [{"subject_type": "project", "subject_id": "project-1"}],
+        "created_at": now.isoformat(),
+    }
+    assert list(body) == list(THREAD_VIEW_FIELDS)
+    assert set(body) == THREAD_VIEW_KEYS
+    assert body == expected
+    assert resp.text == _compact_json([expected])
+
+
+@pytest.mark.integration
 def test_list_threads_sorted_by_last_active(patched_sessionlocal, db_session):
     from datetime import timedelta
     now = _now()
@@ -113,6 +203,37 @@ def test_get_thread(patched_sessionlocal, db_session):
     assert data["thread_id"] == "velvet-pine-frost"
     assert data["title"] == "My garden plan"
     assert data["message_count"] == 3
+
+
+@pytest.mark.integration
+def test_get_thread_preserves_thread_view_shape_and_defaults(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(
+        id="default-thread",
+        user_id=1,
+        created_at=now,
+        last_active_at=None,
+    ))
+    db_session.commit()
+
+    resp = client.get("/internal/data/threads/default-thread?user_id=1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    expected = {
+        "thread_id": "default-thread",
+        "title": None,
+        "project_id": None,
+        "last_message_preview": None,
+        "last_active_at": None,
+        "message_count": 0,
+        "pinned_context": [],
+        "created_at": now.isoformat(),
+    }
+    assert list(body) == list(THREAD_VIEW_FIELDS)
+    assert set(body) == THREAD_VIEW_KEYS
+    assert body == expected
+    assert resp.text == _compact_json(expected)
 
 
 @pytest.mark.integration

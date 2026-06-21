@@ -38,7 +38,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _start_run(session, run_type: str, user_id: int) -> MonitorRun:
+def _start_run(session, run_type: str, user_id: str) -> MonitorRun:
     run = MonitorRun(run_type=run_type, status="started", user_id=user_id)
     session.add(run)
     session.commit()
@@ -82,15 +82,31 @@ def _write_alert(
         source_id=source_id,
     )
     session.add(alert)
+    session.flush()
+    from agent.domain.notifications import push_event
+    push_event(user_id, {
+        "type": "alert",
+        "payload": {
+            "id": alert.id,
+            "alert_type": alert.alert_type,
+            "severity": alert.severity,
+            "title": alert.title,
+            "body": alert.body,
+        },
+    })
     return alert
 
 
-def weather_job(session, user_id: int) -> str:
+def weather_job(session, user_id: str, event_sink=None) -> str:
     """
     Refresh the weather snapshot if stale, then auto-apply critical impacts
     and queue advisory ones. Writes MonitorAlert records for all categories.
     Only processes impacts when a fresh snapshot was created this run.
+
+    event_sink, if provided, is called with full event dicts at job
+    start/step/complete (#130). Cron invocations pass no sink — unchanged.
     """
+    import uuid
     from agent.domain.weather import (
         MONITOR_FRESHNESS_HOURS,
         apply_weather_impacts,
@@ -100,16 +116,26 @@ def weather_job(session, user_id: int) -> str:
     from db.database import current_user_id
     current_user_id.set(user_id)
 
+    job_id = f"weather_{uuid.uuid4().hex[:8]}"
+    if event_sink:
+        event_sink({"type": "job_started", "job_id": job_id, "title": "Weather refresh"})
+
+    def step_sink(step: str, status: str) -> None:
+        if event_sink:
+            event_sink({"type": "job_step", "job_id": job_id, "step": step, "status": status})
+
     run = _start_run(session, "weather", user_id)
     try:
         existing = get_latest_weather_snapshot(session)
         snapshot = load_or_refresh_weather_snapshot(
-            session, freshness_hours=MONITOR_FRESHNESS_HOURS
+            session, freshness_hours=MONITOR_FRESHNESS_HOURS, event_sink=step_sink
         )
         if snapshot is None:
             summary = "No weather snapshot available (garden profile may be missing location)."
             print(f"  [weather] {summary}")
             _finish_run(session, run, summary)
+            if event_sink:
+                event_sink({"type": "job_complete", "job_id": job_id, "title": "Weather refresh", "summary": summary})
             return summary
 
         is_new = existing is None or snapshot.id != existing.id
@@ -117,9 +143,11 @@ def weather_job(session, user_id: int) -> str:
             summary = f"Snapshot {snapshot.id} is still fresh; skipping impact evaluation."
             print(f"  [weather] {summary}")
             _finish_run(session, run, summary)
+            if event_sink:
+                event_sink({"type": "job_complete", "job_id": job_id, "title": "Weather refresh", "summary": summary})
             return summary
 
-        result = apply_weather_impacts(session, snapshot=snapshot, user_id=user_id)
+        result = apply_weather_impacts(session, snapshot=snapshot, user_id=user_id, event_sink=step_sink)
         session.commit()
         summary = (
             f"Snapshot refreshed. "
@@ -129,26 +157,44 @@ def weather_job(session, user_id: int) -> str:
         )
         print(f"  [weather] {summary}")
         _finish_run(session, run, summary)
+        if event_sink:
+            event_sink({"type": "job_complete", "job_id": job_id, "title": "Weather refresh", "summary": summary})
         return summary
     except Exception as exc:
         session.rollback()
         _fail_run(session, run, str(exc))
+        if event_sink:
+            event_sink({"type": "job_failed", "job_id": job_id, "title": "Weather refresh", "error": str(exc)})
         raise
 
 
-def triage_job(session, user_id: int) -> str:
+def triage_job(session, user_id: str, event_sink=None) -> str:
     """
     Build a triage snapshot and write a MonitorAlert when urgent tasks exist.
     The alert surfaces at the next session start via session_context_intake.
+
+    event_sink, if provided, is called with full event dicts (type/job_id/...)
+    at job start/step/complete — wired from a live notification queue when this
+    job is triggered from within the web server process. Cron invocations pass
+    no sink and behave identically to before (#130).
     """
+    import uuid
     from agent.core.temporal import DEFAULT_TIMEZONE
     from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
     from db.database import current_user_id
     current_user_id.set(user_id)
 
+    job_id = f"triage_{uuid.uuid4().hex[:8]}"
+    if event_sink:
+        event_sink({"type": "job_started", "job_id": job_id, "title": "Daily triage"})
+
+    def step_sink(step: str, status: str) -> None:
+        if event_sink:
+            event_sink({"type": "job_step", "job_id": job_id, "step": step, "status": status})
+
     run = _start_run(session, "triage", user_id)
     try:
-        snapshot = build_triage_snapshot(session, opener="", timezone=DEFAULT_TIMEZONE)
+        snapshot = build_triage_snapshot(session, opener="", timezone=DEFAULT_TIMEZONE, event_sink=step_sink)
         session.commit()
 
         urgent_count = len(snapshot.urgent_task_ids or [])
@@ -174,22 +220,35 @@ def triage_job(session, user_id: int) -> str:
         )
         print(f"  [triage] {summary}")
         _finish_run(session, run, summary)
+        if event_sink:
+            event_sink({"type": "job_complete", "job_id": job_id, "title": "Daily triage", "summary": summary})
         return summary
     except Exception as exc:
         session.rollback()
         _fail_run(session, run, str(exc))
+        if event_sink:
+            event_sink({"type": "job_failed", "job_id": job_id, "title": "Daily triage", "error": str(exc)})
         raise
 
 
-def series_job(session, user_id: int) -> str:
+def series_job(session, user_id: str, event_sink=None) -> str:
     """
     Materialize any recurring task series whose next_generation_date has
     entered the rolling 14-day horizon. Idempotent: existing task dates are
     skipped by materialize_task_series().
+
+    event_sink, if provided, is called with full event dicts at job
+    start/step/complete (#130). Cron invocations pass no sink — unchanged.
     """
+    import uuid
     from agent.domain.tracker import materialize_task_series
     from db.database import current_user_id
     current_user_id.set(user_id)
+
+    job_id = f"series_{uuid.uuid4().hex[:8]}"
+    if event_sink:
+        event_sink({"type": "job_started", "job_id": job_id, "title": "Recurring task materialization"})
+        event_sink({"type": "job_step", "job_id": job_id, "step": "Materialising recurring tasks", "status": "running"})
 
     run = _start_run(session, "series_materialization", user_id)
     try:
@@ -198,10 +257,32 @@ def series_job(session, user_id: int) -> str:
         summary = f"Materialized {len(created)} recurring task(s) from active series."
         print(f"  [series] {summary}")
         _finish_run(session, run, summary)
+        if created:
+            # series_job has no other persisted trace of its own completion (unlike
+            # weather_job/triage_job, which write a MonitorAlert for anything that
+            # matters). Without this, a user disconnected when the job finishes has
+            # no way to learn recurring tasks were materialized while they were away.
+            _write_alert(
+                session,
+                user_id=user_id,
+                alert_type="series",
+                severity="low",
+                title=f"{len(created)} recurring task(s) materialized",
+                body=summary,
+                source_type="monitor_run",
+                source_id=run.id,
+                ttl_hours=24,
+            )
+            session.commit()
+        if event_sink:
+            event_sink({"type": "job_step", "job_id": job_id, "step": "Materialising recurring tasks", "status": "done"})
+            event_sink({"type": "job_complete", "job_id": job_id, "title": "Recurring task materialization", "summary": summary})
         return summary
     except Exception as exc:
         session.rollback()
         _fail_run(session, run, str(exc))
+        if event_sink:
+            event_sink({"type": "job_failed", "job_id": job_id, "title": "Recurring task materialization", "error": str(exc)})
         raise
 
 
@@ -212,7 +293,7 @@ _JOBS = {
 }
 
 
-def run(user_id: int, job: str) -> None:
+def run(user_id: str, job: str) -> None:
     jobs = list(_JOBS.items()) if job == "all" else [(job, _JOBS[job])]
     session = SessionLocal()
     try:

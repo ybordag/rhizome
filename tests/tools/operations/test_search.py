@@ -408,16 +408,16 @@ def test_incident_project_user_isolation(db_session):
 
 
 @pytest.mark.integration
-def test_incident_projectless_not_returned_to_any_user(db_session):
-    # Incidents with no project_id cannot be scoped to an owner and must
-    # never appear in search results, regardless of who is searching.
+def test_incident_projectless_scoped_to_owner_only(db_session):
+    # IncidentReport.user_id (audit fix) scopes project-less incidents to
+    # their owner directly — visible to the owner, not to other users.
     make_profile(db_session)
-    orphan = make_incident_report(db_session, project_id=None, incident_type="blight")
+    orphan = make_incident_report(db_session, project_id=None, incident_type="blight", user_id="1")
 
-    result_user1 = search_entities(db_session, "1", "blight", types=["incident"])
-    result_user2 = search_entities(db_session, "other-user", "blight", types=["incident"])
-    assert orphan.id not in _subject_ids(result_user1, "incident")
-    assert orphan.id not in _subject_ids(result_user2, "incident")
+    result_owner = search_entities(db_session, "1", "blight", types=["incident"])
+    result_other = search_entities(db_session, "other-user", "blight", types=["incident"])
+    assert orphan.id in _subject_ids(result_owner, "incident")
+    assert orphan.id not in _subject_ids(result_other, "incident")
 
 
 # ---------------------------------------------------------------------------

@@ -54,7 +54,7 @@ You know this specific garden well:
 Session time context:
 {temporal_context}
 
-{alert_section}Latest weather:
+{pinned_context_section}{alert_section}Latest weather:
 {weather_context}
 
 Latest triage:
@@ -121,6 +121,57 @@ def _message_text(message) -> str:
     return str(content)
 
 
+def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
+    if not pinned:
+        return ""
+    from db.models import Bed, Container, GardeningProject, IncidentReport, Plant, Task
+    lines = []
+    for item in pinned:
+        stype = item.get("subject_type", "")
+        sid = item.get("subject_id", "")
+        try:
+            if stype == "plant":
+                obj = session.query(Plant).filter(Plant.id == sid, Plant.user_id == user_id).first()
+                if obj:
+                    name = obj.name + (f" ({obj.variety})" if obj.variety else "")
+                    lines.append(f"- plant: {name} · status: {obj.status or 'unknown'}")
+            elif stype == "bed":
+                obj = session.query(Bed).filter(Bed.id == sid, Bed.user_id == user_id).first()
+                if obj:
+                    loc = f" · {obj.location}" if obj.location else ""
+                    lines.append(f"- bed: {obj.name}{loc}")
+            elif stype == "container":
+                obj = session.query(Container).filter(Container.id == sid, Container.user_id == user_id).first()
+                if obj:
+                    typ = f" · {obj.container_type}" if obj.container_type else ""
+                    lines.append(f"- container: {obj.name}{typ}")
+            elif stype == "task":
+                obj = (
+                    session.query(Task)
+                    .join(GardeningProject, Task.project_id == GardeningProject.id)
+                    .filter(Task.id == sid, GardeningProject.user_id == user_id)
+                    .first()
+                )
+                if obj:
+                    lines.append(f"- task: {obj.title} · status: {obj.status or 'pending'}")
+            elif stype == "project":
+                obj = session.query(GardeningProject).filter(
+                    GardeningProject.id == sid, GardeningProject.user_id == user_id
+                ).first()
+                if obj:
+                    lines.append(f"- project: {obj.name} · status: {obj.status or 'active'}")
+            elif stype == "incident":
+                incident = session.query(IncidentReport).filter(
+                    IncidentReport.id == sid, IncidentReport.user_id == user_id
+                ).first()
+                if incident:
+                    summary = f" · {incident.summary[:60]}" if incident.summary else ""
+                    lines.append(f"- incident: {incident.incident_type}{summary}")
+        except Exception:
+            pass
+    return "\n".join(lines)
+
+
 def session_context_intake(state: GardenState, config: RunnableConfig):
     configurable = config.get("configurable") or {}
     # Default to "1" for local CLI dev. The FastAPI layer always provides user_id
@@ -170,18 +221,26 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
             }
             for a in alert_rows
         ]
+
+        pinned_text = ""
+        if thread_id:
+            thread_row = session.query(Thread).filter(Thread.id == thread_id).first()
+            if thread_row and thread_row.pinned_context:
+                pinned_text = _pinned_context_text(session, uid, thread_row.pinned_context)
+
         return {
             "temporal_context": temporal_context,
             "session_context": session_context,
             "skip_tool_node": False,
             "user_id": uid,
             "monitor_alerts": monitor_alerts,
+            "pinned_context_text": pinned_text or None,
         }
     finally:
         session.close()
 
 
-def _upsert_thread(session, user_id: int, thread_id: str, state: GardenState, now) -> None:
+def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, now) -> None:
     """Create or update thread metadata at the start of each turn."""
     # Extract preview from the last AI message in prior turns
     preview = None
@@ -364,9 +423,12 @@ def llm_call(state: GardenState, config: RunnableConfig):
     interaction_text = _interaction_context_text(state)
     alerts_text = _monitor_alerts_text(state)
     alert_section = f"⚠ Active monitor alerts:\n{alerts_text}\n\n" if alerts_text else ""
+    pinned_text = state.get("pinned_context_text") or ""
+    pinned_context_section = f"Pinned context for this thread:\n{pinned_text}\n\n" if pinned_text else ""
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         garden_profile=profile_text,
         temporal_context=temporal_text,
+        pinned_context_section=pinned_context_section,
         alert_section=alert_section,
         weather_context=weather_text,
         triage_context=triage_text,
@@ -516,7 +578,10 @@ def interaction_node(state: GardenState):
         if envelope is None:
             return {}
 
-        record = session.query(InteractionRecord).filter(InteractionRecord.id == envelope["id"]).first()
+        record = session.query(InteractionRecord).filter(
+            InteractionRecord.id == envelope["id"],
+            InteractionRecord.user_id == current_user_id.get(),
+        ).first()
         if not record:
             record = record_interaction_summary(
                 session,

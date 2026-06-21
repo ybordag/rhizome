@@ -18,7 +18,11 @@ env/
 
 # Databases
 rhizome.db
+rhizome.db-shm
+rhizome.db-wal
 rhizome_checkpoints.db
+rhizome_checkpoints.db-shm
+rhizome_checkpoints.db-wal
 
 # IDE
 .vscode/

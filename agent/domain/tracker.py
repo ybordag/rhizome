@@ -140,7 +140,10 @@ def _run_subject(run_id: str, role: str = "primary") -> dict[str, str]:
 
 
 def _select_project(session, project_id: str) -> GardeningProject:
-    project = session.query(GardeningProject).filter(GardeningProject.id == project_id).first()
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == current_user_id.get(),
+    ).first()
     if not project:
         raise ValueError(f"No project found with id {project_id}.")
     return project
@@ -1224,6 +1227,48 @@ def build_due_task_view(
                 "task": task,
                 "urgency": urgency,
                 "blocked": blocked,
+                "due_date": due_date,
+            }
+        )
+    return rows
+
+
+def build_blocked_task_view(
+    session,
+    *,
+    project_id: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    user_project_ids = [
+        pid for (pid,) in session.query(GardeningProject.id).filter(
+            GardeningProject.user_id == current_user_id.get()
+        ).all()
+    ]
+    query = session.query(Task).filter(
+        Task.status.notin_(["done", "skipped", "superseded"]),
+        Task.project_id.in_(user_project_ids),
+    )
+    if project_id:
+        query = query.filter(Task.project_id == project_id)
+
+    rows = []
+    for task in query.order_by(
+        Task.deadline.asc(),
+        Task.window_end.asc(),
+        Task.scheduled_date.asc(),
+        Task.created_at.asc(),
+    ).all():
+        if _is_section_task(task):
+            continue
+        if not compute_task_blocked_state(session, task):
+            continue
+        due_date = task.deadline or task.window_end or task.scheduled_date or task.deferred_until
+        rows.append(
+            {
+                "task": task,
+                "urgency": compute_task_urgency(task, now),
+                "blocked": True,
                 "due_date": due_date,
             }
         )

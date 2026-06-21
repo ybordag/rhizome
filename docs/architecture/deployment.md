@@ -139,7 +139,7 @@ An alternative architecture treats Rhizome as a **pure inference worker** — no
 
 This was considered and rejected for this project. The reasons:
 
-**Domain logic lives in Python.** The 93 tools in `agent/tools/` contain validation logic (status guards, orphan prevention, constraint checks) that is naturally expressed alongside the SQLAlchemy models. Moving this to Go would require reimplementing it in a different language with no benefit except process separation.
+**Domain logic lives in Python.** The 94 tools in `agent/tools/` contain validation logic (status guards, orphan prevention, constraint checks) that is naturally expressed alongside the SQLAlchemy models. Moving this to Go would require reimplementing it in a different language with no benefit except process separation.
 
 **Tool calls need live data.** The LangGraph agent calls tools iteratively — it might call `list_tasks`, inspect the result, then call `complete_task`. Pre-loading all context Cambium might need to provide is not feasible without Cambium understanding the agent's full decision tree.
 

@@ -198,6 +198,90 @@ class ProjectDetailView(ProjectSummaryView):
 
 
 # ---------------------------------------------------------------------------
+# Project progress
+# ---------------------------------------------------------------------------
+
+class ProjectCriticalTaskView(BaseModel):
+    id: str
+    title: str
+    status: str
+
+
+class ProjectProgressView(BaseModel):
+    project_id: str
+    project_name: str
+    status: str
+    tasks_total: int
+    tasks_done: int
+    tasks_skipped: int
+    tasks_in_progress: int
+    tasks_blocked: int
+    percent_complete: int
+    schedule_percent_elapsed: Optional[int] = None
+    days_remaining: Optional[int] = None
+    on_track: Optional[bool] = None
+    budget_cap: Optional[float] = None
+    estimated_cost: Optional[float] = None
+    budget_percent_used: Optional[int] = None
+    critical_tasks: list[ProjectCriticalTaskView] = []
+
+
+# ---------------------------------------------------------------------------
+# Project planning — briefs and proposals
+# ---------------------------------------------------------------------------
+
+class ProjectBriefView(BaseModel):
+    id: str
+    project_id: str
+    status: str
+    goal: str
+    desired_outcome: Optional[str] = None
+    target_start: Optional[datetime] = None
+    target_completion: Optional[datetime] = None
+    budget_cap: Optional[float] = None
+    effort_preference: Optional[str] = None
+    propagation_preference: Optional[str] = None
+    priority_preferences: list = []
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class ProposalSummaryView(BaseModel):
+    id: str
+    project_id: str
+    brief_id: str
+    version: int
+    status: str
+    title: str
+    summary: str
+    total_estimated_cost: Optional[float] = None
+    expected_completion_date: Optional[str] = None
+    total_estimated_hours: Optional[float] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class ProposalDetailView(ProposalSummaryView):
+    recommended_approach: str
+    selected_locations: list = []
+    selected_plants: list = []
+    material_strategy: dict = {}
+    propagation_strategy: dict = {}
+    assumptions: list = []
+    tradeoffs: list = []
+    risks: list = []
+    feasibility_notes: list = []
+    cost_estimate: dict = {}
+    timeline_estimate: dict = {}
+    effort_estimate: dict = {}
+    maintenance_assumptions: dict = {}
+    resource_assumptions: dict = {}
+    budget_assumptions: dict = {}
+    timing_anchors: dict = {}
+
+
+# ---------------------------------------------------------------------------
 # Task series
 # ---------------------------------------------------------------------------
 
@@ -298,3 +382,201 @@ class SearchResultItemView(BaseModel):
 class SearchResultsView(BaseModel):
     results: list[SearchResultItemView]
     by_type: dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# Threads
+# ---------------------------------------------------------------------------
+
+class ThreadView(BaseModel):
+    thread_id: str
+    title: Optional[str] = None
+    project_id: Optional[str] = None
+    last_message_preview: Optional[str] = None
+    last_active_at: Optional[datetime] = None
+    message_count: int
+    pinned_context: list[dict[str, Any]] = []
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Garden — Location filter
+# ---------------------------------------------------------------------------
+
+class LocationResultsView(BaseModel):
+    beds: list[BedView]
+    containers: list[ContainerView]
+    plants: list[PlantSummaryView]
+
+
+# ---------------------------------------------------------------------------
+# Interactions
+# ---------------------------------------------------------------------------
+
+class InteractionActionView(BaseModel):
+    id: str
+    label: str
+    kind: str
+    style_hint: str = "neutral"
+    input_schema: Optional[list[dict[str, Any]]] = None
+
+
+class InteractionEnvelopeView(BaseModel):
+    id: str
+    interaction_type: str
+    status: str
+    title: str
+    summary: str
+    body: Optional[str] = None
+    sections: list[dict[str, Any]] = []
+    actions: list[InteractionActionView] = []
+    context: dict[str, Any] = {}
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolution_action: Optional[str] = None
+    resolution_summary: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Triage
+# ---------------------------------------------------------------------------
+
+class TriageSnapshotView(BaseModel):
+    id: str
+    created_at: datetime
+    reasoning_summary: str
+    user_focus_summary: Optional[str] = None
+    weather_snapshot_id: Optional[str] = None
+    urgent_tasks: list[TaskSummaryView]
+    routine_tasks: list[TaskSummaryView]
+    project_tasks: list[TaskSummaryView]
+
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+
+class WeatherDayImpactView(BaseModel):
+    date: str
+    impact_type: str
+    severity: str
+    summary: str
+    reason: Optional[str] = None
+    timing_advice: Optional[str] = None
+
+
+class WeatherRecommendedActionView(BaseModel):
+    date: str
+    action: str
+
+
+class WeatherSnapshotView(BaseModel):
+    id: str
+    created_at: datetime
+    location_label: str
+    timezone: str
+    forecast_start_date: datetime
+    forecast_end_date: datetime
+    conditions_summary: str
+    alerts_summary: Optional[str] = None
+    derived_impacts: list[WeatherDayImpactView] = []
+    recommended_actions: list[WeatherRecommendedActionView] = []
+
+
+class WeatherImpactedTaskView(BaseModel):
+    task_id: str
+    task_title: str
+    project_id: Optional[str] = None
+    impact_type: str
+    impact_kind: str
+    impact_date: Optional[str] = None
+    summary: str
+
+
+class WeatherTaskChangeSetView(BaseModel):
+    id: str
+    status: str
+    summary: str
+    weather_snapshot_id: str
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    affected_tasks: list[TaskSummaryView] = []
+
+
+# ---------------------------------------------------------------------------
+# Incidents & treatment plans
+# ---------------------------------------------------------------------------
+
+class IncidentSubjectView(BaseModel):
+    subject_type: str
+    subject_id: str
+    role: Optional[str] = None
+
+
+class TreatmentPlanView(BaseModel):
+    id: str
+    incident_id: str
+    status: str
+    approach_summary: str
+    recommended_steps: list[dict[str, Any]] = []
+    follow_up_strategy: list[dict[str, Any]] = []
+    monitoring_notes: Optional[str] = None
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+
+
+class IncidentView(BaseModel):
+    id: str
+    incident_type: str
+    status: str
+    severity: Optional[str] = None
+    summary: str
+    notes: Optional[str] = None
+    project_id: Optional[str] = None
+    reported_by: str
+    detected_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class IncidentDetailView(IncidentView):
+    subjects: list[IncidentSubjectView] = []
+    treatment_plan: Optional[TreatmentPlanView] = None
+
+
+
+# ---------------------------------------------------------------------------
+# Activity
+# ---------------------------------------------------------------------------
+
+class ActivitySubjectView(BaseModel):
+    subject_type: str
+    subject_id: str
+    role: Optional[str] = None
+
+
+class ActivityEventView(BaseModel):
+    id: str
+    created_at: datetime
+    actor_type: str
+    actor_label: Optional[str] = None
+    event_type: str
+    category: str
+    summary: str
+    notes: Optional[str] = None
+    project_id: Optional[str] = None
+    subjects: list[ActivitySubjectView] = []
+
+
+# ---------------------------------------------------------------------------
+# Plant batches
+# ---------------------------------------------------------------------------
+
+class PlantBatchResultView(BaseModel):
+    batch_id: str
+    batch_name: str
+    plant_name: str
+    variety: Optional[str] = None
+    quantity_sown: int
+    project_id: Optional[str] = None
+    created_at: datetime
+    plants: list[PlantSummaryView] = []

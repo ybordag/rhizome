@@ -1,6 +1,6 @@
 # Tools Reference
 
-All 93 tools registered in `agent/tools/__init__.py`, organized by domain. Tools are exposed to the LLM via LangChain's tool binding and are also callable directly from the Cambium proxy layer.
+All 94 tools registered in `agent/tools/__init__.py`, organized by domain. Tools are exposed to the LLM via LangChain's tool binding and are also callable directly from the Cambium proxy layer.
 
 ---
 
@@ -21,8 +21,8 @@ All 93 tools registered in `agent/tools/__init__.py`, organized by domain. Tools
 | `list_plants(status?, container_id?, bed_id?, batch_id?)` | List plants with filters |
 | `delete_plant(plant_id)` | Hard delete (requires confirmation) |
 | `batch_add_plant_type(name, quantity, source, ...)` | Add multiple plants of one type at once |
-| `batch_update_plants(batch_id, ...)` | Update all plants in a batch |
-| `batch_remove_plants(batch_id, reason)` | Remove all plants in a batch |
+| `batch_update_plants(name, new_status?, project_id?, variety?, current_status?, quantity?, ...)` | Update plants matching a batch-style filter |
+| `batch_remove_plants(name, reason, project_id?, variety?, current_status?, quantity?)` | Soft-remove plants matching a batch-style filter |
 | `list_batches(project_id?)` | List plant batches |
 | `delete_batch(batch_id)` | Hard delete batch (requires confirmation) |
 

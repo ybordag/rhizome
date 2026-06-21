@@ -9,13 +9,16 @@ from agent.tools.operations.incidents import (
 )
 from agent.tools.operations.care import get_current_care_state, get_recent_care_history
 from agent.tools.projects.tracker import complete_task
-from agent.tools.operations.triage import get_latest_triage_snapshot, run_daily_triage
+from agent.tools.operations.triage import get_latest_triage_snapshot, list_triage_recommendations, run_daily_triage
 from agent.tools.operations.weather import (
     approve_weather_task_changes,
     draft_weather_task_changes,
+    get_latest_weather_snapshot,
     list_weather_impacted_tasks,
+    refresh_weather_snapshot,
 )
-from db.models import ActivityEvent, GardenProfile, IncidentReport, Plant, Task, TreatmentPlan, WeatherTaskChangeSet
+from db.database import current_user_id
+from db.models import ActivityEvent, GardenProfile, IncidentReport, MonitorAlert, Plant, Task, TreatmentPlan, WeatherTaskChangeSet
 from tests.support.factories import (
     link_plant_to_project,
     make_container,
@@ -27,9 +30,11 @@ from tests.support.factories import (
     make_project_revision,
     make_task,
     make_task_generation_run,
+    make_triage_snapshot,
     make_weather_snapshot,
 )
 from tests.tools.projects.test_task_tracker_tools import _accept_plan
+from tests.db.test_monitor_jobs import fake_open_meteo
 from agent.tools.projects.tracker import generate_project_tasks
 
 
@@ -94,6 +99,45 @@ def test_triage_uses_weather_snapshot_and_returns_grouped_output(db_session, pat
 
 
 @pytest.mark.integration
+def test_list_triage_recommendations_lists_latest_snapshot_tasks(db_session, patched_sessionlocal):
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    generate_project_tasks.invoke({"project_id": project.id})
+    make_weather_snapshot(db_session)
+
+    run_daily_triage.invoke({"opener": "I only have 20 minutes and low energy, but I want to work outside."})
+    snapshot = get_latest_triage_snapshot.invoke({})
+    result = list_triage_recommendations.invoke({})
+
+    assert "Latest triage recommendations:" in result or "no task recommendations" in result
+    if "Latest triage recommendations:" in result:
+        task_ids = [line.strip("- ") for line in result.splitlines() if line.startswith("- ")]
+        assert len(task_ids) > 0
+
+
+@pytest.mark.integration
+def test_list_triage_recommendations_scoped_to_current_user(db_session, patched_sessionlocal):
+    profile_a = make_profile(db_session, user_id="owner-a")
+    profile_b = make_profile(db_session, user_id="owner-b")
+    make_triage_snapshot(db_session, garden_profile_id=profile_a.id, recommended_task_ids=["task-a-1"])
+    make_triage_snapshot(db_session, garden_profile_id=profile_b.id, recommended_task_ids=["task-b-1"])
+
+    current_user_id.set("owner-a")
+    try:
+        result = list_triage_recommendations.invoke({})
+        assert "task-a-1" in result
+        assert "task-b-1" not in result
+    finally:
+        current_user_id.set("1")
+
+    current_user_id.set("no-profile-user")
+    try:
+        result = list_triage_recommendations.invoke({})
+        assert "No triage snapshot found." in result
+    finally:
+        current_user_id.set("1")
+
+
+@pytest.mark.integration
 def test_triage_only_uses_urgent_for_emergencies(db_session, patched_sessionlocal):
     project = _accept_plan(db_session, patched_sessionlocal, propagation_method="start")
     generate_project_tasks.invoke({"project_id": project.id})
@@ -136,6 +180,62 @@ def test_weather_task_changes_are_drafted_then_approved(db_session, patched_sess
     assert "Drafted weather task changes." in drafted
     assert "Approved weather task changes" in approved
     assert before_statuses != after_statuses or db_session.query(Task).filter(Task.project_id == project.id).count() > len(before_statuses)
+
+
+@pytest.mark.integration
+def test_approve_weather_task_changes_rejects_another_users_change_set(db_session, patched_sessionlocal):
+    from db.database import current_user_id
+
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    generate_project_tasks.invoke({"project_id": project.id})
+    make_weather_snapshot(
+        db_session,
+        derived_impacts=[{"date": "2026-04-14", "impact_type": "frost", "severity": "high", "summary": "Frost risk."}],
+    )
+    draft_weather_task_changes.invoke({"project_id": project.id})
+    change_set = db_session.query(WeatherTaskChangeSet).order_by(WeatherTaskChangeSet.created_at.desc()).first()
+
+    current_user_id.set("owner-b")
+    try:
+        result = approve_weather_task_changes.invoke({"change_set_id": change_set.id})
+        assert "No weather task change set found" in result
+    finally:
+        current_user_id.set("1")
+
+
+@pytest.mark.integration
+def test_refresh_weather_snapshot_tool_uses_current_users_profile(db_session, patched_sessionlocal, fake_open_meteo):
+    profile = make_profile(db_session, location_label="San Francisco, CA")
+
+    result = refresh_weather_snapshot.invoke({})
+
+    assert "Weather refreshed for San Francisco, CA" in result
+    from db.models import WeatherSnapshot
+    snapshot = db_session.query(WeatherSnapshot).order_by(WeatherSnapshot.created_at.desc()).first()
+    assert snapshot.garden_profile_id == profile.id
+
+
+@pytest.mark.integration
+def test_get_latest_weather_snapshot_tool_scoped_to_current_user(db_session, patched_sessionlocal):
+    profile_a = make_profile(db_session, user_id="owner-a", location_label="Phoenix, AZ")
+    profile_b = make_profile(db_session, user_id="owner-b", location_label="Duluth, MN")
+    make_weather_snapshot(db_session, garden_profile_id=profile_a.id, location_label="Phoenix, AZ")
+    make_weather_snapshot(db_session, garden_profile_id=profile_b.id, location_label="Duluth, MN")
+
+    current_user_id.set("owner-a")
+    try:
+        result = get_latest_weather_snapshot.invoke({})
+        assert "Phoenix, AZ" in result
+        assert "Duluth, MN" not in result
+    finally:
+        current_user_id.set("1")
+
+    current_user_id.set("no-profile-user")
+    try:
+        result = get_latest_weather_snapshot.invoke({})
+        assert "No weather snapshot found." in result
+    finally:
+        current_user_id.set("1")
 
 
 @pytest.mark.integration
@@ -191,6 +291,142 @@ def test_draft_treatment_plan_reuses_existing_active_plan(db_session, patched_se
     assert len(plans) == 1
     assert plans[0].id in first
     assert plans[0].id in second
+
+
+# ---------------------------------------------------------------------------
+# draft_treatment_plan — job event push (#130)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_draft_treatment_plan_pushes_job_started_and_complete(db_session, patched_sessionlocal):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    current_user_id.set("1")
+    queue = notifications.get_or_create_user_queue("1")
+    try:
+        project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+        reported = report_incident.invoke({
+            "incident_type": "pest",
+            "summary": "Aphids on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        })
+        incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+        draft_treatment_plan.invoke({"incident_id": incident.id})
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        types = [e["type"] for e in events]
+        assert "job_started" in types
+        assert "job_complete" in types
+        started = next(e for e in events if e["type"] == "job_started")
+        complete = next(e for e in events if e["type"] == "job_complete")
+        assert started["title"] == "Drafting treatment plan"
+        assert started["job_id"] == complete["job_id"]
+    finally:
+        notifications.remove_user_queue("1")
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_pushes_job_failed_on_error(db_session, patched_sessionlocal, monkeypatch):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    monkeypatch.setattr(
+        "agent.tools.operations.incidents.draft_treatment_plan_data",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    current_user_id.set("1")
+    queue = notifications.get_or_create_user_queue("1")
+    try:
+        result = draft_treatment_plan.invoke({"incident_id": "nonexistent"})
+        assert "Failed to draft treatment plan" in result
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        assert events[-1]["type"] == "job_failed"
+        assert events[-1]["error"] == "boom"
+    finally:
+        notifications.remove_user_queue("1")
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_works_without_active_queue(db_session, patched_sessionlocal):
+    """No active queue (no SSE connection) — must not raise."""
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    report_incident.invoke({
+        "incident_type": "pest",
+        "summary": "Aphids on tomato leaves",
+        "project_id": project.id,
+        "severity": "medium",
+        "subjects": [],
+    })
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+    result = draft_treatment_plan.invoke({"incident_id": incident.id})
+    assert "Drafted treatment plan" in result
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_writes_recoverable_alert(db_session, patched_sessionlocal):
+    """A disconnected user must still be able to discover a completed plan via MonitorAlert."""
+    from db.database import current_user_id
+
+    current_user_id.set("1")
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    report_incident.invoke({
+        "incident_type": "pest",
+        "summary": "Aphids on tomato leaves",
+        "project_id": project.id,
+        "severity": "medium",
+        "subjects": [],
+    })
+    incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+    draft_treatment_plan.invoke({"incident_id": incident.id})
+
+    plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.desc()).first()
+    alerts = db_session.query(MonitorAlert).filter(MonitorAlert.alert_type == "treatment_plan").all()
+    assert len(alerts) == 1
+    assert alerts[0].user_id == "1"
+    assert alerts[0].severity == "medium"
+    assert alerts[0].source_type == "treatment_plan"
+    assert alerts[0].source_id == plan.id
+
+
+@pytest.mark.integration
+def test_draft_treatment_plan_pushes_alert_event_when_queue_active(db_session, patched_sessionlocal):
+    from agent.domain import notifications
+    from db.database import current_user_id
+
+    current_user_id.set("1")
+    queue = notifications.get_or_create_user_queue("1")
+    try:
+        project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+        report_incident.invoke({
+            "incident_type": "pest",
+            "summary": "Aphids on tomato leaves",
+            "project_id": project.id,
+            "severity": "medium",
+            "subjects": [],
+        })
+        incident = db_session.query(IncidentReport).order_by(IncidentReport.created_at.desc()).first()
+
+        draft_treatment_plan.invoke({"incident_id": incident.id})
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        alert_events = [e for e in events if e["type"] == "alert"]
+        assert len(alert_events) == 1
+        assert alert_events[0]["payload"]["alert_type"] == "treatment_plan"
+    finally:
+        notifications.remove_user_queue("1")
 
 
 @pytest.mark.integration
@@ -274,6 +510,7 @@ def test_approving_treatment_plan_supersedes_other_draft_plans_for_same_project_
     first_plan = db_session.query(TreatmentPlan).order_by(TreatmentPlan.created_at.asc()).first()
 
     duplicate_incident = IncidentReport(
+        user_id="1",
         project_id=project.id,
         incident_type="blight",
         status="reported",

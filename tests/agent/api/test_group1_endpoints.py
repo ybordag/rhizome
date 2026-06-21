@@ -192,6 +192,77 @@ def test_list_plants_location_filter(patched_sessionlocal, db_session, seed_gard
 
 
 # ---------------------------------------------------------------------------
+# #138 — GET /garden/locations/{location} structured JSON
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_get_location_returns_structured_beds_containers_plants(patched_sessionlocal, db_session, seed_garden_profile):
+    bed = make_bed(db_session, seed_garden_profile, name="Courtyard Bed", location="Courtyard")
+    container = make_container(db_session, seed_garden_profile, name="Patio Pot", location="Courtyard")
+    p1 = make_plant(db_session, seed_garden_profile, name="Tomato")
+    p1.bed_id = bed.id
+    p2 = make_plant(db_session, seed_garden_profile, name="Basil")
+    p2.container_id = container.id
+    p3 = make_plant(db_session, seed_garden_profile, name="Elsewhere Mint")
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/garden/locations/Courtyard?user_id={USER}")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert [b["name"] for b in body["beds"]] == ["Courtyard Bed"]
+    assert [c["name"] for c in body["containers"]] == ["Patio Pot"]
+    plant_names = {p["name"] for p in body["plants"]}
+    assert plant_names == {"Tomato", "Basil"}
+
+    by_name = {p["name"]: p for p in body["plants"]}
+    assert by_name["Tomato"]["location_name"] == "Courtyard Bed"
+    assert by_name["Basil"]["location_name"] == "Patio Pot"
+
+
+@pytest.mark.integration
+def test_get_location_empty_when_nothing_matches(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get(f"/internal/data/garden/locations/nonexistent?user_id={USER}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"beds": [], "containers": [], "plants": []}
+
+
+@pytest.mark.integration
+def test_get_location_excludes_other_users_objects(patched_sessionlocal, db_session, seed_garden_profile):
+    make_bed(db_session, seed_garden_profile, name="Owner A Bed", location="Slope", user_id="owner-a")
+    make_container(db_session, seed_garden_profile, name="Owner A Pot", location="Slope", user_id="owner-a")
+
+    resp = client.get(f"/internal/data/garden/locations/Slope?user_id={USER}")
+    assert resp.status_code == 200
+    assert resp.json() == {"beds": [], "containers": [], "plants": []}
+
+
+@pytest.mark.integration
+def test_get_location_matches_partial_substring(patched_sessionlocal, db_session, seed_garden_profile):
+    make_bed(db_session, seed_garden_profile, name="Front Bed", location="Front Yard")
+
+    resp = client.get(f"/internal/data/garden/locations/front?user_id={USER}")
+    assert resp.status_code == 200
+    assert [b["name"] for b in resp.json()["beds"]] == ["Front Bed"]
+
+
+@pytest.mark.integration
+def test_get_location_excludes_removed_plants(patched_sessionlocal, db_session, seed_garden_profile):
+    bed = make_bed(db_session, seed_garden_profile, name="Courtyard Bed", location="Courtyard")
+    alive = make_plant(db_session, seed_garden_profile, name="Alive Plant", status="established")
+    alive.bed_id = bed.id
+    removed = make_plant(db_session, seed_garden_profile, name="Removed Plant", status="removed")
+    removed.bed_id = bed.id
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/garden/locations/Courtyard?user_id={USER}")
+    assert resp.status_code == 200
+    plant_names = {p["name"] for p in resp.json()["plants"]}
+    assert plant_names == {"Alive Plant"}
+
+
+# ---------------------------------------------------------------------------
 # #123 — Available resources
 # ---------------------------------------------------------------------------
 
