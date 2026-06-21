@@ -1,7 +1,7 @@
 # Rhizome — Claude Code Memory
 
 ## Branch
-`geranium` merged into `main`. Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done, pending merge). `iris` deleted — image modality work not yet started.
+`geranium` merged into `main`. Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done, pending merge), `verbena` (current branch — structured-JSON backlog #133–#141, 15 commits ahead of `origin/verbena`, not yet merged to main). `iris` deleted — image modality work not yet started.
 
 ## Build and test
 ```
@@ -462,6 +462,18 @@ main.py             — CLI entrypoint
   views' shapes, both live-bug regressions (confirmed they fail against the pre-fix code, not just
   pass against the fix), error paths (404/400/409), and cross-user isolation. Full suite: 805
   passed, 1 pre-existing skip (`ANTHROPIC_API_KEY` not set), 21 e2e deselected.
+
+**#140/#141/#135 committed (2026-06-21):** all three had been sitting uncommitted, interleaved
+across the same shared files (`routers.py`, `views.py`, `CLAUDE.md`, `api-reference.md`). Split
+into three commits, one per issue, by reconstructing each intermediate snapshot (selective hunk
+reversal/reapplication, not just `git add -p`) and running the full suite at each checkpoint —
+`9ae26d5` (#140), `739394b` (#141), `7c7cbeb` (#135). Caught one real mistake mid-split (the first
+#140 attempt truncated this file, dropping the Known issues/Invariants/Postgres notes sections
+below — fixed via amend before moving on, confirmed via `git show HEAD:CLAUDE.md` afterward).
+Post-split audit confirmed: `git diff <pre-session>..HEAD --stat` matches the original combined
+diff exactly, no duplicate class/function/section definitions anywhere, all imports clean, the
+real FastAPI lifespan boots and serves `/health`, all 12 incident endpoints and both streaming
+endpoints present and correct, full suite still 805 passed/1 skipped, zero Postgres pollution.
 
 **Next in Rhizome:**
 - Garden spatial layout model and map endpoints (`#118`)
