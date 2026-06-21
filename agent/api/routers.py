@@ -574,8 +574,20 @@ def list_due_tasks(user_id: str, project_id: str = None, days_ahead: int = 7):
 @data_router.get("/tasks/blocked")
 def list_blocked_tasks(user_id: str, project_id: str = None):
     _set_user(user_id)
-    from agent.tools.projects.tracker import list_blocked_tasks as _list_blocked_tasks
-    return {"result": _list_blocked_tasks.invoke({"project_id": project_id})}
+    from agent.domain.tracker import build_blocked_task_view as _domain_blocked
+    session = SessionLocal()
+    try:
+        rows = _domain_blocked(session, project_id=project_id)
+        return [
+            row["task"].to_summary_view(
+                urgency=row["urgency"],
+                blocked=row["blocked"],
+                due_date=row["due_date"],
+            )
+            for row in rows
+        ]
+    finally:
+        session.close()
 
 
 @data_router.get("/tasks/{task_id}")
@@ -2751,6 +2763,7 @@ def create_thread(user_id: str, body: CreateThreadRequest):
 @data_router.get("/threads")
 def list_threads(user_id: str, limit: int = 20):
     """List user's conversation threads, most recently active first."""
+    from agent.api.views import ThreadView
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
@@ -2761,19 +2774,7 @@ def list_threads(user_id: str, limit: int = 20):
             .limit(limit)
             .all()
         )
-        return [
-            {
-                "thread_id": r.id,
-                "title": r.title,
-                "project_id": r.project_id,
-                "last_message_preview": r.last_message_preview,
-                "last_active_at": r.last_active_at.isoformat() if r.last_active_at else None,
-                "message_count": r.message_count,
-                "pinned_context": r.pinned_context or [],
-                "created_at": r.created_at.isoformat(),
-            }
-            for r in rows
-        ]
+        return [ThreadView(**r.to_view()) for r in rows]
     finally:
         session.close()
 
@@ -2781,6 +2782,7 @@ def list_threads(user_id: str, limit: int = 20):
 @data_router.get("/threads/{thread_id}")
 def get_thread(thread_id: str, user_id: str):
     """Get metadata for a specific thread."""
+    from agent.api.views import ThreadView
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
@@ -2791,16 +2793,7 @@ def get_thread(thread_id: str, user_id: str):
         )
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
-        return {
-            "thread_id": thread.id,
-            "title": thread.title,
-            "project_id": thread.project_id,
-            "last_message_preview": thread.last_message_preview,
-            "last_active_at": thread.last_active_at.isoformat() if thread.last_active_at else None,
-            "message_count": thread.message_count,
-            "pinned_context": thread.pinned_context or [],
-            "created_at": thread.created_at.isoformat(),
-        }
+        return ThreadView(**thread.to_view())
     finally:
         session.close()
 

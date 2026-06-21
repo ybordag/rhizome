@@ -42,6 +42,7 @@ All data endpoints return structured JSON (not `{"result": "...string..."}`). Re
 - `TaskSummaryView`, `TaskDetailView`
 - `ProjectSummaryView`, `ProjectDetailView`, `ProjectProgressView`
 - `ProjectBriefView`, `ProposalSummaryView`, `ProposalDetailView`
+- `ThreadView`
 - `TaskSeriesView`, `CalendarAnnotationView`
 - `ProjectExpenseView`, `ExpenseSummaryView`, `ShoppingItemView`
 - `ActivityEventView`, `ActivitySubjectView`
@@ -262,6 +263,8 @@ Due tasks with urgency tiers.
 
 ### `GET /api/v1/tasks/blocked`
 All blocked tasks.
+**Query params:** `project_id`
+**Response:** `TaskSummaryView[]` with `urgency`, `blocked: true`, and `due_date` populated where available.
 
 ### `GET /api/v1/tasks/{id}`
 Task detail. **Response:** `TaskDetailView`
@@ -440,9 +443,6 @@ AI trigger — run a fresh triage pass and persist the snapshot.
 ### `GET /api/v1/triage/latest`
 Most recent triage snapshot, or `null` if none exists yet.
 **Response:** `TriageSnapshotView` — `{ id, created_at, reasoning_summary, user_focus_summary, weather_snapshot_id, urgent_tasks: TaskSummaryView[], routine_tasks: TaskSummaryView[], project_tasks: TaskSummaryView[] }`. Resolves task IDs into full task objects rather than returning bare IDs (#133, fixed from a string-wrapped response).
-
-### `GET /api/v1/triage/recommendations`
-Recommended task IDs from the latest triage snapshot.
 
 ### `POST /api/v1/triage/monitor`
 Trigger the monitor cron triage job.
@@ -640,9 +640,14 @@ Register a thread. Idempotent.
 ### `GET /api/v1/threads`
 List user's conversations sorted by most recently active.
 **Query params:** `limit` (default 20)
+**Response:** `ThreadView[]`
 
 ### `GET /api/v1/threads/{id}`
 Thread metadata.
+**Response:** `ThreadView`
+
+`ThreadView` preserves the existing wire shape:
+`{ thread_id, title, project_id, last_message_preview, last_active_at, message_count, pinned_context, created_at }`
 
 ### `GET /api/v1/threads/{id}/messages`
 Full message history from the LangGraph checkpoint.

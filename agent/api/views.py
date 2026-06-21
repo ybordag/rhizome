@@ -385,6 +385,21 @@ class SearchResultsView(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Threads
+# ---------------------------------------------------------------------------
+
+class ThreadView(BaseModel):
+    thread_id: str
+    title: Optional[str] = None
+    project_id: Optional[str] = None
+    last_message_preview: Optional[str] = None
+    last_active_at: Optional[datetime] = None
+    message_count: int
+    pinned_context: list[dict[str, Any]] = []
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Garden — Location filter
 # ---------------------------------------------------------------------------
 

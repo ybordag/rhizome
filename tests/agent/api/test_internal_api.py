@@ -514,6 +514,7 @@ def test_list_due_tasks_empty(patched_sessionlocal, db_session, seed_garden_prof
 def test_list_blocked_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/tasks/blocked?user_id=1")
     assert resp.status_code == 200
+    assert resp.json() == []
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +583,12 @@ def test_get_triage_snapshot_returns_structured_view(patched_sessionlocal, db_se
     assert len(body["routine_tasks"]) == 1
     assert body["routine_tasks"][0]["title"] == "Check soil moisture"
     assert body["project_tasks"] == []
+
+
+@pytest.mark.integration
+def test_triage_recommendations_route_not_registered(patched_sessionlocal):
+    resp = client.get("/internal/data/triage/recommendations?user_id=1")
+    assert resp.status_code == 404
 
 
 @pytest.mark.integration

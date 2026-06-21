@@ -1270,6 +1270,18 @@ class Thread(Base):
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
+    def to_view(self) -> dict:
+        return {
+            "thread_id": self.id,
+            "title": self.title,
+            "project_id": self.project_id,
+            "last_message_preview": self.last_message_preview,
+            "last_active_at": self.last_active_at,
+            "message_count": self.message_count,
+            "pinned_context": self.pinned_context or [],
+            "created_at": self.created_at,
+        }
+
 
 class CalendarAnnotation(Base):
     __tablename__ = "calendar_annotation"

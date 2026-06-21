@@ -306,7 +306,20 @@ main.py             — CLI entrypoint
   issue endpoints, wrong-user/wrong-project paths, empty proposal lists, invalid mutation
   inputs, delete-with-active-tasks rejection, progress timeline/budget/critical-task fields,
   proposal-accept side effects, and the invariant that the underlying tools still return strings.
-- Still open: `#139` (ThreadView, lower priority/no functional gap).
+- `#139` closed locally - thread list/detail endpoints now return `ThreadView` via
+  `Thread.to_view()` instead of inline router dicts, preserving the existing `thread_id` wire
+  shape exactly. Added regression coverage in `tests/agent/api/test_threads.py` for the direct
+  serializer contract, exact field order/key set, compact raw JSON for list/detail responses,
+  ISO datetime encoding, and default `pinned_context: []`/`message_count: 0` behavior.
+- Small structured endpoint cleanup: `GET /tasks/blocked` now returns `TaskSummaryView[]`
+  instead of `{"result": "<prose>"}` using `build_blocked_task_view()` in
+  `agent/domain/tracker.py`. The route is scoped to the current user's projects and no longer
+  inherits the old tool's `parent_task_id` blind spot, so manually-created dependency-blocked
+  tasks and event-anchor-blocked tasks are included. Added 13 focused regression cases in
+  `tests/agent/api/test_tasks_blocked_structured.py`.
+- Structured JSON backlog note: `#133`, `#134`, and `#137` remain open on GitHub for user
+  verification, but their code paths have been implemented and pushed; `#139` is now implemented
+  locally and ready for commit/push.
 
 **SSE streaming fix complete (#141, 2026-06-21):**
 - `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` were completely broken
