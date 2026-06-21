@@ -567,7 +567,11 @@ Trigger the monitor cron weather job.
 Global activity feed. **Response:** `ActivityEventView[]` — fixed from `{"result": "<prose>"}` in
 `#134`. Every per-entity activity endpoint above (beds/containers/plants/batches/tasks/projects)
 already returned this shape as of `#140`.
-**Query params:** `project_id`, `subject_type`, `event_type`, `category`, `since` (ISO), `before_timestamp` (ISO cursor), `limit`. Invalid `since`/`before_timestamp` returns 400.
+**Query params:** `project_id`, `subject_type`, `event_type`, `category`, `since` (ISO, inclusive),
+`before_timestamp` (ISO cursor, exclusive), `limit` (default 20). Invalid `since`/`before_timestamp`
+returns 400. Results are newest-first. To paginate: pass the `created_at` of the last (oldest) event
+in a page as the next page's `before_timestamp` — exclusivity at that exact boundary is what
+prevents the same event appearing on both pages.
 
 ### `GET /api/v1/activity/stats`
 Aggregated activity counts for velocity tracking and progress charts.

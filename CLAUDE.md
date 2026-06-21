@@ -7,7 +7,7 @@
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (817 tests, excl. E2E)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (828 tests, excl. E2E)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **817 tests** — unit + integration + graph + API
+- Total (excluding E2E): **828 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -476,11 +476,27 @@ main.py             — CLI entrypoint
   same masked-error pattern fixed elsewhere in this backlog.
 - `GET /activity/stats` was already structured (a plain dict, not wrapped in `{"result": ...}`)
   and untouched — `#134`'s docs note only ever applied to the global feed endpoint, not stats.
-- 11 tests in `tests/agent/api/test_issue_134_activity_feed_structured.py`: empty-feed shape,
-  subjects round-tripping, all four filters (category/event_type/project_id/subject_type), limit,
-  both invalid-date 400 paths (confirmed they fail against the pre-fix code), cross-user isolation,
-  and one test driving through the real `report_incident` chat tool to prove the serializer
-  round-trips activity actually written by tool-layer code, not just direct ORM/domain calls.
+- 22 tests in `tests/agent/api/test_issue_134_activity_feed_structured.py` (11 first pass + 11 from
+  a critical-review follow-up — see below): empty-feed shape, subjects round-tripping, all four
+  filters, limit, both invalid-date 400 paths, cross-user isolation, and one test driving through
+  the real `report_incident` chat tool to prove the serializer round-trips tool-written activity.
+- **Critical review found the first pass exercised filters/shape but never the date-range and
+  pagination semantics the endpoint is actually for** — every since/before_timestamp test only
+  checked *invalid* strings 400ing, never that *valid* ones filter correctly; ordering, the
+  documented `before_timestamp`-as-cursor pagination pattern, and the default `limit=20` were
+  untested entirely. Added (with explicit `created_at` overrides for determinism, since
+  `record_activity_event` always stamps "now"): `since`/`before_timestamp` actually excluding
+  out-of-range events (together and separately), newest-first ordering, a full two-page
+  cursor-pagination round trip with an overlap check, the default-limit-20 enforcement, an
+  AND-not-OR combined-filter check, multi-subject serialization, and `notes` round-tripping.
+  Verified each has teeth by mutating `list_recent_activity_entries()`/the router (flipping
+  `desc()`→`asc()`, `>=`/`<` to `>`/`<=`, bumping the default limit to 50) and confirming the
+  right tests fail — caught a second-order gap in the process: the original boundary tests used
+  values safely past the cutoff, so an off-by-one on the comparison operator (`>` vs `>=`, `<=` vs
+  `<`) slipped through undetected until two dedicated exact-boundary tests were added
+  (`since_is_inclusive_of_exact_boundary`, `before_timestamp_is_exclusive_of_exact_boundary`) —
+  the boundary *is* the pagination cursor contract, so an off-by-one there would silently
+  duplicate or drop events between pages in production.
 
 **#140/#141/#135 committed (2026-06-21):** all three had been sitting uncommitted, interleaved
 across the same shared files (`routers.py`, `views.py`, `CLAUDE.md`, `api-reference.md`). Split
