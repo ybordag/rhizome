@@ -241,12 +241,124 @@ def test_list_incidents_empty(patched_sessionlocal, db_session, seed_garden_prof
 def test_get_pending_interaction_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/interactions/pending?user_id=1")
     assert resp.status_code == 200
+    assert resp.json() is None
 
 
 @pytest.mark.integration
 def test_list_recent_interactions_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/interactions/recent?user_id=1")
     assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Interactions — structured JSON (#136)
+# ---------------------------------------------------------------------------
+
+def _make_confirmation_record(db_session, project):
+    from agent.domain.interactions import build_confirmation_interaction, record_interaction_summary
+
+    envelope = build_confirmation_interaction(
+        [{"name": "delete_project", "args": {"project_id": project.id}}]
+    )
+    record = record_interaction_summary(
+        db_session, envelope, source_type="confirmation", source_id=project.id, project_id=project.id,
+    )
+    db_session.commit()
+    return record
+
+
+@pytest.mark.integration
+def test_get_pending_interaction_returns_envelope(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    record = _make_confirmation_record(db_session, project)
+
+    resp = client.get("/internal/data/interactions/pending?user_id=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == record.id
+    assert body["interaction_type"] == "confirmation_request"
+    assert body["status"] == "pending"
+    assert body["actions"][0]["id"] == "confirm"
+    assert body["sections"][0]["title"] == "Operations"
+
+
+@pytest.mark.integration
+def test_list_recent_interactions_returns_envelope_array(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    record = _make_confirmation_record(db_session, project)
+
+    resp = client.get("/internal/data/interactions/recent?user_id=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["id"] == record.id
+
+
+@pytest.mark.integration
+def test_get_interaction_by_id_returns_envelope(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    record = _make_confirmation_record(db_session, project)
+
+    resp = client.get(f"/internal/data/interactions/{record.id}?user_id=1")
+    assert resp.status_code == 200
+    assert resp.json()["id"] == record.id
+
+
+@pytest.mark.integration
+def test_get_interaction_by_id_404_when_missing(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.get("/internal/data/interactions/nonexistent?user_id=1")
+    assert resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_get_interaction_by_id_404_for_other_users_record(patched_sessionlocal, db_session, seed_garden_profile):
+    from db.database import current_user_id
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    current_user_id.set("owner-a")
+    try:
+        record = _make_confirmation_record(db_session, project)
+    finally:
+        current_user_id.set("1")
+
+    resp = client.get(f"/internal/data/interactions/{record.id}?user_id=1")
+    assert resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_resolve_interaction_confirm_returns_updated_envelope(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    record = _make_confirmation_record(db_session, project)
+
+    resp = client.post(
+        f"/internal/data/interactions/{record.id}/resolve?user_id=1",
+        json={"action": "cancel"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == record.id
+    assert body["status"] == "dismissed"
+    assert body["resolution_action"] == "cancel"
+    assert body["resolved_at"] is not None
+
+
+@pytest.mark.integration
+def test_resolve_interaction_404_when_missing(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.post(
+        "/internal/data/interactions/nonexistent/resolve?user_id=1",
+        json={"action": "cancel"},
+    )
+    assert resp.status_code == 404
 
 
 @pytest.mark.integration

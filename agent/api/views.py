@@ -308,3 +308,31 @@ class LocationResultsView(BaseModel):
     beds: list[BedView]
     containers: list[ContainerView]
     plants: list[PlantSummaryView]
+
+
+# ---------------------------------------------------------------------------
+# Interactions
+# ---------------------------------------------------------------------------
+
+class InteractionActionView(BaseModel):
+    id: str
+    label: str
+    kind: str
+    style_hint: str = "neutral"
+    input_schema: Optional[list[dict[str, Any]]] = None
+
+
+class InteractionEnvelopeView(BaseModel):
+    id: str
+    interaction_type: str
+    status: str
+    title: str
+    summary: str
+    body: Optional[str] = None
+    sections: list[dict[str, Any]] = []
+    actions: list[InteractionActionView] = []
+    context: dict[str, Any] = {}
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolution_action: Optional[str] = None
+    resolution_summary: Optional[str] = None

@@ -2049,29 +2049,80 @@ def get_incident_activity(incident_id: str, user_id: str, limit: int = 20):
 @data_router.get("/interactions/pending")
 def get_pending_interaction(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.interactions import get_pending_interaction as _get
-    return {"result": _get.invoke({})}
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import get_pending_interaction_record, interaction_record_to_view_data
+
+    session = SessionLocal()
+    try:
+        record = get_pending_interaction_record(session)
+        if not record:
+            return None
+        return InteractionEnvelopeView(**interaction_record_to_view_data(record))
+    finally:
+        session.close()
 
 
 @data_router.get("/interactions/recent")
 def list_recent_interactions(user_id: str, limit: int = 10):
     _set_user(user_id)
-    from agent.tools.operations.interactions import list_recent_interactions as _list
-    return {"result": _list.invoke({"limit": limit})}
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import interaction_record_to_view_data, list_recent_interaction_records
+
+    session = SessionLocal()
+    try:
+        records = list_recent_interaction_records(session, limit=limit)
+        return [InteractionEnvelopeView(**interaction_record_to_view_data(r)) for r in records]
+    finally:
+        session.close()
 
 
 @data_router.get("/interactions/{interaction_id}")
 def get_interaction(interaction_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.interactions import get_interaction_record
-    return _result_or_404(get_interaction_record.invoke({"interaction_id": interaction_id}))
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import get_interaction_record_for_user, interaction_record_to_view_data
+
+    session = SessionLocal()
+    try:
+        record = get_interaction_record_for_user(session, interaction_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Interaction record not found")
+        return InteractionEnvelopeView(**interaction_record_to_view_data(record))
+    finally:
+        session.close()
 
 
 @data_router.post("/interactions/{interaction_id}/resolve")
 def resolve_interaction(interaction_id: str, user_id: str, body: ResolveInteractionRequest):
     _set_user(user_id)
+    from agent.api.views import InteractionEnvelopeView
+    from agent.domain.interactions import get_interaction_record_for_user, interaction_record_to_view_data
     from agent.tools.operations.interactions import resolve_interaction as _resolve
-    return _result_or_404(_resolve.invoke({"interaction_id": interaction_id, **body.model_dump(exclude_none=True)}))
+
+    session = SessionLocal()
+    try:
+        record = get_interaction_record_for_user(session, interaction_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Interaction record not found")
+    finally:
+        session.close()
+
+    # NOTE: ResolveInteractionRequest uses `action`/`notes` (frontend-facing names);
+    # the tool's parameters are `action_id`/`inputs`. This translation was previously
+    # missing here, so every call to this endpoint raised a pydantic ValidationError
+    # and 500'd before even reaching the tool body (#136 audit).
+    _resolve.invoke({
+        "interaction_id": interaction_id,
+        "action_id": body.action,
+        "inputs": {"note": body.notes} if body.notes else {},
+    })
+
+    session = SessionLocal()
+    try:
+        record = get_interaction_record_for_user(session, interaction_id)
+        return InteractionEnvelopeView(**interaction_record_to_view_data(record))
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------

@@ -480,6 +480,14 @@ def build_triage_view_interaction(session, snapshot: TriageSnapshot) -> dict[str
     )
 
 
+def get_interaction_record_for_user(session, interaction_id: str) -> Optional[InteractionRecord]:
+    return (
+        session.query(InteractionRecord)
+        .filter(InteractionRecord.id == interaction_id, InteractionRecord.user_id == current_user_id.get())
+        .first()
+    )
+
+
 def get_pending_interaction_record(session) -> Optional[InteractionRecord]:
     return (
         session.query(InteractionRecord)
@@ -516,6 +524,31 @@ def format_interaction_record(record: InteractionRecord) -> str:
         labels = ", ".join(action["label"] for action in actions)
         lines.append(f"  Actions: {labels}")
     return "\n".join(lines)
+
+
+def interaction_record_to_view_data(record: InteractionRecord) -> dict[str, Any]:
+    """Structured-JSON shape for the frontend interaction-card UI.
+
+    Mirrors what `rebuild_envelope_from_record` reconstructs for resumption,
+    but returns plain data (not the dataclass) so the API router can hand it
+    straight to `InteractionEnvelopeView` without an extra translation step.
+    """
+    metadata = record.record_metadata or {}
+    return {
+        "id": record.id,
+        "interaction_type": record.interaction_type,
+        "status": record.status,
+        "title": record.title,
+        "summary": record.summary,
+        "body": metadata.get("body"),
+        "sections": metadata.get("sections") or [],
+        "actions": metadata.get("actions") or [],
+        "context": metadata.get("context") or {},
+        "created_at": record.created_at,
+        "resolved_at": record.resolved_at,
+        "resolution_action": record.resolution_action,
+        "resolution_summary": record.resolution_summary,
+    }
 
 
 def stable_confirmation_source_id(tool_calls: list[dict[str, Any]]) -> str:
