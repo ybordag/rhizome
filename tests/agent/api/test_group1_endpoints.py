@@ -231,10 +231,35 @@ def test_get_location_empty_when_nothing_matches(patched_sessionlocal, db_sessio
 @pytest.mark.integration
 def test_get_location_excludes_other_users_objects(patched_sessionlocal, db_session, seed_garden_profile):
     make_bed(db_session, seed_garden_profile, name="Owner A Bed", location="Slope", user_id="owner-a")
+    make_container(db_session, seed_garden_profile, name="Owner A Pot", location="Slope", user_id="owner-a")
 
     resp = client.get(f"/internal/data/garden/locations/Slope?user_id={USER}")
     assert resp.status_code == 200
     assert resp.json() == {"beds": [], "containers": [], "plants": []}
+
+
+@pytest.mark.integration
+def test_get_location_matches_partial_substring(patched_sessionlocal, db_session, seed_garden_profile):
+    make_bed(db_session, seed_garden_profile, name="Front Bed", location="Front Yard")
+
+    resp = client.get(f"/internal/data/garden/locations/front?user_id={USER}")
+    assert resp.status_code == 200
+    assert [b["name"] for b in resp.json()["beds"]] == ["Front Bed"]
+
+
+@pytest.mark.integration
+def test_get_location_excludes_removed_plants(patched_sessionlocal, db_session, seed_garden_profile):
+    bed = make_bed(db_session, seed_garden_profile, name="Courtyard Bed", location="Courtyard")
+    alive = make_plant(db_session, seed_garden_profile, name="Alive Plant", status="established")
+    alive.bed_id = bed.id
+    removed = make_plant(db_session, seed_garden_profile, name="Removed Plant", status="removed")
+    removed.bed_id = bed.id
+    db_session.commit()
+
+    resp = client.get(f"/internal/data/garden/locations/Courtyard?user_id={USER}")
+    assert resp.status_code == 200
+    plant_names = {p["name"] for p in resp.json()["plants"]}
+    assert plant_names == {"Alive Plant"}
 
 
 # ---------------------------------------------------------------------------

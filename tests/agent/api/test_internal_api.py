@@ -362,6 +362,123 @@ def test_resolve_interaction_404_when_missing(patched_sessionlocal, db_session, 
 
 
 @pytest.mark.integration
+def test_resolve_interaction_404_for_other_users_record(patched_sessionlocal, db_session, seed_garden_profile):
+    from db.database import current_user_id
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    current_user_id.set("owner-a")
+    try:
+        record = _make_confirmation_record(db_session, project)
+    finally:
+        current_user_id.set("1")
+
+    resp = client.post(
+        f"/internal/data/interactions/{record.id}/resolve?user_id=1",
+        json={"action": "cancel"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_resolve_interaction_already_resolved_returns_current_state(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    record = _make_confirmation_record(db_session, project)
+
+    first = client.post(
+        f"/internal/data/interactions/{record.id}/resolve?user_id=1",
+        json={"action": "cancel"},
+    )
+    assert first.status_code == 200
+    assert first.json()["status"] == "dismissed"
+
+    second = client.post(
+        f"/internal/data/interactions/{record.id}/resolve?user_id=1",
+        json={"action": "confirm"},
+    )
+    assert second.status_code == 200
+    body = second.json()
+    assert body["status"] == "dismissed"
+    assert body["resolution_action"] == "cancel"
+
+
+@pytest.mark.integration
+def test_resolve_interaction_request_revision_threads_notes_into_inputs(patched_sessionlocal, db_session, seed_garden_profile):
+    from agent.domain.interactions import build_proposal_review_interaction, record_interaction_summary
+    from tests.support.factories import make_project, make_project_brief, make_project_proposal
+
+    project = make_project(db_session, seed_garden_profile)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    db_session.commit()
+
+    envelope = build_proposal_review_interaction(db_session, project.id, proposal.id)
+    record = record_interaction_summary(
+        db_session, envelope, source_type="proposal_review", source_id=proposal.id, project_id=project.id,
+    )
+    db_session.commit()
+
+    resp = client.post(
+        f"/internal/data/interactions/{record.id}/resolve?user_id=1",
+        json={"action": "request_revision", "notes": "Please use raised beds instead."},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # "request_revision" is in DISMISSED_ACTIONS (infer_resolution_status) — it's a
+    # rejection-with-feedback, not an approval, even though it carries useful notes.
+    assert body["status"] == "dismissed"
+    assert "Please use raised beds instead." in body["resolution_summary"]
+
+
+@pytest.mark.integration
+def test_list_recent_interactions_filters_by_project_id(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project_a = make_project(db_session, seed_garden_profile, name="Project A")
+    project_b = make_project(db_session, seed_garden_profile, name="Project B")
+    record_a = _make_confirmation_record(db_session, project_a)
+    _make_confirmation_record(db_session, project_b)
+
+    resp = client.get(f"/internal/data/interactions/recent?user_id=1&project_id={project_a.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["id"] == record_a.id
+
+
+@pytest.mark.integration
+def test_get_pending_interaction_returns_most_recent(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    _make_confirmation_record(db_session, project)
+    newest = _make_confirmation_record(db_session, project)
+
+    resp = client.get("/internal/data/interactions/pending?user_id=1")
+    assert resp.status_code == 200
+    assert resp.json()["id"] == newest.id
+
+
+@pytest.mark.integration
+def test_get_pending_interaction_excludes_other_users_records(patched_sessionlocal, db_session, seed_garden_profile):
+    from db.database import current_user_id
+    from tests.support.factories import make_project
+
+    project = make_project(db_session, seed_garden_profile)
+    current_user_id.set("owner-a")
+    try:
+        _make_confirmation_record(db_session, project)
+    finally:
+        current_user_id.set("1")
+
+    resp = client.get("/internal/data/interactions/pending?user_id=1")
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+@pytest.mark.integration
 def test_list_recent_activity_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/activity?user_id=1")
     assert resp.status_code == 200

@@ -2063,14 +2063,16 @@ def get_pending_interaction(user_id: str):
 
 
 @data_router.get("/interactions/recent")
-def list_recent_interactions(user_id: str, limit: int = 10):
+def list_recent_interactions(user_id: str, limit: int = 10, interaction_type: str = None, project_id: str = None):
     _set_user(user_id)
     from agent.api.views import InteractionEnvelopeView
     from agent.domain.interactions import interaction_record_to_view_data, list_recent_interaction_records
 
     session = SessionLocal()
     try:
-        records = list_recent_interaction_records(session, limit=limit)
+        records = list_recent_interaction_records(
+            session, limit=limit, interaction_type=interaction_type, project_id=project_id,
+        )
         return [InteractionEnvelopeView(**interaction_record_to_view_data(r)) for r in records]
     finally:
         session.close()
