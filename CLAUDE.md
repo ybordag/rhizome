@@ -1,24 +1,25 @@
 # Rhizome — Claude Code Memory
 
 ## Branch
-`geranium` merged into `main`. Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done, pending merge), `verbena` (current branch — structured-JSON backlog #133–#141, 15 commits ahead of `origin/verbena`, not yet merged to main). `iris` deleted — image modality work not yet started.
+`geranium` merged into `main`. Active feature branches: `calendula` (reactive monitoring, Phases 1–4 done, pending merge), `verbena` (current branch — structured-JSON backlog #133–#141, not yet merged to main; #137 is complete locally and pending commit). `iris` deleted — image modality work not yet started.
 
 ## Build and test
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (828 tests, excl. E2E)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m 'not live' # local suite (851 passed, 22 skipped, 3 live deselected on 2026-06-21)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite including live provider tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m live        # live API smoke tests (requires provider keys)
 ```
 Requires at least one provider key in `.env` to run the CLI (`GOOGLE_API_KEY` is the default).
-Tests mock the model and run without any key. Live tests (`-m live`) auto-skip if the relevant key is absent.
+Tests mock the model and run without any key. Live tests (`-m live`) require provider keys and network access.
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **828 tests** — unit + integration + graph + API
+- Local non-live suite: **851 passed, 22 skipped, 3 live deselected** on 2026-06-21
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -53,7 +54,7 @@ agent/
     triage.py       — triage snapshot builder; secondary LLM call at session start
     weather.py      — Open-Meteo integration and weather impact derivation
 
-  tools/            — 95 tools, all registered in tools/__init__.py
+  tools/            — 94 tools, all registered in tools/__init__.py
     garden/
       beds_containers.py  — bed and container CRUD
       plants.py           — plant and batch CRUD, status lifecycle
@@ -116,7 +117,7 @@ main.py             — CLI entrypoint
 **Phases 1–5 complete** (activity log, project planner, task tracker, operational triage + weather, structured interactions). The full **plan → task → triage → action → history** loop works in the CLI.
 
 **API readiness work complete (geranium, 2026-06):**
-- 93 tools (up from 72), all organized into `garden/`, `projects/`, `operations/` subdirs
+- 94 tools (up from 72), all organized into `garden/`, `projects/`, `operations/` subdirs
 - `Task.priority` field (`critical/high/normal/low`), auto-assigned at generation, user-overridable
 - `get_daily_priority_tasks` — deterministic scoring across urgency, type, priority, triage alignment, blocking count
 - `cascade_defer_to_dependents` — deferred task cascades earliest_start to direct dependents
@@ -291,7 +292,21 @@ main.py             — CLI entrypoint
   50 tests in `tests/agent/api/test_issue_140_structured_mutations.py` covering structured shape,
   400/404 paths (including the "no garden profile" branch, distinct from "entity not found"),
   and cross-user isolation for all 16 endpoints.
-- Still open: `#137` (projects), `#139` (ThreadView, lower priority/no functional gap).
+- `#137` closed — project lifecycle/planning endpoints now return structured views instead
+  of tool prose: `GET /projects/{id}/progress` returns `ProjectProgressView`; project
+  create/update/delete return `ProjectDetailView` (delete returns the pre-delete snapshot);
+  brief get/update return `ProjectBriefView`; proposal list/detail/accept return
+  `ProposalSummaryView`/`ProposalDetailView` with accept returning `status: "accepted"`.
+  Added `ProjectBrief.to_view()`, `ProjectProposal.to_summary_view()`/
+  `to_detail_view()`, and `agent/domain/projects.py` for shared progress aggregation so
+  the chat tool keeps returning a human-readable string without duplicating math. Also
+  tightened router ownership checks before serializing brief/proposal rows and filtered
+  `UpdateBriefRequest` down to the fields the tool actually accepts.
+  27 tests in `tests/agent/api/test_issue_137_project_structured_views.py` cover all 9
+  issue endpoints, wrong-user/wrong-project paths, empty proposal lists, invalid mutation
+  inputs, delete-with-active-tasks rejection, progress timeline/budget/critical-task fields,
+  proposal-accept side effects, and the invariant that the underlying tools still return strings.
+- Still open: `#139` (ThreadView, lower priority/no functional gap).
 
 **SSE streaming fix complete (#141, 2026-06-21):**
 - `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` were completely broken

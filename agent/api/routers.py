@@ -49,8 +49,9 @@ from agent.core.graph import agent
 from db.database import SessionLocal, current_user_id
 from db.models import (
     Bed, CalendarAnnotation, Container, GardenProfile, GardeningProject,
-    IncidentReport, MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectContainer, ProjectPlant,
-    ProjectExpense, ShoppingItem, Task, TaskDependency, TaskSeries, Thread, TreatmentPlan,
+    IncidentReport, MonitorAlert, Plant, PlantBatch, ProjectBed, ProjectBrief, ProjectContainer,
+    ProjectExpense, ProjectPlant, ProjectProposal, ShoppingItem, Task, TaskDependency,
+    TaskSeries, Thread, TreatmentPlan,
 )
 from pydantic import BaseModel as _BaseModel
 from sqlalchemy import func, or_
@@ -881,8 +882,16 @@ def get_project(project_id: str, user_id: str):
 @data_router.get("/projects/{project_id}/progress")
 def get_project_progress(project_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.projects import get_project_progress
-    return _result_or_404(get_project_progress.invoke({"project_id": project_id}))
+    from agent.api.views import ProjectProgressView
+    from agent.domain.projects import get_project_progress_data
+    session = SessionLocal()
+    try:
+        data = get_project_progress_data(session, project_id)
+        if not data:
+            raise HTTPException(status_code=404, detail=f"No project found with id {project_id}.")
+        return ProjectProgressView(**data)
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/tasks")
@@ -962,66 +971,204 @@ def bulk_update_project_tasks(project_id: str, user_id: str, body: BulkTaskUpdat
         session.close()
 
 
+def _project_detail_view(session, project_id: str, user_id: str):
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == user_id,
+    ).first()
+    if not project:
+        return None
+    plant_count = session.query(func.count(ProjectPlant.id)).filter(
+        ProjectPlant.project_id == project_id, ProjectPlant.removed_at == None).scalar() or 0
+    bed_count = session.query(func.count(ProjectBed.id)).filter(
+        ProjectBed.project_id == project_id).scalar() or 0
+    container_count = session.query(func.count(ProjectContainer.id)).filter(
+        ProjectContainer.project_id == project_id).scalar() or 0
+    batch_count = session.query(func.count(PlantBatch.id)).filter(
+        PlantBatch.project_id == project_id).scalar() or 0
+    return project.to_detail_view(
+        plant_count=plant_count, bed_count=bed_count,
+        container_count=container_count, batch_count=batch_count,
+    )
+
+
+def _project_or_404(session, project_id: str, user_id: str):
+    project = session.query(GardeningProject).filter(
+        GardeningProject.id == project_id,
+        GardeningProject.user_id == user_id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
 @data_router.post("/projects")
 def create_project(user_id: str, body: CreateProjectRequest):
     _set_user(user_id)
+    from agent.api.views import ProjectDetailView
     from agent.tools.projects.projects import create_project as _create
-    return {"result": _create.invoke(body.model_dump(exclude_none=True))}
+    result = _create.invoke(body.model_dump(exclude_none=True))
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    project_id = _extract_id_after(result, "with id")
+    session = SessionLocal()
+    try:
+        view = _project_detail_view(session, project_id, user_id)
+        if not view:
+            raise HTTPException(status_code=500, detail="Project was created but could not be re-fetched")
+        return ProjectDetailView(**view)
+    finally:
+        session.close()
 
 
 @data_router.patch("/projects/{project_id}")
 def update_project(project_id: str, user_id: str, body: UpdateProjectRequest = None):
     _set_user(user_id)
+    from agent.api.views import ProjectDetailView
     from agent.tools.projects.projects import update_project as _update
     params = {"project_id": project_id}
     if body:
         params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return _result_or_404(_update.invoke(params))
+    result = _update.invoke(params)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        view = _project_detail_view(session, project_id, user_id)
+        if not view:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return ProjectDetailView(**view)
+    finally:
+        session.close()
 
 
 @data_router.delete("/projects/{project_id}")
 def delete_project(project_id: str, user_id: str):
     _set_user(user_id)
+    from agent.api.views import ProjectDetailView
     from agent.tools.projects.projects import delete_project as _delete
-    return _result_or_404(_delete.invoke({"project_id": project_id}))
+    session = SessionLocal()
+    try:
+        view = _project_detail_view(session, project_id, user_id)
+        if not view:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        session.close()
+    result = _delete.invoke({"project_id": project_id})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    return ProjectDetailView(**view)
 
 
 @data_router.get("/projects/{project_id}/brief")
 def get_project_brief(project_id: str, user_id: str):
     _set_user(user_id)
+    from agent.api.views import ProjectBriefView
     from agent.tools.projects.planning import get_project_brief as _get_brief
-    return _result_or_404(_get_brief.invoke({"project_id": project_id}))
+    result = _get_brief.invoke({"project_id": project_id})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        brief = session.query(ProjectBrief).filter(ProjectBrief.project_id == project_id).first()
+        if not brief:
+            raise HTTPException(status_code=404, detail=f"No brief found for project {project_id}.")
+        return ProjectBriefView(**brief.to_view())
+    finally:
+        session.close()
 
 
 @data_router.patch("/projects/{project_id}/brief")
 def update_project_brief(project_id: str, user_id: str, body: UpdateBriefRequest = None):
     _set_user(user_id)
+    from agent.api.views import ProjectBriefView
     from agent.tools.projects.planning import update_project_brief as _update_brief
     params = {"project_id": project_id}
     if body:
-        params.update({k: v for k, v in body.model_dump().items() if v is not None})
-    return _result_or_404(_update_brief.invoke(params))
+        supported = {
+            "desired_outcome", "target_start", "target_completion", "budget_cap",
+            "effort_preference", "propagation_preference", "priority_preferences",
+            "notes", "status",
+        }
+        params.update({k: v for k, v in body.model_dump().items() if k in supported and v is not None})
+    result = _update_brief.invoke(params)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        brief = session.query(ProjectBrief).filter(ProjectBrief.project_id == project_id).first()
+        if not brief:
+            raise HTTPException(status_code=404, detail=f"No brief found for project {project_id}.")
+        return ProjectBriefView(**brief.to_view())
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/proposals")
 def list_project_proposals(project_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.planning import list_project_proposals as _list
-    return _result_or_404(_list.invoke({"project_id": project_id}))
+    from agent.api.views import ProposalSummaryView
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        proposals = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.project_id == project_id)
+            .order_by(ProjectProposal.version.desc())
+            .all()
+        )
+        return [ProposalSummaryView(**p.to_summary_view()) for p in proposals]
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/proposals/{proposal_id}")
 def get_project_proposal(project_id: str, proposal_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.projects.planning import get_project_proposal as _get
-    return _result_or_404(_get.invoke({"proposal_id": proposal_id}))
+    from agent.api.views import ProposalDetailView
+    session = SessionLocal()
+    try:
+        _project_or_404(session, project_id, user_id)
+        proposal = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.id == proposal_id, ProjectProposal.project_id == project_id)
+            .first()
+        )
+        if not proposal:
+            raise HTTPException(status_code=404, detail=f"No proposal found with id {proposal_id} for project {project_id}.")
+        return ProposalDetailView(**proposal.to_detail_view())
+    finally:
+        session.close()
 
 
 @data_router.post("/projects/{project_id}/proposals/{proposal_id}/accept")
 def accept_project_proposal(project_id: str, proposal_id: str, user_id: str):
     _set_user(user_id)
+    from agent.api.views import ProposalDetailView
     from agent.tools.projects.planning import accept_project_proposal as _accept
-    return _result_or_404(_accept.invoke({"proposal_id": proposal_id}))
+    result = _accept.invoke({"project_id": project_id, "proposal_id": proposal_id})
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+    session = SessionLocal()
+    try:
+        proposal = (
+            session.query(ProjectProposal)
+            .filter(ProjectProposal.id == proposal_id, ProjectProposal.project_id == project_id)
+            .first()
+        )
+        if not proposal:
+            raise HTTPException(status_code=404, detail=f"No proposal found with id {proposal_id} for project {project_id}.")
+        return ProposalDetailView(**proposal.to_detail_view())
+    finally:
+        session.close()
 
 
 @data_router.get("/projects/{project_id}/series")

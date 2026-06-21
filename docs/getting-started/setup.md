@@ -100,7 +100,10 @@ Type `quit` or `exit` to end the session. Conversation history is preserved acro
 ## Running tests
 
 ```bash
-# Full suite (310 tests)
+# Local suite (excludes live provider calls)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m "not live"
+
+# Full suite, including live provider smoke tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest
 
 # By marker
@@ -112,7 +115,7 @@ Type `quit` or `exit` to end the session. Conversation history is preserved acro
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest tests/tools/projects/test_task_tracker_tools.py
 ```
 
-Tests do **not** require `GOOGLE_API_KEY` — the model is mocked for all test runs. Each integration test gets a fresh in-memory SQLite database via pytest fixtures.
+Non-live tests do **not** require `GOOGLE_API_KEY` — the model is mocked outside `@pytest.mark.live` tests. Each integration test gets a fresh in-memory SQLite database via pytest fixtures.
 
 ---
 
@@ -124,12 +127,12 @@ rhizome/
 │   ├── core/       LangGraph runtime (graph, nodes, state, model, telemetry, temporal)
 │   ├── domain/     Domain logic (triage, planner, tracker, care, weather, incidents,
 │   │               interactions, activity_log)
-│   └── tools/      93 tools in garden/, projects/, operations/ subdirectories
+│   └── tools/      94 tools in garden/, projects/, operations/ subdirectories
 ├── db/
 │   ├── models.py   All SQLAlchemy models
 │   ├── database.py Session factory, current_user_id ContextVar
 │   └── seed.py     Dev seed data
-├── tests/          310 tests; see docs/development/testing.md
+├── tests/          850+ non-live tests; see docs/development/testing.md
 ├── docs/           This documentation
 ├── main.py         CLI entrypoint
 ├── CLAUDE.md       Claude Code session memory

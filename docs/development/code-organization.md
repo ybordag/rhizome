@@ -10,7 +10,7 @@ A guide to every directory and file in the Rhizome codebase. Use this when you n
 rhizome/
 ├── agent/          Core agent code — graph, domain logic, tools
 ├── db/             Database models, session factory, seed data
-├── tests/          Test suite (310 tests)
+├── tests/          Test suite (850+ non-live tests)
 ├── docs/           Documentation
 ├── main.py         CLI entrypoint
 ├── CLAUDE.md       Claude Code session memory
@@ -57,7 +57,7 @@ Tool files are thin. They: open a `SessionLocal()`, call domain logic, format a 
 
 ```
 agent/tools/
-  __init__.py         ← registers all 93 tools, exports `tools` list and `tools_by_name` dict
+  __init__.py         ← registers all 94 tools, exports `tools` list and `tools_by_name` dict
   garden/
     beds_containers.py
     plants.py

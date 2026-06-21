@@ -74,7 +74,9 @@ class UpdateBriefRequest(BaseModel):
     budget_cap: Optional[float] = None
     effort_preference: Optional[str] = None
     propagation_preference: Optional[str] = None
+    priority_preferences: Optional[list[str]] = None
     notes: Optional[str] = None
+    status: Optional[str] = None
 
 
 class AssignLocationsRequest(BaseModel):

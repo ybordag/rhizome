@@ -40,7 +40,8 @@ All data endpoints return structured JSON (not `{"result": "...string..."}`). Re
 - `GardenProfileView`, `BedView`, `ContainerView`
 - `PlantSummaryView`, `PlantDetailView`, `CareStateView`, `PlantBatchResultView`
 - `TaskSummaryView`, `TaskDetailView`
-- `ProjectSummaryView`, `ProjectDetailView`
+- `ProjectSummaryView`, `ProjectDetailView`, `ProjectProgressView`
+- `ProjectBriefView`, `ProposalSummaryView`, `ProposalDetailView`
 - `TaskSeriesView`, `CalendarAnnotationView`
 - `ProjectExpenseView`, `ExpenseSummaryView`, `ShoppingItemView`
 - `ActivityEventView`, `ActivitySubjectView`
@@ -321,15 +322,18 @@ Materialize due recurring task instances (normally run by the monitor cron).
 
 ### `POST /api/v1/projects`
 Create a project.
+**Response:** `ProjectDetailView`
 
 ### `GET /api/v1/projects/{id}`
 **Response:** `ProjectDetailView`
 
 ### `PATCH /api/v1/projects/{id}`
 Update name, goal, status, budget, notes.
+**Response:** `ProjectDetailView`
 
 ### `DELETE /api/v1/projects/{id}`
 Blocked if non-superseded tasks exist — complete the project first.
+**Response:** `ProjectDetailView` for the deleted project snapshot.
 
 ### `GET /api/v1/projects/{id}/progress`
 Task completion progress, timeline health, budget status.
@@ -389,6 +393,7 @@ Active project brief. **Response:** `ProjectBriefView`
 
 ### `PATCH /api/v1/projects/{id}/brief`
 Update brief.
+**Response:** `ProjectBriefView`
 
 ### `GET /api/v1/projects/{id}/proposals`
 **Response:** `ProposalSummaryView[]`
@@ -398,6 +403,7 @@ Update brief.
 
 ### `POST /api/v1/projects/{id}/proposals/{proposalId}/accept`
 Accept a proposal and promote to revision.
+**Response:** `ProposalDetailView` with `status: "accepted"`.
 
 ### `GET /api/v1/projects/{id}/activity`
 Cross-object timeline. **Query params:** `category`, `event_type`, `since`, `before_timestamp`, `limit`

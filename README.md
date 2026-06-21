@@ -2,7 +2,7 @@
 
 Rhizome is an AI-powered gardening assistant built on LangGraph. It acts as an **advisor, co-worker, and coach** for the hobby gardener — holding persistent knowledge of your specific garden, helping plan projects from seed to harvest, generating time-sensitive task schedules, surfacing daily priorities based on weather and deadlines, and tracking what happens over time.
 
-**Status:** Active development on `geranium` branch. Core agent loop is fully functional with 93 tools and 310 tests. API gateway ([Cambium](../cambium)) is in active development; frontend ([Verdant](../verdant-pages)) is not yet started.
+**Status:** Active development on `verbena` branch. Core agent loop is fully functional with 94 tools and 850+ non-live tests. API gateway ([Cambium](../cambium)) is active; frontend ([Verdant](../verdant-pages)) is not yet started.
 
 ---
 
@@ -95,7 +95,7 @@ Fairlead (inference router)  ←— GPU routing, provider failover
 | Database | SQLite → Postgres (migration path in place) |
 | Weather | Open-Meteo (free, no key required) |
 | Observability | OpenTelemetry (OTel) |
-| Tests | pytest, 310 tests |
+| Tests | pytest, 850+ non-live tests |
 
 ---
 
@@ -133,7 +133,7 @@ See [docs/getting-started/setup.md](docs/getting-started/setup.md) for full setu
 | [Agent Loop](docs/architecture/agent-loop.md) | End-to-end walkthrough of one session |
 | [Data Model](docs/architecture/data-model.md) | All models, lifecycle, relationships |
 | [API Reference](docs/architecture/api-reference.md) | Complete `/api/v1` endpoint reference |
-| [Tools Reference](docs/architecture/tools-reference.md) | All 93 tools organized by domain |
+| [Tools Reference](docs/architecture/tools-reference.md) | All 94 tools organized by domain |
 | [Code Organization](docs/development/code-organization.md) | Directory guide, module responsibilities |
 | [Testing Guide](docs/development/testing.md) | Test structure, patterns, how to add tests |
 | [Roadmap](docs/roadmap/overview.md) | Epic inventory, current status, what's next |

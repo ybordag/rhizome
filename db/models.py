@@ -203,6 +203,24 @@ class ProjectBrief(Base):
             f"Target completion: {_fmt_date(self.target_completion)}"
         )
 
+    def to_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "status": self.status,
+            "goal": self.goal,
+            "desired_outcome": self.desired_outcome,
+            "target_start": self.target_start,
+            "target_completion": self.target_completion,
+            "budget_cap": self.budget_cap,
+            "effort_preference": self.effort_preference,
+            "propagation_preference": self.propagation_preference,
+            "priority_preferences": self.priority_preferences or [],
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
 
 class ProjectProposal(Base):
     __tablename__ = "project_proposal"
@@ -248,6 +266,44 @@ class ProjectProposal(Base):
             f"  Estimated effort: {effort} hours\n"
             f"  Summary: {self.summary}"
         )
+
+    def to_summary_view(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "brief_id": self.brief_id,
+            "version": self.version,
+            "status": self.status,
+            "title": self.title,
+            "summary": self.summary,
+            "total_estimated_cost": (self.cost_estimate or {}).get("total_estimated_cost"),
+            "expected_completion_date": (self.timeline_estimate or {}).get("expected_completion_date"),
+            "total_estimated_hours": (self.effort_estimate or {}).get("total_hours"),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def to_detail_view(self) -> dict:
+        d = self.to_summary_view()
+        d.update({
+            "recommended_approach": self.recommended_approach,
+            "selected_locations": self.selected_locations or [],
+            "selected_plants": self.selected_plants or [],
+            "material_strategy": self.material_strategy or {},
+            "propagation_strategy": self.propagation_strategy or {},
+            "assumptions": self.assumptions or [],
+            "tradeoffs": self.tradeoffs or [],
+            "risks": self.risks or [],
+            "feasibility_notes": self.feasibility_notes or [],
+            "cost_estimate": self.cost_estimate or {},
+            "timeline_estimate": self.timeline_estimate or {},
+            "effort_estimate": self.effort_estimate or {},
+            "maintenance_assumptions": self.maintenance_assumptions or {},
+            "resource_assumptions": self.resource_assumptions or {},
+            "budget_assumptions": self.budget_assumptions or {},
+            "timing_anchors": self.timing_anchors or {},
+        })
+        return d
 
 
 class ProjectRevision(Base):

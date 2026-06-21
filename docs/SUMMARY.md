@@ -36,7 +36,7 @@
 - [Data Model](architecture/data-model.md) — all models, lifecycle, relationships
 - [Deployment](architecture/deployment.md) — instance topology, stateless scaling, Postgres checkpointer, Temporal future
 - [API Reference](architecture/api-reference.md) — complete `/api/v1` endpoint reference
-- [Tools Reference](architecture/tools-reference.md) — all 95 tools by domain
+- [Tools Reference](architecture/tools-reference.md) — all 94 tools by domain
 
 ## Development
 - [Code Organization](development/code-organization.md) — directory guide, module responsibilities, how to add tools

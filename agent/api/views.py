@@ -198,6 +198,90 @@ class ProjectDetailView(ProjectSummaryView):
 
 
 # ---------------------------------------------------------------------------
+# Project progress
+# ---------------------------------------------------------------------------
+
+class ProjectCriticalTaskView(BaseModel):
+    id: str
+    title: str
+    status: str
+
+
+class ProjectProgressView(BaseModel):
+    project_id: str
+    project_name: str
+    status: str
+    tasks_total: int
+    tasks_done: int
+    tasks_skipped: int
+    tasks_in_progress: int
+    tasks_blocked: int
+    percent_complete: int
+    schedule_percent_elapsed: Optional[int] = None
+    days_remaining: Optional[int] = None
+    on_track: Optional[bool] = None
+    budget_cap: Optional[float] = None
+    estimated_cost: Optional[float] = None
+    budget_percent_used: Optional[int] = None
+    critical_tasks: list[ProjectCriticalTaskView] = []
+
+
+# ---------------------------------------------------------------------------
+# Project planning — briefs and proposals
+# ---------------------------------------------------------------------------
+
+class ProjectBriefView(BaseModel):
+    id: str
+    project_id: str
+    status: str
+    goal: str
+    desired_outcome: Optional[str] = None
+    target_start: Optional[datetime] = None
+    target_completion: Optional[datetime] = None
+    budget_cap: Optional[float] = None
+    effort_preference: Optional[str] = None
+    propagation_preference: Optional[str] = None
+    priority_preferences: list = []
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class ProposalSummaryView(BaseModel):
+    id: str
+    project_id: str
+    brief_id: str
+    version: int
+    status: str
+    title: str
+    summary: str
+    total_estimated_cost: Optional[float] = None
+    expected_completion_date: Optional[str] = None
+    total_estimated_hours: Optional[float] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class ProposalDetailView(ProposalSummaryView):
+    recommended_approach: str
+    selected_locations: list = []
+    selected_plants: list = []
+    material_strategy: dict = {}
+    propagation_strategy: dict = {}
+    assumptions: list = []
+    tradeoffs: list = []
+    risks: list = []
+    feasibility_notes: list = []
+    cost_estimate: dict = {}
+    timeline_estimate: dict = {}
+    effort_estimate: dict = {}
+    maintenance_assumptions: dict = {}
+    resource_assumptions: dict = {}
+    budget_assumptions: dict = {}
+    timing_anchors: dict = {}
+
+
+# ---------------------------------------------------------------------------
 # Task series
 # ---------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 # Tools Reference
 
-All 93 tools registered in `agent/tools/__init__.py`, organized by domain. Tools are exposed to the LLM via LangChain's tool binding and are also callable directly from the Cambium proxy layer.
+All 94 tools registered in `agent/tools/__init__.py`, organized by domain. Tools are exposed to the LLM via LangChain's tool binding and are also callable directly from the Cambium proxy layer.
 
 ---
 

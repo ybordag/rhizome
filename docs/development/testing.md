@@ -1,13 +1,16 @@
 # Testing Guide
 
-Rhizome has 310 tests. This guide explains the test structure, the patterns used throughout, and how to write new tests.
+Rhizome has 850+ non-live tests. This guide explains the test structure, the patterns used throughout, and how to write new tests.
 
 ---
 
 ## Running tests
 
 ```bash
-# All tests (use RHIZOME_ENV)
+# Local suite (use RHIZOME_ENV; excludes live provider calls)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m "not live"
+
+# Full suite, including live provider smoke tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest
 
 # By marker
@@ -25,7 +28,7 @@ Rhizome has 310 tests. This guide explains the test structure, the patterns used
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -v
 ```
 
-Tests do **not** require `GOOGLE_API_KEY`. The LLM is mocked for all tests.
+Non-live tests do **not** require `GOOGLE_API_KEY`. The LLM is mocked outside `@pytest.mark.live` tests.
 
 ---
 

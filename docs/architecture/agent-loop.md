@@ -80,7 +80,7 @@ If no tasks exist, triage is skipped and the graph goes directly to END (first-s
 
 ## Step 5: llm_call
 
-The main LLM inference call. Sends the full message history (including the system prompt built in step 2) to the Gemini model. The model has access to all 93 tools via LangChain's tool binding.
+The main LLM inference call. Sends the full message history (including the system prompt built in step 2) to the Gemini model. The model has access to all 94 tools via LangChain's tool binding.
 
 If the model returns a plain text response (no tool calls), the conversation turn is complete → `should_continue` routes to END.
 
