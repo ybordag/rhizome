@@ -359,12 +359,13 @@ def test_triage_latest_scoped_to_current_user(patched_sessionlocal, db_session):
 
     resp = client.get(f"/internal/data/triage/latest?user_id={USER_1}")
     assert resp.status_code == 200
-    assert "user-2 session" not in str(resp.json())
-    assert "user-1 session" in str(resp.json())
+    body = resp.json()
+    assert body["user_focus_summary"] == "user-1 session"
+    assert body["id"] == snapshot_1.id
 
 
 @pytest.mark.integration
-def test_triage_latest_no_profile_returns_not_found_message(patched_sessionlocal, db_session):
+def test_triage_latest_no_profile_returns_null(patched_sessionlocal, db_session):
     resp = client.get(f"/internal/data/triage/latest?user_id={USER_1}")
     assert resp.status_code == 200
-    assert "No triage snapshot found" in str(resp.json())
+    assert resp.json() is None

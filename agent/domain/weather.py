@@ -199,6 +199,22 @@ def get_latest_weather_snapshot(session, *, garden_profile_id: Optional[str] = N
     )
 
 
+def weather_snapshot_to_view_data(snapshot: WeatherSnapshot) -> dict[str, Any]:
+    """Structured-JSON shape for GET /weather/latest and POST /weather/refresh (#133)."""
+    return {
+        "id": snapshot.id,
+        "created_at": snapshot.created_at,
+        "location_label": snapshot.location_label,
+        "timezone": snapshot.timezone,
+        "forecast_start_date": snapshot.forecast_start_date,
+        "forecast_end_date": snapshot.forecast_end_date,
+        "conditions_summary": snapshot.conditions_summary,
+        "alerts_summary": snapshot.alerts_summary,
+        "derived_impacts": snapshot.derived_impacts or [],
+        "recommended_actions": snapshot.recommended_actions or [],
+    }
+
+
 def refresh_weather_snapshot(
     session,
     *,

@@ -1748,8 +1748,17 @@ def list_by_location(location: str, user_id: str):
 @data_router.get("/triage/latest")
 def get_triage_snapshot(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.triage import get_latest_triage_snapshot
-    return {"result": get_latest_triage_snapshot.invoke({})}
+    from agent.api.views import TriageSnapshotView
+    from agent.domain.triage import get_latest_triage_snapshot, triage_snapshot_to_view_data
+
+    session = SessionLocal()
+    try:
+        snapshot = get_latest_triage_snapshot(session)
+        if not snapshot:
+            return None
+        return TriageSnapshotView(**triage_snapshot_to_view_data(session, snapshot))
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1759,29 +1768,79 @@ def get_triage_snapshot(user_id: str):
 @data_router.get("/weather/latest")
 def get_weather_snapshot(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.weather import get_latest_weather_snapshot
-    return {"result": get_latest_weather_snapshot.invoke({})}
+    from agent.api.views import WeatherSnapshotView
+    from agent.domain.weather import get_latest_weather_snapshot, weather_snapshot_to_view_data
+
+    session = SessionLocal()
+    try:
+        snapshot = get_latest_weather_snapshot(session)
+        if not snapshot:
+            return None
+        return WeatherSnapshotView(**weather_snapshot_to_view_data(snapshot))
+    finally:
+        session.close()
 
 
 @data_router.post("/weather/refresh")
 def refresh_weather(user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.weather import refresh_weather_snapshot
-    return {"result": refresh_weather_snapshot.invoke({})}
+    from agent.api.views import WeatherSnapshotView
+    from agent.domain.weather import refresh_weather_snapshot as _refresh, weather_snapshot_to_view_data
+
+    session = SessionLocal()
+    try:
+        snapshot = _refresh(session)
+        session.commit()
+        return WeatherSnapshotView(**weather_snapshot_to_view_data(snapshot))
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/weather/tasks/impacted")
-def weather_impacted_tasks(user_id: str):
+def weather_impacted_tasks(user_id: str, project_id: str = None):
     _set_user(user_id)
-    from agent.tools.operations.weather import list_weather_impacted_tasks
-    return {"result": list_weather_impacted_tasks.invoke({})}
+    from agent.api.views import WeatherImpactedTaskView
+    from agent.domain.weather import evaluate_weather_task_impacts
+
+    session = SessionLocal()
+    try:
+        impacts = evaluate_weather_task_impacts(session, project_id=project_id)
+        return [WeatherImpactedTaskView(**impact) for impact in impacts]
+    finally:
+        session.close()
 
 
 @data_router.patch("/weather/changesets/{changeset_id}/approve")
 def approve_weather_changes(changeset_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.weather import approve_weather_task_changes
-    return _result_or_404(approve_weather_task_changes.invoke({"change_set_id": changeset_id}))
+    from agent.api.views import WeatherTaskChangeSetView
+    from agent.domain.weather import approve_weather_task_changes as _approve
+
+    session = SessionLocal()
+    try:
+        change_set = _approve(session, changeset_id)
+        session.commit()
+        task_ids = [item.get("task_id") for item in (change_set.proposed_changes or []) if item.get("task_id")]
+        tasks = session.query(Task).filter(Task.id.in_(task_ids or [""])).all() if task_ids else []
+        return WeatherTaskChangeSetView(
+            id=change_set.id,
+            status=change_set.status,
+            summary=change_set.summary,
+            weather_snapshot_id=change_set.weather_snapshot_id,
+            created_at=change_set.created_at,
+            approved_at=change_set.approved_at,
+            affected_tasks=[t.to_summary_view() for t in tasks],
+        )
+    except ValueError as e:
+        session.rollback()
+        message = str(e)
+        status = 404 if message.lower().startswith("no ") else 400
+        raise HTTPException(status_code=status, detail=message)
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------

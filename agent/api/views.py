@@ -336,3 +336,69 @@ class InteractionEnvelopeView(BaseModel):
     resolved_at: Optional[datetime] = None
     resolution_action: Optional[str] = None
     resolution_summary: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Triage
+# ---------------------------------------------------------------------------
+
+class TriageSnapshotView(BaseModel):
+    id: str
+    created_at: datetime
+    reasoning_summary: str
+    user_focus_summary: Optional[str] = None
+    weather_snapshot_id: Optional[str] = None
+    urgent_tasks: list[TaskSummaryView]
+    routine_tasks: list[TaskSummaryView]
+    project_tasks: list[TaskSummaryView]
+
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+
+class WeatherDayImpactView(BaseModel):
+    date: str
+    impact_type: str
+    severity: str
+    summary: str
+    reason: Optional[str] = None
+    timing_advice: Optional[str] = None
+
+
+class WeatherRecommendedActionView(BaseModel):
+    date: str
+    action: str
+
+
+class WeatherSnapshotView(BaseModel):
+    id: str
+    created_at: datetime
+    location_label: str
+    timezone: str
+    forecast_start_date: datetime
+    forecast_end_date: datetime
+    conditions_summary: str
+    alerts_summary: Optional[str] = None
+    derived_impacts: list[WeatherDayImpactView] = []
+    recommended_actions: list[WeatherRecommendedActionView] = []
+
+
+class WeatherImpactedTaskView(BaseModel):
+    task_id: str
+    task_title: str
+    project_id: Optional[str] = None
+    impact_type: str
+    impact_kind: str
+    impact_date: Optional[str] = None
+    summary: str
+
+
+class WeatherTaskChangeSetView(BaseModel):
+    id: str
+    status: str
+    summary: str
+    weather_snapshot_id: str
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    affected_tasks: list[TaskSummaryView] = []

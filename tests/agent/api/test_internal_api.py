@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from agent.api.app import app
 from db.models import MonitorAlert, MonitorRun, GardenProfile
+from tests.db.test_monitor_jobs import fake_open_meteo
 
 
 client = TestClient(app)
@@ -520,9 +521,139 @@ def test_list_blocked_tasks_empty(patched_sessionlocal, db_session, seed_garden_
 def test_get_weather_snapshot_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/weather/latest?user_id=1")
     assert resp.status_code == 200
+    assert resp.json() is None
 
 
 @pytest.mark.integration
 def test_weather_impacted_tasks_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/weather/tasks/impacted?user_id=1")
     assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Triage + Weather — structured JSON (#133)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_get_weather_snapshot_returns_structured_view(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import make_weather_snapshot
+
+    snapshot = make_weather_snapshot(db_session, garden_profile_id=seed_garden_profile.id, location_label="Test Garden")
+
+    resp = client.get("/internal/data/weather/latest?user_id=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == snapshot.id
+    assert body["location_label"] == "Test Garden"
+    assert body["derived_impacts"][0]["impact_type"] == "heat"
+    assert body["recommended_actions"][0]["action"] == "Prioritize watering and shade protection."
+
+
+@pytest.mark.integration
+def test_refresh_weather_returns_structured_view(patched_sessionlocal, db_session, seed_garden_profile, fake_open_meteo):
+    resp = client.post("/internal/data/weather/refresh?user_id=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"]
+    assert body["location_label"]
+    assert "conditions_summary" in body
+
+
+@pytest.mark.integration
+def test_refresh_weather_400_when_no_location(patched_sessionlocal, db_session):
+    from tests.support.factories import make_profile
+
+    make_profile(db_session, latitude=None, longitude=None)
+    db_session.commit()
+
+    resp = client.post("/internal/data/weather/refresh?user_id=1")
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_weather_impacted_tasks_returns_structured_array(patched_sessionlocal, db_session, seed_garden_profile):
+    from tests.support.factories import (
+        make_project, make_project_brief, make_project_proposal, make_project_revision,
+        make_task, make_task_generation_run,
+    )
+
+    from tests.support.factories import make_weather_snapshot
+
+    project = make_project(db_session, seed_garden_profile)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session, project, revision, run,
+        title="Water tomatoes", generator_key="water.tomato",
+        status="pending",
+    )
+    # default derived_impacts includes a "heat" impact; task title contains "water"
+    # -> _task_intents() tags it "water" -> heat+water is a matching combination.
+    make_weather_snapshot(db_session, garden_profile_id=seed_garden_profile.id)
+
+    resp = client.get(f"/internal/data/weather/tasks/impacted?user_id=1&project_id={project.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["task_id"] == task.id
+    assert body[0]["impact_type"] == "heat"
+
+
+@pytest.mark.integration
+def test_approve_weather_changes_404_when_missing(patched_sessionlocal, db_session, seed_garden_profile):
+    resp = client.patch("/internal/data/weather/changesets/nonexistent/approve?user_id=1")
+    assert resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_approve_weather_changes_returns_structured_view(patched_sessionlocal, db_session, seed_garden_profile):
+    from agent.domain.weather import draft_weather_task_changes
+    from agent.tools.projects.tracker import generate_project_tasks
+    from db.models import WeatherTaskChangeSet
+    from tests.support.factories import make_weather_snapshot
+    from tests.tools.projects.test_task_tracker_tools import _accept_plan
+
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    generate_project_tasks.invoke({"project_id": project.id})
+    make_weather_snapshot(
+        db_session,
+        derived_impacts=[{"date": "2026-04-14", "impact_type": "frost", "severity": "high", "summary": "Frost risk."}],
+    )
+    draft_weather_task_changes(db_session, project_id=project.id)
+    db_session.commit()
+    change_set = db_session.query(WeatherTaskChangeSet).order_by(WeatherTaskChangeSet.created_at.desc()).first()
+
+    resp = client.patch(f"/internal/data/weather/changesets/{change_set.id}/approve?user_id=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == change_set.id
+    assert body["status"] == "approved"
+    assert body["approved_at"] is not None
+
+
+@pytest.mark.integration
+def test_approve_weather_changes_400_when_already_approved(patched_sessionlocal, db_session, seed_garden_profile):
+    from agent.domain.weather import draft_weather_task_changes
+    from agent.tools.projects.tracker import generate_project_tasks
+    from db.models import WeatherTaskChangeSet
+    from tests.support.factories import make_weather_snapshot
+    from tests.tools.projects.test_task_tracker_tools import _accept_plan
+
+    project = _accept_plan(db_session, patched_sessionlocal, propagation_method="seed")
+    generate_project_tasks.invoke({"project_id": project.id})
+    make_weather_snapshot(
+        db_session,
+        derived_impacts=[{"date": "2026-04-14", "impact_type": "frost", "severity": "high", "summary": "Frost risk."}],
+    )
+    draft_weather_task_changes(db_session, project_id=project.id)
+    db_session.commit()
+    change_set = db_session.query(WeatherTaskChangeSet).order_by(WeatherTaskChangeSet.created_at.desc()).first()
+
+    first = client.patch(f"/internal/data/weather/changesets/{change_set.id}/approve?user_id=1")
+    assert first.status_code == 200
+
+    second = client.patch(f"/internal/data/weather/changesets/{change_set.id}/approve?user_id=1")
+    assert second.status_code == 400

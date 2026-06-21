@@ -397,3 +397,23 @@ def format_triage_snapshot(session, snapshot: TriageSnapshot) -> str:
     if snapshot.user_focus_summary:
         sections.append(f"Context: {snapshot.user_focus_summary}")
     return "\n".join(sections)
+
+
+def triage_snapshot_to_view_data(session, snapshot: TriageSnapshot) -> dict[str, Any]:
+    """Structured-JSON shape for GET /triage/latest (#133)."""
+    all_ids = list(snapshot.urgent_task_ids or []) + list(snapshot.routine_task_ids or []) + list(snapshot.project_task_ids or [])
+    tasks_by_id = {task.id: task for task in session.query(Task).filter(Task.id.in_(all_ids or [""])).all()}
+
+    def _views(ids: list[str]) -> list[dict[str, Any]]:
+        return [tasks_by_id[tid].to_summary_view() for tid in ids if tid in tasks_by_id]
+
+    return {
+        "id": snapshot.id,
+        "created_at": snapshot.created_at,
+        "reasoning_summary": snapshot.reasoning_summary,
+        "user_focus_summary": snapshot.user_focus_summary,
+        "weather_snapshot_id": snapshot.weather_snapshot_id,
+        "urgent_tasks": _views(snapshot.urgent_task_ids or []),
+        "routine_tasks": _views(snapshot.routine_task_ids or []),
+        "project_tasks": _views(snapshot.project_task_ids or []),
+    }
