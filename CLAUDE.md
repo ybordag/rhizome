@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **706 tests** — unit + integration + graph + API
+- Total (excluding E2E): **721 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -260,8 +260,20 @@ main.py             — CLI entrypoint
   via `alembic upgrade head`. Worth checking `alembic current` after any session that adds a
   migration but only tests against in-memory SQLite, since tests never catch a missing
   migration on the dev/staging Postgres instance.
-- Still open: `#133` (triage/weather), `#134` (activity feed), `#135` (incidents/treatment
-  plans), `#137` (projects), `#139` (ThreadView, lower priority/no functional gap).
+- `#133` closed — `GET /triage/latest`, `GET /weather/latest`, `POST /weather/refresh`,
+  `GET /weather/tasks/impacted`, `PATCH /weather/changesets/{id}/approve` now return
+  `TriageSnapshotView`/`WeatherSnapshotView`/`WeatherImpactedTaskView`/`WeatherTaskChangeSetView`.
+  `TriageSnapshotView` resolves urgent/routine/project task IDs into full `TaskSummaryView`
+  objects rather than bare IDs. Also fixed two related error-handling gaps found while wiring
+  it: `refresh_weather_snapshot`'s "no profile/location" `ValueError` was previously a 200 with
+  an error string baked into prose — now a 400; `approve_weather_task_changes` previously
+  returned 200-with-embedded-error-text for both "not found" and "already approved" — now
+  404 and 400 respectively.
+- Still open: `#134` (activity feed), `#135` (incidents/treatment plans — note `docs/architecture/api-reference.md`'s
+  `GET /incidents/{id}` and `GET /incidents/{id}/treatment` entries already claim
+  `IncidentDetailView`/`TreatmentPlanView` responses; that's aspirational/wrong until #135
+  actually ships, don't trust it at face value), `#137` (projects), `#139` (ThreadView, lower
+  priority/no functional gap).
 
 **Next in Rhizome:**
 - Garden spatial layout model and map endpoints (`#118`)

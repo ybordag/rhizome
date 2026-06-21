@@ -406,7 +406,8 @@ Shopping list scoped to this project. Convenience alias for `GET /api/v1/shoppin
 AI trigger — run a fresh triage pass and persist the snapshot.
 
 ### `GET /api/v1/triage/latest`
-Most recent triage snapshot.
+Most recent triage snapshot, or `null` if none exists yet.
+**Response:** `TriageSnapshotView` — `{ id, created_at, reasoning_summary, user_focus_summary, weather_snapshot_id, urgent_tasks: TaskSummaryView[], routine_tasks: TaskSummaryView[], project_tasks: TaskSummaryView[] }`. Resolves task IDs into full task objects rather than returning bare IDs (#133, fixed from a string-wrapped response).
 
 ### `GET /api/v1/triage/recommendations`
 Recommended task IDs from the latest triage snapshot.
@@ -488,19 +489,23 @@ Approve a treatment plan and auto-generate tasks.
 ## Weather
 
 ### `GET /api/v1/weather/latest`
-Most recent weather snapshot. **Response:** `WeatherSnapshotView`
+Most recent weather snapshot, or `null` if none exists yet.
+**Response:** `WeatherSnapshotView` — `{ id, created_at, location_label, timezone, forecast_start_date, forecast_end_date, conditions_summary, alerts_summary, derived_impacts: WeatherDayImpactView[], recommended_actions: WeatherRecommendedActionView[] }`. Fixed from a string-wrapped response in #133.
 
 ### `POST /api/v1/weather/refresh`
-Fetch a fresh Open-Meteo forecast.
+Fetch a fresh Open-Meteo forecast. **Response:** `WeatherSnapshotView` (same shape as above).
+Returns 400 (not 200-with-error-text) if the garden profile has no location set yet.
 
 ### `GET /api/v1/weather/tasks/impacted`
 Tasks materially affected by current weather. **Query params:** `project_id`
+**Response:** `WeatherImpactedTaskView[]` — `{ task_id, task_title, project_id, impact_type, impact_kind, impact_date, summary }`. Fixed from a string-wrapped response in #133.
 
 ### `POST /api/v1/weather/tasks/draft`
 AI trigger — draft weather-driven task adjustments.
 
 ### `PATCH /api/v1/weather/changesets/{id}/approve`
-Approve a weather task changeset.
+Apply a previously drafted weather-aware task change set.
+**Response:** `WeatherTaskChangeSetView` — `{ id, status, summary, weather_snapshot_id, created_at, approved_at, affected_tasks: TaskSummaryView[] }`. Fixed from a string-wrapped response in #133. 404 if not found/not owned by the caller; 400 if already approved (previously both cases silently returned 200 with an error message embedded in the response text).
 
 ### `POST /api/v1/weather/monitor`
 Trigger the monitor cron weather job.
