@@ -198,7 +198,8 @@ ILIKE search across plants, beds, containers by name.
 **Query params:** `q` (required), `limit`
 
 ### `GET /api/v1/garden/locations/{location}`
-All objects at a named location.
+All objects at a named location. `location` matches via `ILIKE '%...%'` against `Bed.location`/`Container.location`.
+**Response:** `LocationResultsView` — `{ beds: BedView[], containers: ContainerView[], plants: PlantSummaryView[] }`. Fixed from a string-wrapped tool response in #138.
 
 ---
 
@@ -417,17 +418,19 @@ Trigger the monitor cron triage job.
 
 ## Interactions
 
+All four endpoints return `InteractionEnvelopeView` (or an array/null of it) — fixed from string-wrapped tool responses in #136. Shape: `{ id, interaction_type, status, title, summary, body, sections, actions: InteractionActionView[], context, created_at, resolved_at, resolution_action, resolution_summary }`.
+
 ### `GET /api/v1/interactions/pending`
-Get the current pending interaction.
+The current pending interaction, or `null` if none.
 
 ### `GET /api/v1/interactions/recent`
-List recent interactions. **Query params:** `limit`, `interaction_type`, `project_id`
+List recent interactions as an array. **Query params:** `limit`, `interaction_type`, `project_id`
 
 ### `GET /api/v1/interactions/{id}`
-Interaction detail.
+Interaction detail. 404 if not found or owned by another user.
 
 ### `POST /api/v1/interactions/{id}/resolve`
-Resolve a pending interaction. **Body:** `{ action_id, inputs? }`
+Resolve a pending interaction. **Body:** `{ action: string, notes?: string }` — note this is `action`/`notes`, not `action_id`/`inputs` (those are the underlying tool's parameter names; the router translates between the two, `notes` → `inputs.note`). Returns the updated envelope with `status` transitioned to `resolved`/`dismissed`.
 
 ---
 

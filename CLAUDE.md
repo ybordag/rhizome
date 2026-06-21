@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **529 tests** — unit + integration + graph + API
+- Total (excluding E2E): **706 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -239,6 +239,29 @@ main.py             — CLI entrypoint
   `record_interaction_summary` via `current_user_id.get()`.
 - 50 new tests (663 total). SSE endpoint tested at the async-generator level, not through
   `TestClient` — see `tests/DEFERRED_TESTS.md` ("GET /internal/data/notifications/stream").
+
+**Structured JSON backlog — in progress (verbena, 2026-06-21):**
+- `#120` ("structured JSON for all data endpoints") was closed prematurely — only its P0 tier
+  actually shipped. `#132` documents the root cause (a later commit referencing "#120" for an
+  unrelated fix made the P1/P2 checklist look done when it wasn't) and splits the remaining
+  scope into `#133`–`#139`, one per frontend page blocked.
+- `#138` closed — `GET /garden/locations/{location}` now returns `LocationResultsView`
+  (`{beds, containers, plants}`) via direct SQLAlchemy + the existing `BedView`/`ContainerView`/
+  `PlantSummaryView` serializers, instead of `{"result": "<prose>"}`.
+- `#136` closed — all four `/interactions/*` endpoints now return `InteractionEnvelopeView`
+  via a new `interaction_record_to_view_data()` serializer (`agent/domain/interactions.py`).
+  Found and fixed a live bug in the process: `POST /interactions/{id}/resolve` was 500ing on
+  every call — `ResolveInteractionRequest`'s `action`/`notes` fields never matched the
+  `resolve_interaction` tool's `action_id`/`inputs` parameters, so the dict-spread call into
+  `.invoke()` raised a pydantic `ValidationError` before the tool body ran. Confirmed broken via
+  a live curl call against the dev server, fixed by translating explicitly in the router.
+- Dev Postgres was 3 Alembic migrations behind head (`interaction_record.user_id`,
+  `incident_report.user_id`, `weather_snapshot`/`triage_snapshot.garden_profile_id`) — applied
+  via `alembic upgrade head`. Worth checking `alembic current` after any session that adds a
+  migration but only tests against in-memory SQLite, since tests never catch a missing
+  migration on the dev/staging Postgres instance.
+- Still open: `#133` (triage/weather), `#134` (activity feed), `#135` (incidents/treatment
+  plans), `#137` (projects), `#139` (ThreadView, lower priority/no functional gap).
 
 **Next in Rhizome:**
 - Garden spatial layout model and map endpoints (`#118`)
