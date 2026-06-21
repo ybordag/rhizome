@@ -402,3 +402,41 @@ class WeatherTaskChangeSetView(BaseModel):
     created_at: datetime
     approved_at: Optional[datetime] = None
     affected_tasks: list[TaskSummaryView] = []
+
+
+# ---------------------------------------------------------------------------
+# Activity
+# ---------------------------------------------------------------------------
+
+class ActivitySubjectView(BaseModel):
+    subject_type: str
+    subject_id: str
+    role: Optional[str] = None
+
+
+class ActivityEventView(BaseModel):
+    id: str
+    created_at: datetime
+    actor_type: str
+    actor_label: Optional[str] = None
+    event_type: str
+    category: str
+    summary: str
+    notes: Optional[str] = None
+    project_id: Optional[str] = None
+    subjects: list[ActivitySubjectView] = []
+
+
+# ---------------------------------------------------------------------------
+# Plant batches
+# ---------------------------------------------------------------------------
+
+class PlantBatchResultView(BaseModel):
+    batch_id: str
+    batch_name: str
+    plant_name: str
+    variety: Optional[str] = None
+    quantity_sown: int
+    project_id: Optional[str] = None
+    created_at: datetime
+    plants: list[PlantSummaryView] = []

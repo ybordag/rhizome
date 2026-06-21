@@ -7,7 +7,7 @@
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (421 tests)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (778 tests, excl. E2E)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **724 tests** — unit + integration + graph + API
+- Total (excluding E2E): **778 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -271,6 +271,26 @@ main.py             — CLI entrypoint
   404 and 400 respectively. Post-merge coverage audit found zero router-level cross-user tests
   for `weather/latest`, `weather/tasks/impacted`, and the changeset approve endpoint despite the
   domain layer already being correctly scoped — added 3 tests in `test_user_isolation_api.py`.
+- `#140` closed — the remaining mutation/activity endpoints left over after #133/#136/#138:
+  `PATCH /garden/profile`, `PATCH /garden/beds/{id}`, `POST`/`PATCH /garden/containers`,
+  `POST`/`PATCH /garden/plants`, `POST`/`PATCH /garden/plants/batch`, `PATCH /tasks/{id}`,
+  `PATCH /tasks/series/{id}`, and `GET .../activity` for tasks/plants/beds/containers/batches/
+  projects. These tools return human-readable strings for both success and failure (the LLM
+  reads them), so the router can't just try/except — added `_mutation_error_status()`
+  (`agent/api/routers.py`) to classify a tool's string result into 404/400/success by pattern.
+  New views: `ActivityEventView`, `ActivitySubjectView`, `PlantBatchResultView`. New domain
+  serializer: `activity_event_to_view_data()` (`agent/domain/activity_log.py`).
+  Found and fixed a live routing bug in the process: `PATCH /garden/plants/batch` and
+  `PATCH /garden/plants/batch/remove` were registered *after* `PATCH /garden/plants/{plant_id}`,
+  so Starlette's order-of-registration matching let `{plant_id}` swallow the literal `"batch"`
+  segment — both endpoints had likely never been reachable. Fixed by moving the literal routes
+  before the parametrized ones (same fix already applied elsewhere per the 2026-06-19 entry
+  below; this pair had been missed). Also intentionally changed `GET .../activity` to 404 for a
+  nonexistent subject id instead of silently returning an empty array — it previously never
+  checked the subject existed at all.
+  50 tests in `tests/agent/api/test_issue_140_structured_mutations.py` covering structured shape,
+  400/404 paths (including the "no garden profile" branch, distinct from "entity not found"),
+  and cross-user isolation for all 16 endpoints.
 - Still open: `#134` (activity feed), `#135` (incidents/treatment plans — note `docs/architecture/api-reference.md`'s
   `GET /incidents/{id}` and `GET /incidents/{id}/treatment` entries already claim
   `IncidentDetailView`/`TreatmentPlanView` responses; that's aspirational/wrong until #135

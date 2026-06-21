@@ -492,9 +492,12 @@ def test_activity_with_filters(patched_sessionlocal, db_session, seed_garden_pro
 
 
 @pytest.mark.integration
-def test_task_activity_empty(patched_sessionlocal, db_session, seed_garden_profile):
+def test_task_activity_404_for_nonexistent_task(patched_sessionlocal, db_session, seed_garden_profile):
+    """#140: activity endpoints now verify the subject exists before
+    returning a structured view, so a bogus task id is a 404 — not an
+    empty array masquerading as a valid (if uneventful) task."""
     resp = client.get("/internal/data/tasks/nonexistent-id/activity?user_id=1")
-    assert resp.status_code == 200
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +537,52 @@ def test_weather_impacted_tasks_empty(patched_sessionlocal, db_session, seed_gar
 # ---------------------------------------------------------------------------
 # Triage + Weather — structured JSON (#133)
 # ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_get_triage_snapshot_returns_structured_view(patched_sessionlocal, db_session, seed_garden_profile):
+    """The whole point of #133 for triage: urgent/routine/project task IDs must
+    resolve into full TaskSummaryView objects, not bare IDs."""
+    from db.models import GardeningProject, Task
+    from tests.support.factories import make_triage_snapshot
+
+    project = GardeningProject(
+        garden_profile_id=seed_garden_profile.id, user_id="1", name="Test Project", goal="grow", status="active",
+    )
+    db_session.add(project)
+    db_session.commit()
+
+    urgent_task = Task(
+        project_id=project.id, title="Water tomatoes", type="maintenance",
+        status="pending", generator_key="water.tomato",
+    )
+    routine_task = Task(
+        project_id=project.id, title="Check soil moisture", type="maintenance",
+        status="pending", generator_key="soil.check",
+    )
+    db_session.add_all([urgent_task, routine_task])
+    db_session.commit()
+
+    snapshot = make_triage_snapshot(
+        db_session,
+        garden_profile_id=seed_garden_profile.id,
+        urgent_task_ids=[urgent_task.id],
+        routine_task_ids=[routine_task.id],
+        project_task_ids=[],
+        reasoning_summary="Prioritize urgent watering.",
+    )
+
+    resp = client.get("/internal/data/triage/latest?user_id=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == snapshot.id
+    assert body["reasoning_summary"] == "Prioritize urgent watering."
+    assert len(body["urgent_tasks"]) == 1
+    assert body["urgent_tasks"][0]["id"] == urgent_task.id
+    assert body["urgent_tasks"][0]["title"] == "Water tomatoes"
+    assert len(body["routine_tasks"]) == 1
+    assert body["routine_tasks"][0]["title"] == "Check soil moisture"
+    assert body["project_tasks"] == []
+
 
 @pytest.mark.integration
 def test_get_weather_snapshot_returns_structured_view(patched_sessionlocal, db_session, seed_garden_profile):

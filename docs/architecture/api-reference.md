@@ -38,13 +38,23 @@ Rhizome trusts `user_id` from the query param — it never handles JWT directly.
 All data endpoints return structured JSON (not `{"result": "...string..."}`). Response shapes are defined as Pydantic models in `agent/api/views.py`:
 
 - `GardenProfileView`, `BedView`, `ContainerView`
-- `PlantSummaryView`, `PlantDetailView`, `CareStateView`
+- `PlantSummaryView`, `PlantDetailView`, `CareStateView`, `PlantBatchResultView`
 - `TaskSummaryView`, `TaskDetailView`
 - `ProjectSummaryView`, `ProjectDetailView`
 - `TaskSeriesView`, `CalendarAnnotationView`
 - `ProjectExpenseView`, `ExpenseSummaryView`, `ShoppingItemView`
+- `ActivityEventView`, `ActivitySubjectView`
 
 Tools continue to return strings for the LangGraph agent. The JSON layer is a parallel serialization path in the router only.
+
+Mutation endpoints (`PATCH`/`POST` on a single entity) call the underlying tool for its
+validation + side effects, then re-query the entity and return its structured view — the
+tool's string return value is never surfaced to the client. Because those tools return strings
+for both success *and* failure (the LLM reads them either way), the router classifies the
+string via `_mutation_error_status()` (`agent/api/routers.py`) into 404 ("no ... found",
+"not assigned"), 400 ("invalid", "cannot ...", "must be ...", "but only ...", or an "error"/
+"failed" prefix), or success. Introduced in `#140`; see `CLAUDE.md` for the full list of
+endpoints this covers.
 
 ---
 
@@ -55,6 +65,7 @@ Tools continue to return strings for the LangGraph agent. The JSON layer is a pa
 
 ### `PATCH /api/v1/garden/profile`
 Update profile fields (climate, soil, frost dates, tray capacity, location).
+**Response:** `GardenProfileView`. 404 if the user has no garden profile yet.
 
 ---
 
@@ -73,7 +84,7 @@ Create a bed.
 Bed detail. **Response:** `BedView`
 
 ### `PATCH /api/v1/garden/beds/{id}`
-Update bed fields.
+Update bed fields. **Response:** `BedView`. 400 on invalid `dimensions_sqft` (must be > 0).
 
 ### `DELETE /api/v1/garden/beds/{id}`
 Hard delete.
@@ -93,6 +104,7 @@ If a pending/in_progress task linked to this bed matches the care type, it is co
 
 ### `GET /api/v1/garden/beds/{id}/activity`
 Full bed activity log. **Query params:** `limit`
+**Response:** `ActivityEventView[]`. 404 if the bed doesn't exist (or isn't owned by the caller) — previously returned an empty array for any nonexistent id without checking.
 
 ---
 
@@ -103,13 +115,13 @@ Full bed activity log. **Query params:** `limit`
 **Response:** `ContainerView[]`
 
 ### `POST /api/v1/garden/containers`
-Create a container.
+Create a container. **Response:** `ContainerView`. 400 on invalid `container_type` or non-positive `size_gallons`. 404 if the user has no garden profile yet.
 
 ### `GET /api/v1/garden/containers/{id}`
 Container detail. **Response:** `ContainerView`
 
 ### `PATCH /api/v1/garden/containers/{id}`
-Update container fields.
+Update container fields. **Response:** `ContainerView`.
 
 ### `DELETE /api/v1/garden/containers/{id}`
 Hard delete.
@@ -128,6 +140,7 @@ Quick care recording. Same behaviour as beds.
 
 ### `GET /api/v1/garden/containers/{id}/activity`
 **Query params:** `limit`
+**Response:** `ActivityEventView[]`. 404 if the container doesn't exist or isn't owned by the caller.
 
 ---
 
@@ -138,14 +151,14 @@ Quick care recording. Same behaviour as beds.
 **Response:** `PlantSummaryView[]` (includes `location_name` convenience field)
 
 ### `POST /api/v1/garden/plants`
-Add a plant.
+Add a plant. **Response:** `PlantDetailView`. 400 on invalid `status`, non-positive `quantity`, or assigning both `bed_id` and `container_id`. 404 if the user has no garden profile yet.
 
 ### `GET /api/v1/garden/plants/{id}`
 Plant detail with all care timestamps and lifecycle dates.
 **Response:** `PlantDetailView`
 
 ### `PATCH /api/v1/garden/plants/{id}`
-Update plant fields.
+Update plant fields. **Response:** `PlantDetailView`. 400 on invalid `status`.
 
 ### `PATCH /api/v1/garden/plants/{id}/remove`
 Soft delete — marks plant as removed. Keeps the record.
@@ -154,13 +167,22 @@ Soft delete — marks plant as removed. Keeps the record.
 Hard delete — data entry mistakes only.
 
 ### `POST /api/v1/garden/plants/batch`
-Batch-sow a group of plants.
+Batch-sow a group of plants. Creates a `PlantBatch` plus one `Plant` row per unit.
+**Response:** `PlantBatchResultView` — `{ batch_id, batch_name, plant_name, variety, quantity_sown, project_id, created_at, plants: PlantSummaryView[] }`.
+404 if the user has no garden profile yet, or (with `project_id`) the project doesn't exist.
 
 ### `PATCH /api/v1/garden/plants/batch`
-Batch status update.
+Batch status update for all plants matching `name`/`variety`/`project_id`/`current_status`.
+**Response:** `PlantSummaryView[]` — just the plants the update actually touched.
+404 if nothing matches the filter. 400 if `quantity` exceeds the number of matches.
 
 ### `PATCH /api/v1/garden/plants/batch/remove`
 Batch soft delete.
+
+> These two `batch` routes must stay registered in `agent/api/routers.py` *before*
+> `PATCH /api/v1/garden/plants/{id}`. Starlette matches path routes in registration order, and
+> `{id}` happily matches the literal segment `"batch"` — until `#140`, both batch routes were
+> registered after it and were never actually reachable.
 
 ### `GET /api/v1/garden/plants/{id}/care/state`
 **Response:** `CareStateView`
@@ -176,6 +198,7 @@ Quick care recording. All six care types valid for plants.
 
 ### `GET /api/v1/garden/plants/{id}/activity`
 **Query params:** `limit`
+**Response:** `ActivityEventView[]`. 404 if the plant doesn't exist or isn't owned by the caller.
 
 ---
 
@@ -188,6 +211,7 @@ List all plant batches.
 Delete a batch.
 
 ### `GET /api/v1/garden/batches/{id}/activity`
+**Response:** `ActivityEventView[]`. 404 if the batch doesn't exist or isn't owned by the caller.
 
 ---
 
@@ -242,7 +266,7 @@ All blocked tasks.
 Task detail. **Response:** `TaskDetailView`
 
 ### `PATCH /api/v1/tasks/{id}`
-Update task fields (title, dates, notes, priority).
+Update task fields (title, dates, notes, priority). **Response:** `TaskDetailView`. 400 on negative `estimated_minutes`. 404 if the task doesn't exist or isn't owned by the caller (checked via the task's project).
 
 ### `DELETE /api/v1/tasks/{id}`
 Hard delete. Returns 400 if task is `in_progress`.
@@ -264,6 +288,7 @@ Explain blocking dependencies.
 
 ### `GET /api/v1/tasks/{id}/activity`
 Task history. **Query params:** `limit`
+**Response:** `ActivityEventView[]`. 404 if the task doesn't exist or isn't owned by the caller.
 
 ### `POST /api/v1/tasks/{id}/dependencies`
 Create a finish-to-start dependency edge. Returns 400 on cycle detection.
@@ -279,7 +304,7 @@ Create a recurring task series.
 **Response:** `TaskSeriesView`
 
 ### `PATCH /api/v1/tasks/series/{id}`
-Update series cadence, active flag.
+Update series cadence, active flag. **Response:** `TaskSeriesView`. 400 on `cadence_days < 1`. 404 if the series doesn't exist or isn't owned by the caller (checked via the series' project).
 
 ### `DELETE /api/v1/tasks/series/{id}`
 Delete series. `?delete_pending_tasks=true` also removes pending/deferred instances (never removes in_progress, done, or skipped).
@@ -376,6 +401,7 @@ Accept a proposal and promote to revision.
 
 ### `GET /api/v1/projects/{id}/activity`
 Cross-object timeline. **Query params:** `category`, `event_type`, `since`, `before_timestamp`, `limit`
+**Response:** `ActivityEventView[]`. 404 if the project doesn't exist or isn't owned by the caller.
 
 ### `GET /api/v1/projects/{id}/expenses`
 All expense records. **Response:** `ProjectExpenseView[]`
@@ -514,8 +540,13 @@ Trigger the monitor cron weather job.
 
 ## Activity
 
+`ActivityEventView`: `{ id, created_at, actor_type, actor_label, event_type, category, summary, notes, project_id, subjects: ActivitySubjectView[] }`.
+`ActivitySubjectView`: `{ subject_type, subject_id, role }`.
+
 ### `GET /api/v1/activity`
-Global activity feed.
+Global activity feed. **Still returns `{"result": "<prose>"}`** — not yet migrated to
+`ActivityEventView[]`; tracked under `#134`. Every per-entity activity endpoint above
+(beds/containers/plants/batches/tasks/projects) *does* return `ActivityEventView[]` as of `#140`.
 **Query params:** `project_id`, `subject_type`, `event_type`, `category`, `since` (ISO), `before_timestamp` (ISO cursor), `limit`
 
 ### `GET /api/v1/activity/stats`
