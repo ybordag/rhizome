@@ -316,7 +316,12 @@ main.py             — CLI entrypoint
   `agent/domain/tracker.py`. The route is scoped to the current user's projects and no longer
   inherits the old tool's `parent_task_id` blind spot, so manually-created dependency-blocked
   tasks and event-anchor-blocked tasks are included. Added 13 focused regression cases in
-  `tests/agent/api/test_tasks_blocked_structured.py`.
+  `tests/agent/api/test_tasks_blocked_structured.py`. `PATCH /garden/plants/batch/remove`
+  now also returns `PlantSummaryView[]` for the plants actually marked `removed`, reusing the
+  existing tool for validation, activity logging, notes, and project-link closure. Added focused
+  coverage in `tests/agent/api/test_batch_remove_plants_structured.py` for shape, quantity,
+  project filtering including inactive links, already-removed plants, side effects, errors, and
+  user isolation.
 - Structured JSON backlog note: `#133`, `#134`, and `#137` remain open on GitHub for user
   verification, but their code paths have been implemented and pushed; `#139` is now implemented
   locally and ready for commit/push.

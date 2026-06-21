@@ -180,6 +180,8 @@ Batch status update for all plants matching `name`/`variety`/`project_id`/`curre
 
 ### `PATCH /api/v1/garden/plants/batch/remove`
 Batch soft delete.
+**Response:** `PlantSummaryView[]` — just the plants actually marked `removed`.
+404 if nothing matches the filter. 400 if `quantity` exceeds the number of matches or an invalid filter value is provided.
 
 > These two `batch` routes must stay registered in `agent/api/routers.py` *before*
 > `PATCH /api/v1/garden/plants/{id}`. Starlette matches path routes in registration order, and

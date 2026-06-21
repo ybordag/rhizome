@@ -1850,7 +1850,48 @@ def batch_remove_plants(user_id: str, body: dict):
     """Soft delete for multiple plants — marks all as removed with a required reason."""
     _set_user(user_id)
     from agent.tools.garden.plants import batch_remove_plants as _batch_remove
-    return {"result": _batch_remove.invoke(body)}
+
+    session = SessionLocal()
+    try:
+        query = session.query(Plant).filter(
+            Plant.user_id == user_id,
+            Plant.name.ilike(f"%{body.get('name', '')}%"),
+            Plant.status != "removed",
+        )
+        if body.get("variety"):
+            query = query.filter(Plant.variety.ilike(f"%{body['variety']}%"))
+        if body.get("current_status"):
+            query = query.filter(Plant.status == body["current_status"])
+        if body.get("project_id"):
+            query = query.join(ProjectPlant, Plant.id == ProjectPlant.plant_id).filter(
+                ProjectPlant.project_id == body["project_id"],
+                ProjectPlant.removed_at == None,
+            )
+        candidates = query.order_by(Plant.created_at.asc()).all()
+        if body.get("quantity") is not None and body["quantity"] <= len(candidates):
+            candidates = candidates[: body["quantity"]]
+        affected_ids = [p.id for p in candidates]
+    finally:
+        session.close()
+
+    result = _batch_remove.invoke(body)
+    status = _mutation_error_status(result)
+    if status:
+        raise HTTPException(status_code=status, detail=result)
+
+    session = SessionLocal()
+    try:
+        plants = (
+            session.query(Plant)
+            .filter(Plant.id.in_(affected_ids), Plant.user_id == user_id)
+            .order_by(Plant.created_at.asc())
+            .all()
+            if affected_ids
+            else []
+        )
+        return [p.to_summary_view() for p in plants]
+    finally:
+        session.close()
 
 
 @data_router.patch("/garden/plants/{plant_id}")
