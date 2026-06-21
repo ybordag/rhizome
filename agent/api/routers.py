@@ -2759,12 +2759,29 @@ def list_recent_activity(
     since: str = None, before_timestamp: str = None, limit: int = 20,
 ):
     _set_user(user_id)
-    from agent.tools.operations.activity import list_recent_activity as _list
-    return {"result": _list.invoke({
-        "category": category, "event_type": event_type,
-        "project_id": project_id, "subject_type": subject_type,
-        "since": since, "before_timestamp": before_timestamp, "limit": limit,
-    })}
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, list_recent_activity_entries
+
+    session = SessionLocal()
+    try:
+        try:
+            since_dt = datetime.fromisoformat(since) if since else None
+            before_dt = datetime.fromisoformat(before_timestamp) if before_timestamp else None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+        events = list_recent_activity_entries(
+            session,
+            project_id=project_id,
+            subject_type=subject_type,
+            event_type=event_type,
+            category=category,
+            since=since_dt,
+            before_timestamp=before_dt,
+            limit=limit,
+        )
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 @data_router.get("/activity/stats")

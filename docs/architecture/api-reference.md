@@ -564,10 +564,10 @@ Trigger the monitor cron weather job.
 `ActivitySubjectView`: `{ subject_type, subject_id, role }`.
 
 ### `GET /api/v1/activity`
-Global activity feed. **Still returns `{"result": "<prose>"}`** — not yet migrated to
-`ActivityEventView[]`; tracked under `#134`. Every per-entity activity endpoint above
-(beds/containers/plants/batches/tasks/projects) *does* return `ActivityEventView[]` as of `#140`.
-**Query params:** `project_id`, `subject_type`, `event_type`, `category`, `since` (ISO), `before_timestamp` (ISO cursor), `limit`
+Global activity feed. **Response:** `ActivityEventView[]` — fixed from `{"result": "<prose>"}` in
+`#134`. Every per-entity activity endpoint above (beds/containers/plants/batches/tasks/projects)
+already returned this shape as of `#140`.
+**Query params:** `project_id`, `subject_type`, `event_type`, `category`, `since` (ISO), `before_timestamp` (ISO cursor), `limit`. Invalid `since`/`before_timestamp` returns 400.
 
 ### `GET /api/v1/activity/stats`
 Aggregated activity counts for velocity tracking and progress charts.

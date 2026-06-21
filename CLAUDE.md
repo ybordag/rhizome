@@ -7,7 +7,7 @@
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (806 tests, excl. E2E)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (817 tests, excl. E2E)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **806 tests** — unit + integration + graph + API
+- Total (excluding E2E): **817 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -291,8 +291,7 @@ main.py             — CLI entrypoint
   50 tests in `tests/agent/api/test_issue_140_structured_mutations.py` covering structured shape,
   400/404 paths (including the "no garden profile" branch, distinct from "entity not found"),
   and cross-user isolation for all 16 endpoints.
-- Still open: `#134` (activity feed), `#137` (projects), `#139` (ThreadView, lower priority/no
-  functional gap).
+- Still open: `#137` (projects), `#139` (ThreadView, lower priority/no functional gap).
 
 **SSE streaming fix complete (#141, 2026-06-21):**
 - `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` were completely broken
@@ -462,6 +461,26 @@ main.py             — CLI entrypoint
   views' shapes, both live-bug regressions (confirmed they fail against the pre-fix code, not just
   pass against the fix), error paths (404/400/409), and cross-user isolation. Full suite: 805
   passed, 1 pre-existing skip (`ANTHROPIC_API_KEY` not set), 21 e2e deselected.
+
+**Activity feed structured JSON complete (#134, 2026-06-21):**
+- `GET /internal/data/activity` (the global feed) was the one activity endpoint #140 left
+  unstructured — #140's sweep covered the per-entity activity endpoints
+  (beds/containers/plants/batches/tasks/projects) only. Now returns `ActivityEventView[]` instead
+  of `{"result": "<prose>"}`, by calling `list_recent_activity_entries()`
+  (`agent/domain/activity_log.py`) and `activity_events_to_view_data()` directly instead of going
+  through the `list_recent_activity` chat tool — same bypass-the-tool pattern as #135/#140. The
+  tool itself is untouched.
+- Also added proper 400 handling for malformed `since`/`before_timestamp` — previously these went
+  through the tool's own try/except, which converted a bad date string into a 200 with
+  `{"result": "Failed to list recent activity: Invalid since '...'..."}` baked into prose, the
+  same masked-error pattern fixed elsewhere in this backlog.
+- `GET /activity/stats` was already structured (a plain dict, not wrapped in `{"result": ...}`)
+  and untouched — `#134`'s docs note only ever applied to the global feed endpoint, not stats.
+- 11 tests in `tests/agent/api/test_issue_134_activity_feed_structured.py`: empty-feed shape,
+  subjects round-tripping, all four filters (category/event_type/project_id/subject_type), limit,
+  both invalid-date 400 paths (confirmed they fail against the pre-fix code), cross-user isolation,
+  and one test driving through the real `report_incident` chat tool to prove the serializer
+  round-trips activity actually written by tool-layer code, not just direct ORM/domain calls.
 
 **#140/#141/#135 committed (2026-06-21):** all three had been sitting uncommitted, interleaved
 across the same shared files (`routers.py`, `views.py`, `CLAUDE.md`, `api-reference.md`). Split
