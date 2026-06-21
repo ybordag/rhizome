@@ -241,10 +241,14 @@ Thread
   last_message_preview string?      — first 150 chars of last AI response (updated each turn)
   last_active_at       datetime?    — updated by session_context_intake on every turn
   message_count        int          — human message count; updated each turn
+  pinned_context       JSON         — pinned entities injected into the prompt
+  session_context      JSON?        — structured startup/session context for Verdant
   created_at           datetime
 ```
 
-**Key design decision:** `Thread` stores only metadata. Actual message content lives in the LangGraph PostgresSaver checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
+**Key design decision:** `Thread` stores metadata only, plus small app-facing context documents. Actual message content lives in the LangGraph PostgresSaver checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
+
+**Session context:** `session_context` stores canonical startup intake values: `available_minutes`, `energy_level`, `focus_project_id`, `preferred_location_type`, `open_to_outdoor_work`, `wants_quick_wins`, `source`, and `updated_at`. `source` is `inferred` when `session_context_intake` derived the values from opener text, `user` after `PATCH /threads/{id}/session-context`, and `unset` only in the API response for threads with no stored context. `focus_label` is resolved at read time from `focus_project_id`.
 
 **Thread ID generation:** Cambium generates botanical three-word names (31 descriptors × 41 plants × 36 phenomena ≈ 45,700 combinations). Rhizome stores and uses them as opaque strings.
 

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from agent.api.app import app
 from db.models import Thread
+from tests.support.factories import make_profile, make_project
 
 client = TestClient(app)
 
@@ -24,6 +25,7 @@ THREAD_VIEW_FIELDS = (
     "last_active_at",
     "message_count",
     "pinned_context",
+    "session_context",
     "created_at",
 )
 THREAD_VIEW_KEYS = set(THREAD_VIEW_FIELDS)
@@ -49,6 +51,7 @@ def test_thread_to_view_preserves_existing_inline_serializer_contract():
         last_active_at=now,
         message_count=4,
         pinned_context=None,
+        session_context=None,
         created_at=now,
     )
 
@@ -64,6 +67,7 @@ def test_thread_to_view_preserves_existing_inline_serializer_contract():
         "last_active_at": now,
         "message_count": 4,
         "pinned_context": [],
+        "session_context": None,
         "created_at": now,
     }
 
@@ -140,6 +144,7 @@ def test_list_threads_preserves_thread_view_shape(patched_sessionlocal, db_sessi
         last_active_at=now,
         message_count=7,
         pinned_context=[{"subject_type": "project", "subject_id": "project-1"}],
+        session_context={"available_minutes": 20, "source": "inferred"},
         created_at=now,
     ))
     db_session.commit()
@@ -156,6 +161,7 @@ def test_list_threads_preserves_thread_view_shape(patched_sessionlocal, db_sessi
         "last_active_at": now.isoformat(),
         "message_count": 7,
         "pinned_context": [{"subject_type": "project", "subject_id": "project-1"}],
+        "session_context": {"available_minutes": 20, "source": "inferred"},
         "created_at": now.isoformat(),
     }
     assert list(body) == list(THREAD_VIEW_FIELDS)
@@ -228,6 +234,7 @@ def test_get_thread_preserves_thread_view_shape_and_defaults(patched_sessionloca
         "last_active_at": None,
         "message_count": 0,
         "pinned_context": [],
+        "session_context": None,
         "created_at": now.isoformat(),
     }
     assert list(body) == list(THREAD_VIEW_FIELDS)
@@ -250,6 +257,400 @@ def test_get_thread_wrong_user(patched_sessionlocal, db_session):
 
     resp = client.get("/internal/data/threads/other-user-thread?user_id=1")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /internal/data/threads/{id}/session-context — #146
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_get_thread_session_context_unset(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(id="unset-context-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.get("/internal/data/threads/unset-context-thread/session-context?user_id=1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "available_minutes": None,
+        "energy_level": None,
+        "focus_project_id": None,
+        "focus_label": None,
+        "preferred_location_type": None,
+        "open_to_outdoor_work": None,
+        "wants_quick_wins": None,
+        "source": "unset",
+        "updated_at": None,
+    }
+
+
+@pytest.mark.integration
+def test_get_thread_session_context_resolves_stored_focus_label(
+    patched_sessionlocal,
+    db_session,
+    seed_garden_profile,
+):
+    now = _now()
+    project = make_project(db_session, seed_garden_profile, name="Tomato Sprint")
+    db_session.add(Thread(
+        id="stored-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "available_minutes": 25,
+            "energy_level": "medium",
+            "focus_project_id": project.id,
+            "preferred_location_type": "container",
+            "open_to_outdoor_work": False,
+            "wants_quick_wins": True,
+            "source": "inferred",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    resp = client.get("/internal/data/threads/stored-context-thread/session-context?user_id=1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "available_minutes": 25,
+        "energy_level": "medium",
+        "focus_project_id": project.id,
+        "focus_label": "Tomato Sprint",
+        "preferred_location_type": "container",
+        "open_to_outdoor_work": False,
+        "wants_quick_wins": True,
+        "source": "inferred",
+        "updated_at": now.isoformat(),
+    }
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_updates_user_values(
+    patched_sessionlocal,
+    db_session,
+    seed_garden_profile,
+):
+    now = _now()
+    project = make_project(db_session, seed_garden_profile, name="Pepper Sprint")
+    db_session.add(Thread(id="editable-context-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/editable-context-thread/session-context?user_id=1", json={
+        "available_minutes": 45,
+        "energy_level": "low",
+        "focus_project_id": project.id,
+        "preferred_location_type": "bed",
+        "open_to_outdoor_work": True,
+        "wants_quick_wins": True,
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available_minutes"] == 45
+    assert body["energy_level"] == "low"
+    assert body["focus_project_id"] == project.id
+    assert body["focus_label"] == "Pepper Sprint"
+    assert body["preferred_location_type"] == "bed"
+    assert body["open_to_outdoor_work"] is True
+    assert body["wants_quick_wins"] is True
+    assert body["source"] == "user"
+    assert body["updated_at"]
+
+    db_session.expire_all()
+    stored = db_session.get(Thread, "editable-context-thread").session_context
+    assert stored["source"] == "user"
+    assert stored["available_minutes"] == 45
+    assert stored["focus_project_id"] == project.id
+    assert "focus_label" not in stored
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_allows_explicit_clear(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(
+        id="clear-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "available_minutes": 30,
+            "energy_level": "high",
+            "source": "user",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/clear-context-thread/session-context?user_id=1", json={
+        "available_minutes": None,
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available_minutes"] is None
+    assert body["energy_level"] == "high"
+    assert body["source"] == "user"
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_clears_focus_project(
+    patched_sessionlocal,
+    db_session,
+    seed_garden_profile,
+):
+    now = _now()
+    project = make_project(db_session, seed_garden_profile, name="Clearable Focus")
+    db_session.add(Thread(
+        id="clear-focus-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "focus_project_id": project.id,
+            "source": "user",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/clear-focus-context-thread/session-context?user_id=1", json={
+        "focus_project_id": None,
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["focus_project_id"] is None
+    assert resp.json()["focus_label"] is None
+
+    db_session.expire_all()
+    assert db_session.get(Thread, "clear-focus-context-thread").session_context["focus_project_id"] is None
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_rejects_empty_patch(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(id="empty-context-patch-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/empty-context-patch-thread/session-context?user_id=1", json={})
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "No session context fields provided"
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_rejects_unknown_fields(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(id="unknown-context-patch-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/unknown-context-patch-thread/session-context?user_id=1", json={
+        "energy_level": "low",
+        "mood": "determined",
+    })
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("payload", [
+    {"available_minutes": -1},
+    {"energy_level": "exhausted"},
+    {"preferred_location_type": "greenhouse"},
+])
+def test_patch_thread_session_context_validates_fields(patched_sessionlocal, db_session, payload):
+    now = _now()
+    db_session.add(Thread(id=f"invalid-context-{next(iter(payload))}", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.patch(f"/internal/data/threads/invalid-context-{next(iter(payload))}/session-context?user_id=1", json=payload)
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+def test_thread_session_context_wrong_user_404(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(id="protected-context-thread", user_id=2, created_at=now))
+    db_session.commit()
+
+    get_resp = client.get("/internal/data/threads/protected-context-thread/session-context?user_id=1")
+    patch_resp = client.patch("/internal/data/threads/protected-context-thread/session-context?user_id=1", json={
+        "energy_level": "low",
+    })
+
+    assert get_resp.status_code == 404
+    assert patch_resp.status_code == 404
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_rejects_other_users_project(
+    patched_sessionlocal,
+    db_session,
+):
+    now = _now()
+    other_profile = make_profile(db_session, user_id="2", location_label="Oakland, CA")
+    other_project = make_project(db_session, other_profile, user_id="2", name="Other Project")
+    db_session.add(Thread(id="focus-context-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/focus-context-thread/session-context?user_id=1", json={
+        "focus_project_id": other_project.id,
+    })
+
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_session_context_intake_persists_inferred_context(
+    patched_sessionlocal,
+    db_session,
+    seed_garden_profile,
+):
+    from langchain.messages import HumanMessage
+    from agent.core.nodes import session_context_intake
+
+    config = {"configurable": {"thread_id": "inferred-context-thread", "user_id": "1"}}
+    state = {"messages": [HumanMessage(content="I have 30 minutes and low energy for a quick container task.")]}
+
+    result = session_context_intake(state, config)
+
+    assert result["session_context"]["available_minutes"] == 30
+    assert result["session_context"]["energy_level"] == "low"
+    assert result["session_context"]["preferred_location_type"] == "container"
+    assert result["session_context"]["wants_quick_wins"] is True
+
+    db_session.expire_all()
+    thread = db_session.get(Thread, "inferred-context-thread")
+    assert thread.session_context["source"] == "inferred"
+    assert thread.session_context["available_minutes"] == 30
+    assert thread.session_context["updated_at"]
+
+
+@pytest.mark.integration
+def test_session_context_intake_uses_user_updated_context(
+    patched_sessionlocal,
+    db_session,
+    seed_garden_profile,
+):
+    from langchain.messages import HumanMessage
+    from agent.core.nodes import session_context_intake
+
+    now = _now()
+    db_session.add(Thread(
+        id="manual-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "available_minutes": 5,
+            "energy_level": "high",
+            "preferred_location_type": None,
+            "open_to_outdoor_work": False,
+            "wants_quick_wins": True,
+            "source": "user",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    result = session_context_intake(
+        {"messages": [HumanMessage(content="I have 2 hours and low energy outside.")]},
+        {"configurable": {"thread_id": "manual-context-thread", "user_id": "1"}},
+    )
+
+    assert result["session_context"]["available_minutes"] == 5
+    assert result["session_context"]["energy_level"] == "high"
+    assert result["session_context"]["open_to_outdoor_work"] is False
+    assert result["session_context"]["wants_quick_wins"] is True
+
+    db_session.expire_all()
+    thread = db_session.get(Thread, "manual-context-thread")
+    assert thread.session_context["available_minutes"] == 5
+    assert thread.session_context["energy_level"] == "high"
+    assert thread.session_context["source"] == "user"
+
+
+@pytest.mark.integration
+def test_session_context_intake_refreshes_existing_inferred_context(
+    patched_sessionlocal,
+    db_session,
+):
+    from langchain.messages import HumanMessage
+    from agent.core.nodes import session_context_intake
+
+    now = _now()
+    db_session.add(Thread(
+        id="refresh-inferred-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "available_minutes": 15,
+            "energy_level": "high",
+            "source": "inferred",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    result = session_context_intake(
+        {"messages": [HumanMessage(content="I have 60 minutes and low energy for a quick bed task.")]},
+        {"configurable": {"thread_id": "refresh-inferred-context-thread", "user_id": "1"}},
+    )
+
+    assert result["session_context"]["available_minutes"] == 60
+    assert result["session_context"]["energy_level"] == "low"
+    assert result["session_context"]["preferred_location_type"] == "bed"
+    assert result["session_context"]["wants_quick_wins"] is True
+
+    db_session.expire_all()
+    stored = db_session.get(Thread, "refresh-inferred-context-thread").session_context
+    assert stored["available_minutes"] == 60
+    assert stored["energy_level"] == "low"
+    assert stored["preferred_location_type"] == "bed"
+    assert stored["wants_quick_wins"] is True
+    assert stored["source"] == "inferred"
+
+
+@pytest.mark.integration
+def test_session_context_intake_does_not_use_other_users_thread_context(
+    patched_sessionlocal,
+    db_session,
+):
+    from langchain.messages import HumanMessage
+    from agent.core.nodes import session_context_intake
+
+    now = _now()
+    db_session.add(Thread(
+        id="shared-external-thread-id",
+        user_id="2",
+        title="Other user thread",
+        created_at=now,
+        last_active_at=now,
+        message_count=9,
+        pinned_context=[{"subject_type": "project", "subject_id": "secret-project"}],
+        session_context={
+            "available_minutes": 5,
+            "energy_level": "high",
+            "source": "user",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    result = session_context_intake(
+        {"messages": [HumanMessage(content="I have 45 minutes and low energy.")]},
+        {"configurable": {"thread_id": "shared-external-thread-id", "user_id": "1"}},
+    )
+
+    assert result["session_context"]["available_minutes"] == 45
+    assert result["session_context"]["energy_level"] == "low"
+    assert result.get("pinned_context_text") is None
+
+    db_session.expire_all()
+    other_thread = db_session.get(Thread, "shared-external-thread-id")
+    assert other_thread.user_id == "2"
+    assert other_thread.message_count == 9
+    assert other_thread.session_context["available_minutes"] == 5
+    assert other_thread.session_context["energy_level"] == "high"
 
 
 # ---------------------------------------------------------------------------

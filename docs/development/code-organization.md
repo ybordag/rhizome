@@ -34,7 +34,7 @@ These files run the graph. They should be changed when the conversation flow, ro
 | `state.py` | `GardenState` TypedDict — the state flowing through the graph. |
 | `model.py` | **Single model seam.** All LLM access goes through `get_model()` and `get_triage_model()`. Never instantiate a model client anywhere else. Reads `RHIZOME_MODEL` and `RHIZOME_TRIAGE_MODEL` env vars. |
 | `telemetry.py` | OpenTelemetry setup and observer framework. `emit_state_snapshot`, `emit_tool_completed`, `emit_tool_started`, `start_span`. Wired into all node transitions. |
-| `temporal.py` | Timezone handling, `build_temporal_context` (day of week, season, frost proximity), `infer_session_context` (available time, energy level from user input). |
+| `temporal.py` | Timezone handling, `build_temporal_context` (day of week, season, frost proximity), `infer_session_context` (available time, energy, focus, location, outdoor/quick-win preferences from user input). |
 
 ### `agent/domain/` — domain logic
 
@@ -47,6 +47,7 @@ These files contain the actual business logic. They're pure Python (no LangChain
 | `incidents.py` | `create_incident_report`, `draft_treatment_plan`, `approve_treatment_plan`, `resolve_incident`. `approve_treatment_plan` generates Task objects for each step and records a `treatment_plan_approved` event. |
 | `interactions.py` | Interaction envelope builders (`build_confirmation_interaction`, `build_proposal_review_interaction`, etc.), `record_interaction_summary`, `resolve_interaction_record` (now writes `interaction_resolved` activity event), `normalize_resolution` (maps text → InteractionResolution), `InteractionEnvelope`, `InteractionResolution` dataclasses. |
 | `planner.py` | `estimate_plan_cost`, `estimate_plan_timeline`, `estimate_plan_effort` — deterministic arithmetic estimators. `check_plan_feasibility` — hard violations + soft warnings. `assemble_planning_context_data`, `get_or_create_brief`. `DEFAULT_PLANT_RULES` dict (tomato, pepper, basil + generic fallback). |
+| `session_context.py` | Structured startup/session context helpers for Verdant: empty/unset response shape, inferred/user source normalization, partial PATCH application, graph-state merge, and per-user focus label resolution. |
 | `tracker.py` | Task generation (`generate_tasks_for_revision`, `_task_blueprints`, `_create_task`, `_create_series`, `_link_dependency`). State machine: `compute_task_blocked_state`, `compute_task_urgency`, `_refresh_task_status_from_dependencies`. Daily priority: `get_daily_priority_tasks`, `format_daily_priority_tasks`. Cascade: `cascade_defer_to_dependents`. Series: `materialize_task_series`, `list_materializable_series`. Constants: `VALID_TASK_STATUSES`, `VALID_TASK_PRIORITIES`, `_URGENCY_SCORE`, `_TYPE_SCORE`, `_PRIORITY_SCORE`. |
 | `triage.py` | `build_triage_snapshot` — secondary LLM call that produces the triage snapshot. `format_triage_snapshot` — text formatter for the system prompt. |
 | `weather.py` | `refresh_weather_snapshot` — fetches Open-Meteo and derives impacts. `get_latest_weather_snapshot`, `evaluate_weather_task_impacts`, `derive_weather_impacts`. |

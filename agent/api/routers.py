@@ -40,6 +40,7 @@ from agent.api.models import (
     UpdateIncidentRequest,
     UpdateProjectExpenseRequest,
     UpdateProjectRequest,
+    UpdateSessionContextRequest,
     UpdateShoppingItemRequest,
     UpdateTaskRequest,
     UpdateTaskSeriesRequest,
@@ -2848,6 +2849,77 @@ def get_thread(thread_id: str, user_id: str):
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
         return ThreadView(**thread.to_view())
+    finally:
+        session.close()
+
+
+def _request_fields_set(model) -> set[str]:
+    fields = getattr(model, "model_fields_set", None)
+    if fields is not None:
+        return set(fields)
+    return set(getattr(model, "__fields_set__", set()))
+
+
+@data_router.get("/threads/{thread_id}/session-context")
+def get_thread_session_context(thread_id: str, user_id: str):
+    """Get structured startup/session context for a thread."""
+    from agent.api.views import SessionContextView
+    from agent.domain.session_context import session_context_to_view_data
+
+    uid = _set_user(user_id)
+    session = SessionLocal()
+    try:
+        thread = (
+            session.query(Thread)
+            .filter(Thread.id == thread_id, Thread.user_id == uid)
+            .first()
+        )
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        return SessionContextView(**session_context_to_view_data(session, uid, thread.session_context))
+    finally:
+        session.close()
+
+
+@data_router.patch("/threads/{thread_id}/session-context")
+def update_thread_session_context(thread_id: str, user_id: str, body: UpdateSessionContextRequest):
+    """Update user-controlled startup/session context for a thread."""
+    from agent.api.views import SessionContextView
+    from agent.domain.session_context import apply_session_context_patch, session_context_to_view_data
+
+    uid = _set_user(user_id)
+    session = SessionLocal()
+    try:
+        thread = (
+            session.query(Thread)
+            .filter(Thread.id == thread_id, Thread.user_id == uid)
+            .first()
+        )
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+        fields = _request_fields_set(body)
+        if not fields:
+            raise HTTPException(status_code=400, detail="No session context fields provided")
+        updates = {field: getattr(body, field) for field in fields}
+        focus_project_id = updates.get("focus_project_id")
+        if focus_project_id is not None:
+            project = (
+                session.query(GardeningProject)
+                .filter(GardeningProject.id == focus_project_id, GardeningProject.user_id == uid)
+                .first()
+            )
+            if project is None:
+                raise HTTPException(status_code=400, detail="focus_project_id is not accessible")
+
+        thread.session_context = apply_session_context_patch(
+            session,
+            uid,
+            thread.session_context,
+            updates,
+        )
+        session.commit()
+        return SessionContextView(**session_context_to_view_data(session, uid, thread.session_context))
     finally:
         session.close()
 

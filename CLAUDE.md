@@ -185,11 +185,20 @@ main.py             — CLI entrypoint
 
 **Thread management complete (narcissus, 2026-06):**
 - `Thread` model: id = LangGraph thread_id (botanical name), user_id, title (auto from first
-  message), project_id?, last_message_preview, last_active_at, message_count, created_at
-- `session_context_intake` upserts thread metadata on every turn via `_upsert_thread()`
-- Five data endpoints: POST (register, idempotent), GET list (sorted by last_active_at),
-  GET {id}, GET {id}/messages (from LangGraph checkpoint), DELETE
-- 13 tests; 421 total tests passing
+  message), project_id?, last_message_preview, last_active_at, message_count,
+  `pinned_context`, `session_context`, created_at
+- `session_context_intake` upserts thread metadata and inferred session context on every turn
+  via `_upsert_thread()`; user-edited session context is preserved over later inferred values.
+- Thread data endpoints include POST (register, idempotent), GET list (sorted by last_active_at),
+  GET {id}, GET/PATCH `{id}/session-context`, GET {id}/messages (from LangGraph checkpoint),
+  and DELETE.
+- Structured session context is exposed for Verdant's SessionStrip with unset/inferred/user
+  source semantics. PATCH requires at least one known field, rejects unknown fields, supports
+  explicit `null` clears, validates enum/minute fields, resolves `focus_label` on read, and
+  scopes reads/writes by `user_id` and `thread_id`.
+- Current focused thread/API coverage includes serializer shape, unset/stored session context,
+  happy path and edge PATCH cases, focus label resolution, explicit clears, invalid payloads,
+  user isolation, inferred refresh, and user override precedence.
 
 **Frontend API pass complete (2026-06-19):**
 - `ActivityEvent.user_id` column added (migration); `list_recent_activity_entries` now scopes
@@ -311,6 +320,12 @@ main.py             — CLI entrypoint
   shape exactly. Added regression coverage in `tests/agent/api/test_threads.py` for the direct
   serializer contract, exact field order/key set, compact raw JSON for list/detail responses,
   ISO datetime encoding, and default `pinned_context: []`/`message_count: 0` behavior.
+- `#146` in progress on `ranunculus` - structured startup/session context for Verdant is now
+  persisted on `Thread.session_context` and exposed via GET/PATCH
+  `/threads/{id}/session-context`. The API distinguishes `unset`, `inferred`, and `user`
+  sources, preserves user overrides across later graph intake, resolves `focus_label` from
+  `focus_project_id` on read, rejects empty/unknown PATCH payloads, and includes multitenancy
+  regression coverage for API and graph-side thread lookup.
 - Small structured endpoint cleanup: `GET /tasks/blocked` now returns `TaskSummaryView[]`
   instead of `{"result": "<prose>"}` using `build_blocked_task_view()` in
   `agent/domain/tracker.py`. The route is scoped to the current user's projects and no longer

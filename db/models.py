@@ -1267,6 +1267,7 @@ class Thread(Base):
     last_active_at = Column(DateTime, nullable=True)
     message_count = Column(Integer, nullable=False, default=0)
     pinned_context = Column(JSON, nullable=False, default=list)
+    session_context = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
@@ -1279,6 +1280,7 @@ class Thread(Base):
             "last_active_at": self.last_active_at,
             "message_count": self.message_count,
             "pinned_context": self.pinned_context or [],
+            "session_context": self.session_context,
             "created_at": self.created_at,
         }
 

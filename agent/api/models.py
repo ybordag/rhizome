@@ -1,7 +1,7 @@
 """Pydantic request/response models for the internal API."""
 
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class AgentRequest(BaseModel):
@@ -109,6 +109,38 @@ class CreateThreadRequest(BaseModel):
     title: Optional[str] = None
     project_id: Optional[str] = None
     initial_context: Optional[list[dict]] = None
+
+
+class UpdateSessionContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    available_minutes: Optional[int] = None
+    energy_level: Optional[str] = None
+    focus_project_id: Optional[str] = None
+    preferred_location_type: Optional[str] = None
+    open_to_outdoor_work: Optional[bool] = None
+    wants_quick_wins: Optional[bool] = None
+
+    @field_validator("available_minutes")
+    @classmethod
+    def _positive_minutes(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 0:
+            raise ValueError("available_minutes must be >= 0")
+        return value
+
+    @field_validator("energy_level")
+    @classmethod
+    def _valid_energy(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in {"low", "medium", "high"}:
+            raise ValueError("energy_level must be one of low, medium, high")
+        return value
+
+    @field_validator("preferred_location_type")
+    @classmethod
+    def _valid_location_type(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in {"bed", "container"}:
+            raise ValueError("preferred_location_type must be one of bed, container")
+        return value
 
 
 class CreateTaskRequest(BaseModel):

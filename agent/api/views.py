@@ -396,7 +396,20 @@ class ThreadView(BaseModel):
     last_active_at: Optional[datetime] = None
     message_count: int
     pinned_context: list[dict[str, Any]] = []
+    session_context: Optional[dict[str, Any]] = None
     created_at: datetime
+
+
+class SessionContextView(BaseModel):
+    available_minutes: Optional[int] = None
+    energy_level: Optional[str] = None
+    focus_project_id: Optional[str] = None
+    focus_label: Optional[str] = None
+    preferred_location_type: Optional[str] = None
+    open_to_outdoor_work: Optional[bool] = None
+    wants_quick_wins: Optional[bool] = None
+    source: str
+    updated_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

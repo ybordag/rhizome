@@ -26,6 +26,7 @@ from agent.core.telemetry import emit_state_snapshot, emit_tool_completed, emit_
 from db.database import current_user_id
 from agent.core.state import GardenState
 from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
+from agent.domain.session_context import normalize_inferred_session_context, session_context_for_graph
 from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
 from agent.domain.weather import get_latest_weather_snapshot
@@ -191,12 +192,21 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
     session = SessionLocal()
     try:
         temporal_context = build_temporal_context(session, timezone=DEFAULT_TIMEZONE)
-        session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
+        inferred_session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
         now = datetime.now(dt_timezone.utc).replace(tzinfo=None)
 
         # Upsert thread metadata — preview from last AI message in prior turns
+        stored_session_context = None
         if thread_id:
-            _upsert_thread(session, uid, thread_id, state, now)
+            stored_session_context = _upsert_thread(
+                session,
+                uid,
+                thread_id,
+                state,
+                now,
+                inferred_session_context=inferred_session_context,
+            )
+        session_context = session_context_for_graph(inferred_session_context, stored_session_context)
 
         alert_rows = (
             session.query(MonitorAlert)
@@ -224,7 +234,11 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
 
         pinned_text = ""
         if thread_id:
-            thread_row = session.query(Thread).filter(Thread.id == thread_id).first()
+            thread_row = (
+                session.query(Thread)
+                .filter(Thread.id == thread_id, Thread.user_id == uid)
+                .first()
+            )
             if thread_row and thread_row.pinned_context:
                 pinned_text = _pinned_context_text(session, uid, thread_row.pinned_context)
 
@@ -240,7 +254,15 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         session.close()
 
 
-def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, now) -> None:
+def _upsert_thread(
+    session,
+    user_id: str,
+    thread_id: str,
+    state: GardenState,
+    now,
+    *,
+    inferred_session_context: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Create or update thread metadata at the start of each turn."""
     # Extract preview from the last AI message in prior turns
     preview = None
@@ -256,7 +278,17 @@ def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, no
                     c = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
                 preview = (c if isinstance(c, str) else str(c))[:150]
 
-    existing = session.query(Thread).filter(Thread.id == thread_id).first()
+    existing = (
+        session.query(Thread)
+        .filter(Thread.id == thread_id, Thread.user_id == user_id)
+        .first()
+    )
+    conflicting_thread = None
+    if existing is None:
+        conflicting_thread = session.query(Thread).filter(Thread.id == thread_id).first()
+    if conflicting_thread is not None:
+        return None
+
     if existing:
         existing.last_active_at = now
         existing.message_count = human_count
@@ -269,6 +301,14 @@ def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, no
                     text = msg.content if isinstance(msg.content, str) else str(msg.content)
                     existing.title = text[:60] + ("..." if len(text) > 60 else "")
                     break
+        if inferred_session_context is not None and (existing.session_context or {}).get("source") != "user":
+            existing.session_context = normalize_inferred_session_context(
+                session,
+                user_id,
+                inferred_session_context,
+                now=now,
+            )
+        stored_session_context = existing.session_context
     else:
         # First turn — create the thread record
         title = None
@@ -279,15 +319,22 @@ def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, no
         ):
             text = opener if isinstance(opener, str) else str(opener)
             title = text[:60] + ("..." if len(text) > 60 else "")
+        stored_session_context = (
+            normalize_inferred_session_context(session, user_id, inferred_session_context, now=now)
+            if inferred_session_context is not None
+            else None
+        )
         session.add(Thread(
             id=thread_id,
             user_id=user_id,
             title=title,
             last_active_at=now,
             message_count=human_count,
+            session_context=stored_session_context,
             created_at=now,
         ))
     session.commit()
+    return stored_session_context
 
 
 def weather_context_loader(state: GardenState):

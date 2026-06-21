@@ -42,7 +42,7 @@ All data endpoints return structured JSON (not `{"result": "...string..."}`). Re
 - `TaskSummaryView`, `TaskDetailView`
 - `ProjectSummaryView`, `ProjectDetailView`, `ProjectProgressView`
 - `ProjectBriefView`, `ProposalSummaryView`, `ProposalDetailView`
-- `ThreadView`
+- `ThreadView`, `SessionContextView`
 - `TaskSeriesView`, `CalendarAnnotationView`
 - `ProjectExpenseView`, `ExpenseSummaryView`, `ShoppingItemView`
 - `ActivityEventView`, `ActivitySubjectView`
@@ -649,7 +649,20 @@ Thread metadata.
 **Response:** `ThreadView`
 
 `ThreadView` preserves the existing wire shape:
-`{ thread_id, title, project_id, last_message_preview, last_active_at, message_count, pinned_context, created_at }`
+`{ thread_id, title, project_id, last_message_preview, last_active_at, message_count, pinned_context, session_context, created_at }`
+
+### `GET /api/v1/threads/{id}/session-context`
+Structured startup/session context for a thread. Used by Verdant's SessionStrip.
+**Response:** `SessionContextView`:
+`{ available_minutes, energy_level, focus_project_id, focus_label, preferred_location_type, open_to_outdoor_work, wants_quick_wins, source, updated_at }`
+
+Unset threads return all nullable values as `null`, `source: "unset"`, and `updated_at: null`.
+
+### `PATCH /api/v1/threads/{id}/session-context`
+User override for structured startup/session context.
+**Body:** one or more fields from `{ available_minutes, energy_level, focus_project_id, preferred_location_type, open_to_outdoor_work, wants_quick_wins }`; empty bodies return `400`, and unknown fields return validation errors.
+Explicit `null` clears a field. `energy_level` is `low | medium | high`; `preferred_location_type` is `bed | container`.
+**Response:** `SessionContextView` with `source: "user"`.
 
 ### `GET /api/v1/threads/{id}/messages`
 Full message history from the LangGraph checkpoint.
