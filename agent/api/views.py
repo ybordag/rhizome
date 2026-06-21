@@ -298,3 +298,13 @@ class SearchResultItemView(BaseModel):
 class SearchResultsView(BaseModel):
     results: list[SearchResultItemView]
     by_type: dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# Garden — Location filter
+# ---------------------------------------------------------------------------
+
+class LocationResultsView(BaseModel):
+    beds: list[BedView]
+    containers: list[ContainerView]
+    plants: list[PlantSummaryView]

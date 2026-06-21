@@ -1703,8 +1703,42 @@ def unified_search(
 @data_router.get("/garden/locations/{location}")
 def list_by_location(location: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.garden.search import list_by_location as _list
-    return {"result": _list.invoke({"location": location})}
+    from agent.api.views import LocationResultsView
+
+    session = SessionLocal()
+    try:
+        loc = f"%{location}%"
+        beds = session.query(Bed).filter(Bed.user_id == user_id, Bed.location.ilike(loc)).all()
+        containers = session.query(Container).filter(
+            Container.user_id == user_id, Container.location.ilike(loc)
+        ).all()
+
+        bed_ids = [b.id for b in beds]
+        container_ids = [c.id for c in containers]
+        plants = []
+        if bed_ids or container_ids:
+            from sqlalchemy import or_
+            plants = session.query(Plant).filter(
+                Plant.user_id == user_id,
+                Plant.status != "removed",
+                or_(Plant.bed_id.in_(bed_ids), Plant.container_id.in_(container_ids)),
+            ).all()
+
+        bed_names = {b.id: b.name for b in beds}
+        container_names = {c.id: c.name for c in containers}
+
+        def _location_name(p):
+            if p.container_id:
+                return container_names.get(p.container_id)
+            return bed_names.get(p.bed_id)
+
+        return LocationResultsView(
+            beds=[b.to_view() for b in beds],
+            containers=[c.to_view() for c in containers],
+            plants=[p.to_summary_view(location_name=_location_name(p)) for p in plants],
+        )
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
