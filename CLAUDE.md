@@ -7,7 +7,7 @@
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (778 tests, excl. E2E)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (783 tests, excl. E2E)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **778 tests** — unit + integration + graph + API
+- Total (excluding E2E): **783 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -296,6 +296,132 @@ main.py             — CLI entrypoint
   `IncidentDetailView`/`TreatmentPlanView` responses; that's aspirational/wrong until #135
   actually ships, don't trust it at face value), `#137` (projects), `#139` (ThreadView, lower
   priority/no functional gap).
+
+**SSE streaming fix complete (#141, 2026-06-21):**
+- `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` were completely broken
+  in production, for every provider — `200 OK`, `text/event-stream`, zero bytes of body, every
+  time. Root cause: `agent.astream_events()`/`agent.get_state()` (called from inside the running
+  async generator) need the LangGraph checkpointer's *async* interface (`aget_tuple`/etc.); the
+  module-level `agent` (`agent/core/graph.py`) was built on the sync-only `SqliteSaver`/
+  `PostgresSaver`, which raise `NotImplementedError` unconditionally on those methods. The
+  non-streaming `/internal/agent`/`/internal/agent/resume` endpoints were unaffected — they only
+  call the sync `.invoke()`/`.get_state()` path.
+- Fix: `agent/core/graph.py` now exposes `build_agent(checkpointer)` (the shared topology
+  builder) and `async def build_async_checkpointer()` (returns an `AsyncSqliteSaver`/
+  `AsyncPostgresSaver` + an `aclose` callable). The module-level sync `agent` — used by the CLI
+  (`main.py`) and the two non-streaming endpoints — is unchanged. `agent/api/app.py`'s `lifespan`
+  builds a *second* agent on the async checkpointer (`app.state.streaming_agent`) when the
+  FastAPI app starts, since constructing `aiosqlite`/async `psycopg` connections requires a
+  running event loop. Both agents share the same underlying checkpoint tables, so conversation
+  state is consistent regardless of which endpoint touched a given `thread_id`.
+- `agent/api/routers.py`'s `stream_agent`/`resume_agent_stream` now take the agent via
+  `Depends(get_streaming_agent)` instead of referencing the module-level `agent` directly — this
+  was the dependency-injection seam `tests/DEFERRED_TESTS.md` had flagged as missing, and is what
+  makes the new tests possible. Also swapped `state = agent.get_state(config)` →
+  `state = await streaming_agent.aget_state(config)` inside the generators — calling the *sync*
+  accessor from the same loop driving the async generator hits a different async-saver guard
+  rail (`InvalidStateError`), so this had to change too, not just the checkpointer class.
+- Tests: `tests/agent/api/test_streaming_endpoints.py` (5 tests) — drives the real HTTP path via
+  `httpx.AsyncClient` + `ASGITransport` (not `TestClient`, which doesn't manage a stable event
+  loop across calls the way this needed) against a real `AsyncSqliteSaver`-backed graph, overriding
+  `get_streaming_agent` via `app.dependency_overrides`. Covers the plain-turn path, the
+  destructive-tool-call-interrupt-then-resume path, token-event forwarding specifically (see
+  below), and the Postgres checkpointer branch. Confirmed all of these fail with
+  `NotImplementedError` against the *old* sync checkpointer, and again against the *old* router
+  code (bare `agent` reference, no `Depends`), before verifying they pass against the fix — not
+  just written to pass.
+- **Found during the post-merge test review (critical self-review, not just "tests are green"):**
+  - `tests/conftest.py` clears `DATABASE_URL` to force SQLite for the whole suite, but that's
+    ineffective for anything that imports `agent.core.graph` — `agent.core.model` calls
+    `load_dotenv()` unconditionally at import time, and `graph.py` imports `agent.core.nodes`
+    (which imports `agent.core.model`) *before* its own `_database_url = os.environ.get(...)` line
+    runs. So importing `graph.py` silently repopulates `DATABASE_URL` from `.env` — pointing at the
+    real shared dev Postgres — before `_use_postgres` is decided. `fresh_test_graph` was never
+    affected (it injects its own SQLite checkpointer and never touches `graph.py`'s module-level
+    one), but the first version of the new streaming tests called `build_async_checkpointer()`
+    directly and were silently writing real checkpoint rows to the shared dev Postgres instance on
+    every test run (confirmed: `stream-thread-1`/`stream-thread-resume` rows in
+    `rhizome.checkpoints`, deleted by hand afterward). Fixed by having every SQLite-intent test
+    monkeypatch `graph_module._use_postgres = False` explicitly rather than trusting the env var —
+    confirmed via `type(checkpointer).__name__ == "AsyncSqliteSaver"` and a real tmp_path file
+    appearing on disk. At the time, the underlying `load_dotenv()`-ordering footgun in `graph.py`
+    itself was left unfixed (worked around per-test only) — since fixed, see below.
+  - The first version only asserted `'"type": "done"' in body` — that proves the pipe didn't crash,
+    but `FakeBoundModel.invoke()` is a bare Python call, not a traced `Runnable`, so
+    `astream_events()` never emitted `on_chat_model_stream` for it; a regression in the token-
+    forwarding branch in `agent/api/routers.py` would have slipped through untested. Added
+    `test_stream_agent_emits_token_and_done_events`, using `GenericFakeChatModel`
+    (`langchain_core.language_models.fake_chat_models`) — a real streaming-capable `Runnable` — and
+    asserting the actual token content round-trips through the SSE response.
+  - The Postgres branch of `build_async_checkpointer()` had zero automated coverage — only the
+    one-off live curl. Added `test_async_checkpointer_postgres_branch`, which runs against the
+    local dev Postgres, skips cleanly if it's unreachable, and deletes its own checkpoint rows
+    (`thread_id` is a fresh `uuid4()` each run) so it can't repeat the pollution mistake above.
+  - The resume test's assertions were weak (`"done"` appearing anywhere in the body proves
+    nothing about *which* AI message ended up persisted). Strengthened to check
+    `final_state.values["messages"][-1].content` and `not final_state.next` via `aget_state()` —
+    which caught a wrong assumption in the test itself (a second queued fake response that's never
+    actually consumed, since `interaction_node` short-circuits on a negative resume without calling
+    the model again).
+  - SSE body assertions were raw substring checks (`'"type": "done"' in text`). Replaced with a
+    real `_parse_sse_events()` helper that splits `data: ` frames and `json.loads`s each one, so
+    assertions check the actual last event rather than hoping a substring doesn't appear elsewhere.
+- **Found during the follow-up complete audit (confirming, not assuming, that coverage is
+  exhaustive):** grepped the whole codebase for every call site of `astream_events`/`aget_state`/
+  `.astream(`/`.ainvoke(` outside tests — confirmed the *only* production consumers of the async
+  checkpointer interface are the two streaming endpoints in `agent/api/routers.py`, and confirmed
+  `tests/agent/api/test_streaming_endpoints.py` is the only test file touching any #141-relevant
+  symbol (`graph_module`, `build_async_checkpointer`, `get_streaming_agent`, etc.) — there's no
+  second, forgotten test surface for this bug. That audit surfaced two more gaps, both now fixed:
+  - No test ever exercised the *real* `agent/api/app.py` lifespan — every test in this file (and
+    every other file in `tests/agent/api/`) uses bare `TestClient(app)`, which silently never runs
+    FastAPI's lifespan unless entered as `with TestClient(app) as client:`. A typo in
+    `app.state.streaming_agent = build_agent(...)`, or `build_async_checkpointer()` raising and
+    getting swallowed, would only ever have surfaced live. Added
+    `test_app_lifespan_builds_usable_streaming_agent`, which uses the context-manager form and
+    calls `/internal/agent/stream` through the unmocked `get_streaming_agent` dependency — no
+    override. Confirmed it fails with the right message when the lifespan's assignment is
+    deliberately broken, and passes against the real code.
+  - `app.state.streaming_agent` is not cleared by FastAPI's lifespan shutdown — confirmed by
+    experiment that after `with TestClient(app) as client:` exits, `hasattr(app.state,
+    "streaming_agent")` is still `True`, pointing at a graph wired to a now-closed connection. Mostly
+    harmless today since no other test touches the streaming endpoints without an override, but
+    it's stale state on a shared module-level `app` singleton. The new test wraps its body in
+    `try/finally` and explicitly `del app.state.streaming_agent` in the `finally` block.
+- Verified live against the actual dev stack (Postgres, per `.env`): `POST /internal/agent/stream`
+  now streams real tokens ending in `data: {"type": "done"}`.
+- **`load_dotenv()` import-order footgun fixed at the source (2026-06-21):** `agent/core/graph.py`
+  now calls `load_dotenv()` itself, explicitly, before reading `DATABASE_URL` — it no longer
+  depends on `agent.core.nodes` → `agent.core.model`'s own `load_dotenv()` call having already run
+  first by import-order accident. Reordering alone wasn't sufficient, though: `load_dotenv()` only
+  skips keys already *present* in `os.environ` (even empty ones), and `tests/conftest.py` was
+  *popping* `DATABASE_URL` rather than setting it — a popped key is indistinguishable from "never
+  set" to `load_dotenv()`, so any module calling it later (regardless of import order) silently
+  refills it from `.env`, which points at the real shared dev Postgres. Fixed `conftest.py` to set
+  `DATABASE_URL = "sqlite:///rhizome.db"` (matching `db/database.py`'s own default) instead of
+  popping it. This also broke `test_async_checkpointer_postgres_branch`'s sneaky reliance on the
+  very footgun it existed to test — that test derived the real dev Postgres URL from
+  `graph_module._database_url`, which only held the real value because of the bug. Fixed it to read
+  `.env` directly via `dotenv_values(".env")` instead, and to monkeypatch `graph_module._database_url`
+  alongside `_use_postgres` so `build_async_checkpointer()` actually connects to Postgres for that
+  one test. Full suite re-run clean afterward (782 passed, 1 pre-existing unrelated live-API
+  failure, 21 e2e deselected) with zero Postgres checkpoint-table pollution.
+- **Final audit (2026-06-21) caught one more casualty of the `conftest.py` fix:**
+  `tests/e2e/test_full_stack.py` calls `load_dotenv()` itself at module scope and reads
+  `DATABASE_URL` right after, expecting to recover the real Postgres DSN — that worked before only
+  because `conftest.py` *popped* the key, leaving it absent for `load_dotenv()` to fill back in.
+  Once `conftest.py` started setting it to the SQLite default instead (a *present* value),
+  `load_dotenv()`'s override-skip logic left it stuck on the SQLite URL, and the `db` fixture would
+  have tried (and failed) to `psycopg2.connect()` to a `sqlite:///` DSN instead of skipping cleanly
+  when Postgres isn't configured. Confirmed via direct repro (`os.environ["DATABASE_URL"] =
+  "sqlite:///rhizome.db"; load_dotenv(); print(os.environ["DATABASE_URL"])` → stays SQLite). Fixed
+  by reading `dotenv_values(".env")` directly instead of relying on `os.environ` post-`load_dotenv()`
+  — same pattern already used in `test_async_checkpointer_postgres_branch`. Confirmed the fix
+  recovers the real DSN even with the SQLite default present in `os.environ`, and that
+  `pytest --collect-only -m e2e` still collects all 21 e2e tests cleanly. This is the second test
+  this `.env`-precedence quirk has bitten — worth treating "reads `DATABASE_URL` to mean *real
+  Postgres*" as a smell anywhere outside `db/database.py`/`agent/core/graph.py` themselves; reach
+  for `dotenv_values(".env")` directly instead of `os.environ.get(...)` after `load_dotenv()`.
 
 **Next in Rhizome:**
 - Garden spatial layout model and map endpoints (`#118`)

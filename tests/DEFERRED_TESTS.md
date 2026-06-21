@@ -114,22 +114,59 @@ Tests that are known gaps but consciously deferred. Each entry explains why it w
 
 ---
 
-## SSE streaming endpoints
+## ~~SSE streaming endpoints~~ — closed (#141, 2026-06-21)
 
-**What:** Tests for `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` — verifying the SSE event sequence (token events, interaction event when graph pauses, done event), correct `Content-Type: text/event-stream` header, and that the stream closes cleanly.
+`POST /internal/agent/stream` and `POST /internal/agent/resume/stream` are now covered by
+`tests/agent/api/test_streaming_endpoints.py` (5 tests: plain-turn, destructive-tool-call
+interrupt + resume, token-event forwarding specifically, the Postgres checkpointer branch, and the
+real `agent/api/app.py` lifespan end-to-end). The router was refactored exactly as this entry
+anticipated — `get_streaming_agent()` (`agent/api/routers.py`) is a FastAPI `Depends` indirection
+that production resolves from `request.app.state.streaming_agent` (built in `agent/api/app.py`'s
+lifespan) and tests override via `app.dependency_overrides`.
 
-**Why deferred:** The streaming endpoints use `agent.astream_events()` which calls the real LangGraph graph and LLM. The `fresh_test_graph` fixture builds a test graph with a `FakeBoundModel`, but wiring it into the FastAPI `TestClient` requires either:
-- Patching `agent.core.graph.agent` in the test session before the router module loads (import-time state), or
-- Restructuring the router to accept an injectable graph instance (FastAPI dependency injection pattern)
+A first pass at these tests had real problems of its own, caught in a follow-up critical review
+rather than left as "tests are green, ship it" — see the `#141` entry in `CLAUDE.md` for the full
+list (a `load_dotenv()` import-order footgun was silently pointing the "SQLite-only" tests at the
+real shared dev Postgres — initially worked around per-test, later fixed at the source in
+`agent/core/graph.py`/`tests/conftest.py`, see below; the original assertions never exercised
+token-event forwarding at all since the plain `FakeBoundModel` isn't a traced `Runnable`; the
+Postgres checkpointer branch had no automated coverage; the resume test's assertions didn't
+actually prove the resume completed correctly). All four were fixed, but a subsequent *complete
+audit* (confirming no other test file touches #141-relevant code, via grep across the whole
+production codebase for every async-checkpointer call site) found a fifth gap: no test exercised
+the real lifespan in `agent/api/app.py` at all, since every test in this directory uses bare
+`TestClient(app)` (no context manager), which silently skips FastAPI's lifespan entirely. Added
+`test_app_lifespan_builds_usable_streaming_agent` to close it, and along the way found that
+`app.state.streaming_agent` isn't cleared by lifespan shutdown either (now cleaned up explicitly in
+that test). It's worth remembering that "the tests pass" and "the tests would catch the bug they
+claim to guard against" are different claims — verify the second one too, especially for anything
+touching async/event-loop plumbing, and don't assume a single review pass found every gap.
 
-Neither is trivial. The non-streaming agent endpoint has the same gap — streaming makes it more visible.
+The `load_dotenv()` footgun was later fixed at the source rather than left as a per-test
+workaround: `agent/core/graph.py` now calls `load_dotenv()` itself instead of relying on
+`agent.core.nodes`'s import-time side effect, and `tests/conftest.py` sets `DATABASE_URL` to the
+SQLite default instead of popping it (`load_dotenv()` only fills in *absent* keys, so a popped key
+silently gets refilled from `.env` by whatever happens to call `load_dotenv()` first — a present
+key doesn't). That second change broke two tests that had been unknowingly relying on the bug to
+recover the real dev Postgres DSN from `.env` — `test_async_checkpointer_postgres_branch` and
+`tests/e2e/test_full_stack.py`'s `db` fixture — both fixed by reading `dotenv_values(".env")`
+directly instead of `os.environ` post-`load_dotenv()`. Full details in `CLAUDE.md`'s `#141` entry.
 
-**Re-enable when:** The router is refactored to accept an injectable `agent` via FastAPI `Depends`, allowing `TestClient` tests to inject the `fresh_test_graph`. At that point, streaming tests can verify the full event sequence end-to-end with a fake model.
+The deferral turned out to be hiding a real bug, not just a coverage gap: `agent.astream_events()`
+requires the checkpointer's *async* interface, and the module-level `agent` (`agent/core/graph.py`)
+was built on the sync-only `SqliteSaver`/`PostgresSaver`, which raise `NotImplementedError`
+unconditionally on `aget_tuple`. Both streaming endpoints were silently broken in production —
+`200 OK`, `text/event-stream`, zero bytes of body — for any provider, the whole time this gap was
+documented as "untested but presumably fine." See `CLAUDE.md`'s `#141` entry for the full fix
+(async checkpointer built in the lifespan, `agent.get_state()` → `await agent.aget_state()` in the
+stream generators). The non-streaming `/internal/agent`/`/internal/agent/resume` endpoints were
+*not* affected — they only ever call the sync `.invoke()`/`.get_state()` path, which the original
+sync checkpointer handles fine — confirmed via a live curl call before writing the fix, not assumed.
 
 ### GET /internal/data/notifications/stream — full HTTP-level test
 
 **What:** Driving `GET /notifications/stream` through `TestClient` end-to-end (real ASGI transport, real HTTP headers, multiple chunks read over the wire).
 
-**Why deferred:** Confirmed by hand that `TestClient.stream()` hangs against this route's infinite async generator — the same underlying limitation as `/internal/agent/stream` above (long-lived generators don't drive cleanly through Starlette's `TestClient`). `tests/agent/api/test_notifications_endpoints.py` instead calls the route function directly and drives `response.body_iterator` manually (`__anext__()`, `aclose()`), which exercises the exact same code (queue creation, heartbeat timeout, event delivery, cleanup-on-close) without the transport layer.
+**Why deferred:** Confirmed by hand that `TestClient.stream()` hangs against this route's infinite async generator — long-lived generators don't drive cleanly through Starlette's `TestClient`. `tests/agent/api/test_notifications_endpoints.py` instead calls the route function directly and drives `response.body_iterator` manually (`__anext__()`, `aclose()`), which exercises the exact same code (queue creation, heartbeat timeout, event delivery, cleanup-on-close) without the transport layer. Unlike the `/agent/stream` case above, this one is a *terminating-but-slow-to-drive* generator rather than a broken one — `httpx.ASGITransport` (used for the `/agent/stream` fix) wasn't tried here since the heartbeat-loop shape is different; worth revisiting with the same approach.
 
-**Re-enable when:** Same trigger as the `/agent/stream` entry — once there's a clean pattern for testing long-lived SSE through `TestClient`, apply it here too.
+**Re-enable when:** Someone tries the `httpx.AsyncClient` + `ASGITransport` pattern from `test_streaming_endpoints.py` against this route specifically.

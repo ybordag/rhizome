@@ -7,9 +7,13 @@ from pathlib import Path
 
 
 def pytest_configure(config):
-    # Tests always use in-memory SQLite — clear DATABASE_URL before any module
-    # imports so graph.py's module-level checkpointer selection picks SQLite.
-    os.environ.pop("DATABASE_URL", None)
+    # Tests always use SQLite. Set (not pop) DATABASE_URL to db/database.py's
+    # own SQLite default — load_dotenv() only fills in keys absent from
+    # os.environ, so a popped key gets silently refilled from .env by the
+    # first module that calls load_dotenv() (e.g. agent.core.graph),
+    # regardless of import order. A present value stays put; popping it
+    # doesn't (#141 postmortem).
+    os.environ["DATABASE_URL"] = "sqlite:///rhizome.db"
 
 import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver

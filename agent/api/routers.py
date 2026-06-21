@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
@@ -134,8 +134,15 @@ def resume_agent(req: ResumeRequest):
     return AgentResponse(thread_id=req.thread_id, response=response_text, interaction=None)
 
 
+def get_streaming_agent(request: Request):
+    """Dependency indirection so tests can override this with a graph built
+    on a test-scoped async checkpointer (`app.dependency_overrides`) instead
+    of the real one built in agent/api/app.py's lifespan — see #141."""
+    return request.app.state.streaming_agent
+
+
 @agent_router.post("/agent/stream")
-async def stream_agent(req: AgentRequest):
+async def stream_agent(req: AgentRequest, streaming_agent=Depends(get_streaming_agent)):
     """
     Stream a LangGraph agent turn via SSE.
 
@@ -158,7 +165,7 @@ async def stream_agent(req: AgentRequest):
     }
 
     async def generate():
-        async for event in agent.astream_events(
+        async for event in streaming_agent.astream_events(
             {"messages": [HumanMessage(content=req.message)]},
             config=config,
             version="v2",
@@ -168,8 +175,11 @@ async def stream_agent(req: AgentRequest):
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
-        # After stream ends, check for a graph interrupt (interaction node)
-        state = agent.get_state(config)
+        # After stream ends, check for a graph interrupt (interaction node).
+        # Must use the async accessor — calling the sync .get_state() here
+        # would run on the same event loop driving this generator, which the
+        # async checkpointer classes explicitly reject (#141).
+        state = await streaming_agent.aget_state(config)
         if state.next:
             interrupts = [i for task in state.tasks for i in task.interrupts]
             if interrupts and isinstance(interrupts[0].value, dict):
@@ -181,7 +191,7 @@ async def stream_agent(req: AgentRequest):
 
 
 @agent_router.post("/agent/resume/stream")
-async def resume_agent_stream(req: ResumeRequest):
+async def resume_agent_stream(req: ResumeRequest, streaming_agent=Depends(get_streaming_agent)):
     """
     Resume a paused graph with SSE streaming.
     Same event format as /agent/stream.
@@ -189,7 +199,7 @@ async def resume_agent_stream(req: ResumeRequest):
     config = {"configurable": {"thread_id": req.thread_id, "user_id": req.user_id}}
 
     async def generate():
-        async for event in agent.astream_events(
+        async for event in streaming_agent.astream_events(
             Command(resume=req.resolution),
             config=config,
             version="v2",
@@ -199,7 +209,7 @@ async def resume_agent_stream(req: ResumeRequest):
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
-        state = agent.get_state(config)
+        state = await streaming_agent.aget_state(config)
         if state.next:
             interrupts = [i for task in state.tasks for i in task.interrupts]
             if interrupts and isinstance(interrupts[0].value, dict):
