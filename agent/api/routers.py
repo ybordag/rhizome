@@ -143,6 +143,19 @@ def get_streaming_agent(request: Request):
     return request.app.state.streaming_agent
 
 
+def _is_user_visible_llm_stream_event(event: dict) -> bool:
+    """Only expose tokens from the final assistant LLM node.
+
+    `astream_events()` also includes internal chat-model calls, such as the
+    triage summary model used while building context. Those are valid graph
+    internals but must not be streamed as user-facing assistant text (#142).
+    """
+    return (
+        event.get("event") == "on_chat_model_stream"
+        and (event.get("metadata") or {}).get("langgraph_node") == "llm_call"
+    )
+
+
 @agent_router.post("/agent/stream")
 async def stream_agent(req: AgentRequest, streaming_agent=Depends(get_streaming_agent)):
     """
@@ -172,7 +185,7 @@ async def stream_agent(req: AgentRequest, streaming_agent=Depends(get_streaming_
             config=config,
             version="v2",
         ):
-            if event["event"] == "on_chat_model_stream":
+            if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
@@ -206,7 +219,7 @@ async def resume_agent_stream(req: ResumeRequest, streaming_agent=Depends(get_st
             config=config,
             version="v2",
         ):
-            if event["event"] == "on_chat_model_stream":
+            if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"

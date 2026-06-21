@@ -382,6 +382,16 @@ main.py             — CLI entrypoint
     `test_stream_agent_emits_token_and_done_events`, using `GenericFakeChatModel`
     (`langchain_core.language_models.fake_chat_models`) — a real streaming-capable `Runnable` — and
     asserting the actual token content round-trips through the SSE response.
+  - Follow-up #142: `astream_events()` includes internal chat-model calls as well as the final
+    assistant call. The triage summary model runs inside `triage_reasoner`, and its streamed
+    chunks were being forwarded before the real `llm_call` response, making one chat stream look
+    like a duplicate reply. `agent/api/routers.py` now forwards only
+    `on_chat_model_stream` events whose metadata says `langgraph_node == "llm_call"`. Added
+    `test_stream_agent_filters_internal_triage_model_tokens`, which patches the triage summary
+    model and final assistant model with distinct `GenericFakeChatModel` responses and asserts
+    only the final assistant text reaches SSE. Also added a fast predicate test covering the
+    shared filter directly (`llm_call` allowed; `triage_reasoner`, `tool_node`, missing metadata,
+    and non-stream events rejected), which protects both stream endpoints from future drift.
   - The Postgres branch of `build_async_checkpointer()` had zero automated coverage — only the
     one-off live curl. Added `test_async_checkpointer_postgres_branch`, which runs against the
     local dev Postgres, skips cleanly if it's unreachable, and deletes its own checkpoint rows

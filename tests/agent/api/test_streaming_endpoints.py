@@ -37,9 +37,10 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 from agent.api.app import app
-from agent.api.routers import get_streaming_agent
+from agent.api.routers import get_streaming_agent, _is_user_visible_llm_stream_event
 from agent.core import graph as graph_module
 from agent.core import nodes
+from agent.domain import triage as triage_module
 from db.models import GardeningProject
 from tests.support.fakes import make_ai_message, make_tool_call_message
 
@@ -57,6 +58,35 @@ def _parse_sse_events(body: bytes) -> list[dict]:
         assert frame.startswith("data: "), f"unexpected SSE frame shape: {frame!r}"
         events.append(json.loads(frame[len("data: "):]))
     return events
+
+
+def test_user_visible_llm_stream_filter_only_allows_llm_call_tokens():
+    """The SSE router must not forward internal model streams.
+
+    Keep this predicate-level contract explicit: graph integration tests prove
+    the real triage leak is fixed, while this fast test guards future changes
+    to the shared filter used by both stream endpoints.
+    """
+    assert _is_user_visible_llm_stream_event({
+        "event": "on_chat_model_stream",
+        "metadata": {"langgraph_node": "llm_call"},
+    })
+    assert not _is_user_visible_llm_stream_event({
+        "event": "on_chat_model_stream",
+        "metadata": {"langgraph_node": "triage_reasoner"},
+    })
+    assert not _is_user_visible_llm_stream_event({
+        "event": "on_chat_model_stream",
+        "metadata": {"langgraph_node": "tool_node"},
+    })
+    assert not _is_user_visible_llm_stream_event({
+        "event": "on_chat_model_stream",
+        "metadata": {},
+    })
+    assert not _is_user_visible_llm_stream_event({
+        "event": "on_chat_model_end",
+        "metadata": {"langgraph_node": "llm_call"},
+    })
 
 
 @asynccontextmanager
@@ -134,6 +164,41 @@ def test_stream_agent_emits_token_and_done_events(
     token_events = [e for e in events if e["type"] == "token"]
     assert token_events, "expected at least one token event from the streaming-capable fake model"
     assert "".join(e["content"] for e in token_events) == "Hello from the stream."
+    assert events[-1] == {"type": "done"}
+
+
+@pytest.mark.graph
+def test_stream_agent_filters_internal_triage_model_tokens(
+    monkeypatch, tmp_path, seed_garden_profile, patched_sessionlocal,
+):
+    """Regression for #142.
+
+    A graph turn can include chat-model calls before the final assistant
+    response. Triage summary generation is one of those internal calls. The
+    SSE endpoint must only forward tokens from the user-facing `llm_call`
+    node; otherwise clients see internal context text as a duplicate or
+    confusing extra assistant reply.
+    """
+    triage_model = GenericFakeChatModel(messages=iter([AIMessage(content="TRIAGE SHOULD NOT STREAM")]))
+    final_model = GenericFakeChatModel(messages=iter([AIMessage(content="FINAL USER RESPONSE")]))
+    monkeypatch.setattr(triage_module, "triage_summary_model", triage_model)
+
+    async def run():
+        test_graph, aclose = await _build_sqlite_streaming_graph(monkeypatch, tmp_path, final_model)
+        async with _streaming_agent_override(test_graph):
+            try:
+                return await _post_sse("/internal/agent/stream", {
+                    "user_id": "1", "thread_id": "stream-thread-internal-filter", "message": "hi",
+                })
+            finally:
+                await aclose()
+
+    body = asyncio.run(run())
+    events = _parse_sse_events(body)
+    token_text = "".join(e["content"] for e in events if e["type"] == "token")
+
+    assert token_text == "FINAL USER RESPONSE"
+    assert "TRIAGE SHOULD NOT STREAM" not in token_text
     assert events[-1] == {"type": "done"}
 
 

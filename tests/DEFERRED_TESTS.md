@@ -117,9 +117,10 @@ Tests that are known gaps but consciously deferred. Each entry explains why it w
 ## ~~SSE streaming endpoints~~ — closed (#141, 2026-06-21)
 
 `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` are now covered by
-`tests/agent/api/test_streaming_endpoints.py` (5 tests: plain-turn, destructive-tool-call
-interrupt + resume, token-event forwarding specifically, the Postgres checkpointer branch, and the
-real `agent/api/app.py` lifespan end-to-end). The router was refactored exactly as this entry
+`tests/agent/api/test_streaming_endpoints.py` (7 tests: plain-turn, destructive-tool-call
+interrupt + resume, token-event forwarding specifically, #142 internal-model-token filtering,
+the shared user-visible-token predicate, the Postgres checkpointer branch, and the real
+`agent/api/app.py` lifespan end-to-end). The router was refactored exactly as this entry
 anticipated — `get_streaming_agent()` (`agent/api/routers.py`) is a FastAPI `Depends` indirection
 that production resolves from `request.app.state.streaming_agent` (built in `agent/api/app.py`'s
 lifespan) and tests override via `app.dependency_overrides`.
@@ -162,6 +163,12 @@ documented as "untested but presumably fine." See `CLAUDE.md`'s `#141` entry for
 stream generators). The non-streaming `/internal/agent`/`/internal/agent/resume` endpoints were
 *not* affected — they only ever call the sync `.invoke()`/`.get_state()` path, which the original
 sync checkpointer handles fine — confirmed via a live curl call before writing the fix, not assumed.
+
+Follow-up #142 found a separate stream filtering bug: `astream_events()` includes internal
+chat-model calls as well as the final assistant response, so the triage summary model's chunks
+could leak into the SSE response before `llm_call` tokens. The router now forwards only
+`on_chat_model_stream` events tagged with `metadata.langgraph_node == "llm_call"`, with both an
+end-to-end triage leak regression test and a fast predicate test guarding future drift.
 
 ### GET /internal/data/notifications/stream — full HTTP-level test
 
