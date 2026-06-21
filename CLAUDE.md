@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **721 tests** — unit + integration + graph + API
+- Total (excluding E2E): **724 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -268,7 +268,9 @@ main.py             — CLI entrypoint
   it: `refresh_weather_snapshot`'s "no profile/location" `ValueError` was previously a 200 with
   an error string baked into prose — now a 400; `approve_weather_task_changes` previously
   returned 200-with-embedded-error-text for both "not found" and "already approved" — now
-  404 and 400 respectively.
+  404 and 400 respectively. Post-merge coverage audit found zero router-level cross-user tests
+  for `weather/latest`, `weather/tasks/impacted`, and the changeset approve endpoint despite the
+  domain layer already being correctly scoped — added 3 tests in `test_user_isolation_api.py`.
 - Still open: `#134` (activity feed), `#135` (incidents/treatment plans — note `docs/architecture/api-reference.md`'s
   `GET /incidents/{id}` and `GET /incidents/{id}/treatment` entries already claim
   `IncidentDetailView`/`TreatmentPlanView` responses; that's aspirational/wrong until #135
