@@ -468,47 +468,67 @@ Resolve a pending interaction. **Body:** `{ action: string, notes?: string }` �
 **Response:** `IncidentView[]` — structured JSON array, scoped to the authenticated user's projects.
 
 ### `POST /api/v1/incidents`
-Report a new incident.
-**Body:** `{ incident_type, summary, project_id?, severity?, subjects?: [...], detected_at? }`
+Report a new incident. `project_id` is not a body field — it's inferred from `subjects` (each
+subject's project, if any) and otherwise left null.
+**Body:** `{ incident_type, summary, severity?, subjects?: [...], notes? }`
+**Response:** `IncidentView`. Returns 400 for an invalid `incident_type`.
 
 ### `GET /api/v1/incidents/{id}`
-Incident detail including subjects and treatment plan status.
-**Response:** `IncidentDetailView`
+Incident detail including subjects and the most recent treatment plan (any status).
+**Response:** `IncidentDetailView` — `IncidentView` fields plus `subjects: IncidentSubjectView[]`,
+`treatment_plan: TreatmentPlanView | null`.
 
 ### `PATCH /api/v1/incidents/{id}`
 Partial update. **Body:** `{ summary?, severity?, notes?, incident_type? }`
+**Response:** `IncidentView`
 
 ### `DELETE /api/v1/incidents/{id}`
 Hard delete. Returns 400 if an approved treatment plan exists.
 
+### `PATCH /api/v1/incidents/{id}/resolve`
+Mark an incident resolved. **Body:** `{ notes?: string }` (optional, appended to the incident's
+existing notes). **Response:** `IncidentView` with `status: "resolved"`.
+
 ### `GET /api/v1/incidents/{id}/activity`
 Incident history. **Query params:** `limit`
+**Response:** `ActivityEventView[]` — fixed from string-wrapped tool responses in #135 (this endpoint
+was left out of #140's activity-endpoint sweep).
 
 ---
 
 ## Treatment Plans
 
 ### `GET /api/v1/incidents/{id}/treatment`
-Treatment plan for an incident.
+The most recent treatment plan for an incident (any status), 404 if none exists.
 **Response:** `TreatmentPlanView`
 
-### `POST /api/v1/incidents/{id}/treatment`
-AI trigger — draft a treatment plan.
+Note: there is no `POST /api/v1/incidents/{id}/treatment` AI-trigger route. The agent drafts
+treatment plans via the `draft_treatment_plan` chat tool
+(`agent/tools/operations/incidents.py`), not a dedicated REST endpoint — only the user-authored
+path below is exposed over HTTP.
 
 ### `POST /api/v1/incidents/{id}/treatment/manual`
 Create a user-authored treatment plan (no LLM call).
-**Body:** `{ approach_summary, recommended_steps: [{title, task_type, estimated_minutes, days_from_approval}][], follow_up_strategy? }`  
+**Body:** `{ approach_summary, recommended_steps: [{title, task_type, estimated_minutes, days_from_approval}][], follow_up_strategy? }`
+`follow_up_strategy` is a plain string in the request but stored (and returned) as
+`[{"title": follow_up_strategy}]` — matching the dict-list shape AI-drafted plans always use
+(#135; previously stored as a bare string, which crashed the `get_treatment_plan` tool's prose
+renderer).
 Returns 409 if a draft plan already exists.
+**Response:** `TreatmentPlanView`
 
 ### `PATCH /api/v1/treatment-plans/{id}`
 Edit a draft treatment plan. Returns 400 if the plan is already approved.
 **Body:** `{ approach_summary?, recommended_steps?, follow_up_strategy? }`
+**Response:** `TreatmentPlanView`
 
 ### `DELETE /api/v1/treatment-plans/{id}`
 Delete a draft plan. Returns 400 if approved.
 
 ### `PATCH /api/v1/treatment-plans/{id}/approve`
-Approve a treatment plan and auto-generate tasks.
+Approve a treatment plan and auto-generate tasks. Returns 404 if not found, 400 if not in `draft`
+status or the incident lacks an active project revision.
+**Response:** `TreatmentPlanView`
 
 ---
 

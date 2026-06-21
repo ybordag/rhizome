@@ -405,6 +405,47 @@ class WeatherTaskChangeSetView(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Incidents & treatment plans
+# ---------------------------------------------------------------------------
+
+class IncidentSubjectView(BaseModel):
+    subject_type: str
+    subject_id: str
+    role: Optional[str] = None
+
+
+class TreatmentPlanView(BaseModel):
+    id: str
+    incident_id: str
+    status: str
+    approach_summary: str
+    recommended_steps: list[dict[str, Any]] = []
+    follow_up_strategy: list[dict[str, Any]] = []
+    monitoring_notes: Optional[str] = None
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+
+
+class IncidentView(BaseModel):
+    id: str
+    incident_type: str
+    status: str
+    severity: Optional[str] = None
+    summary: str
+    notes: Optional[str] = None
+    project_id: Optional[str] = None
+    reported_by: str
+    detected_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class IncidentDetailView(IncidentView):
+    subjects: list[IncidentSubjectView] = []
+    treatment_plan: Optional[TreatmentPlanView] = None
+
+
+
+# ---------------------------------------------------------------------------
 # Activity
 # ---------------------------------------------------------------------------
 

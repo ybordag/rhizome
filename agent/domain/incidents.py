@@ -430,3 +430,52 @@ def resolve_incident(session, incident_id: str, notes: Optional[str] = None) -> 
         subjects=[{"subject_type": "incident_report", "subject_id": incident.id, "role": "primary"}],
     )
     return incident
+
+
+def incident_to_view_data(incident: IncidentReport) -> dict[str, Any]:
+    """Structured-JSON shape for `IncidentView` (#135)."""
+    return {
+        "id": incident.id,
+        "incident_type": incident.incident_type,
+        "status": incident.status,
+        "severity": incident.severity,
+        "summary": incident.summary,
+        "notes": incident.notes,
+        "project_id": incident.project_id,
+        "reported_by": incident.reported_by,
+        "detected_at": incident.detected_at,
+        "created_at": incident.created_at,
+    }
+
+
+def treatment_plan_to_view_data(plan: TreatmentPlan) -> dict[str, Any]:
+    """Structured-JSON shape for `TreatmentPlanView` (#135)."""
+    return {
+        "id": plan.id,
+        "incident_id": plan.incident_id,
+        "status": plan.status,
+        "approach_summary": plan.approach_summary,
+        "recommended_steps": plan.recommended_steps or [],
+        "follow_up_strategy": plan.follow_up_strategy or [],
+        "monitoring_notes": plan.monitoring_notes,
+        "created_at": plan.created_at,
+        "approved_at": plan.approved_at,
+    }
+
+
+def incident_detail_to_view_data(session, incident: IncidentReport) -> dict[str, Any]:
+    """Structured-JSON shape for `IncidentDetailView` — adds affected subjects
+    and the most recent treatment plan on top of `incident_to_view_data` (#135)."""
+    subjects = session.query(IncidentSubject).filter(IncidentSubject.incident_id == incident.id).all()
+    plan = (
+        session.query(TreatmentPlan)
+        .filter(TreatmentPlan.incident_id == incident.id)
+        .order_by(TreatmentPlan.created_at.desc())
+        .first()
+    )
+    data = incident_to_view_data(incident)
+    data["subjects"] = [
+        {"subject_type": s.subject_type, "subject_id": s.subject_id, "role": s.role} for s in subjects
+    ]
+    data["treatment_plan"] = treatment_plan_to_view_data(plan) if plan else None
+    return data

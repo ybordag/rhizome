@@ -7,7 +7,7 @@
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 
-/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (783 tests, excl. E2E)
+/opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest               # full suite (806 tests, excl. E2E)
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m unit        # fast unit tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m integration # database-backed tests
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest -m graph       # graph and orchestration tests
@@ -18,7 +18,7 @@ Tests mock the model and run without any key. Live tests (`-m live`) auto-skip i
 Use the `RHIZOME_ENV` conda environment — never install into the base environment.
 
 ## Test counts (current)
-- Total (excluding E2E): **783 tests** — unit + integration + graph + API
+- Total (excluding E2E): **806 tests** — unit + integration + graph + API
 - E2E tests (require live k3s cluster): `tests/e2e/test_full_stack.py`
 
 ## Project layout
@@ -291,11 +291,8 @@ main.py             — CLI entrypoint
   50 tests in `tests/agent/api/test_issue_140_structured_mutations.py` covering structured shape,
   400/404 paths (including the "no garden profile" branch, distinct from "entity not found"),
   and cross-user isolation for all 16 endpoints.
-- Still open: `#134` (activity feed), `#135` (incidents/treatment plans — note `docs/architecture/api-reference.md`'s
-  `GET /incidents/{id}` and `GET /incidents/{id}/treatment` entries already claim
-  `IncidentDetailView`/`TreatmentPlanView` responses; that's aspirational/wrong until #135
-  actually ships, don't trust it at face value), `#137` (projects), `#139` (ThreadView, lower
-  priority/no functional gap).
+- Still open: `#134` (activity feed), `#137` (projects), `#139` (ThreadView, lower priority/no
+  functional gap).
 
 **SSE streaming fix complete (#141, 2026-06-21):**
 - `POST /internal/agent/stream` and `POST /internal/agent/resume/stream` were completely broken
@@ -422,6 +419,49 @@ main.py             — CLI entrypoint
   this `.env`-precedence quirk has bitten — worth treating "reads `DATABASE_URL` to mean *real
   Postgres*" as a smell anywhere outside `db/database.py`/`agent/core/graph.py` themselves; reach
   for `dotenv_values(".env")` directly instead of `os.environ.get(...)` after `load_dotenv()`.
+
+**Incidents/treatment plans structured JSON complete (#135, 2026-06-21):**
+- New views (`agent/api/views.py`): `IncidentView`, `IncidentDetailView` (adds `subjects:
+  IncidentSubjectView[]` and `treatment_plan: TreatmentPlanView | null`), `TreatmentPlanView`. New
+  serializers (`agent/domain/incidents.py`): `incident_to_view_data()`,
+  `treatment_plan_to_view_data()`, `incident_detail_to_view_data()`.
+- All incident/treatment-plan endpoints in `agent/api/routers.py` now return these views instead of
+  ad hoc dicts or `{"result": "<prose>"}`: `GET`/`POST /incidents`, `GET`/`PATCH /incidents/{id}`,
+  `PATCH /incidents/{id}/resolve`, `GET /incidents/{id}/treatment`, `POST
+  /incidents/{id}/treatment/manual`, `PATCH /treatment-plans/{id}`, `PATCH
+  /treatment-plans/{id}/approve`, `GET /incidents/{id}/activity` (this last one wasn't part of
+  #140's activity-endpoint sweep, since #140 covered tasks/plants/beds/containers/batches/projects
+  only — `ActivityEventView` reused from there).
+- Most of these endpoints now bypass their LangChain tool entirely and call the `agent/domain/
+  incidents.py` functions (`create_incident_report`, `resolve_incident`, `approve_treatment_plan`)
+  directly, classifying their `ValueError`s into 404/400 by message content — same pattern as
+  `update_incident`/`update_treatment_plan` already used. The tools themselves
+  (`agent/tools/operations/incidents.py`) are untouched; they're still what the LLM calls in chat.
+- Found and fixed two live bugs in the process:
+  - `GET /incidents/{id}/treatment` called the `get_treatment_plan` tool with
+    `{"incident_id": incident_id}`, but that tool's parameter is `treatment_plan_id` — every call
+    raised a pydantic `ValidationError` before the tool body ran, 100% of the time, with zero test
+    coverage (same shape of bug as #136's `resolve_interaction` mismatch). Confirmed by reverting
+    the fix and watching the new test suite fail with that exact error. Fixed by querying the
+    incident's most recent treatment plan directly instead of going through the tool.
+  - `POST /incidents/{id}/treatment/manual` stored `follow_up_strategy` as `[body.follow_up_strategy]`
+    — a list containing a bare string — while AI-drafted plans (`_treatment_steps`) always store a
+    list of `{"title": ...}` dicts. The `get_treatment_plan` tool's prose renderer does
+    `follow_up['title']`, which would `TypeError` on a plain string the first time anyone called it
+    on a manually-created plan. `TreatmentPlanView.follow_up_strategy: list[dict]` makes the
+    mismatch a 422 instead of a silent landmine. Fixed by wrapping the string in `{"title": ...}` to
+    match the canonical shape.
+  - `PATCH /incidents/{id}/resolve` never exposed `notes` at all, even though the underlying tool
+    and domain function both support it — added `ResolveIncidentRequest` (`agent/api/models.py`)
+    so callers can actually use the capability that was always there underneath.
+- `docs/architecture/api-reference.md` also had two unrelated inaccuracies in this section, fixed
+  while in there: `POST /api/v1/incidents/{id}/treatment` was documented as an "AI trigger" route
+  that doesn't exist — drafting happens via the `draft_treatment_plan` chat tool only, no REST
+  endpoint for it; and `PATCH /api/v1/incidents/{id}/resolve` had no entry at all.
+- 23 tests in `tests/agent/api/test_issue_135_incident_structured_views.py`, covering both new
+  views' shapes, both live-bug regressions (confirmed they fail against the pre-fix code, not just
+  pass against the fix), error paths (404/400/409), and cross-user isolation. Full suite: 805
+  passed, 1 pre-existing skip (`ANTHROPIC_API_KEY` not set), 21 e2e deselected.
 
 **Next in Rhizome:**
 - Garden spatial layout model and map endpoints (`#118`)

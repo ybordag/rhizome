@@ -237,6 +237,10 @@ class UpdateIncidentRequest(BaseModel):
     incident_type: Optional[str] = None
 
 
+class ResolveIncidentRequest(BaseModel):
+    notes: Optional[str] = None
+
+
 class CreateManualTreatmentPlanRequest(BaseModel):
     approach_summary: str
     recommended_steps: list = []

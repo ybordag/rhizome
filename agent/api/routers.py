@@ -31,6 +31,7 @@ from agent.api.models import (
     DeferTaskRequest,
     RecordCareRequest,
     ReportIncidentRequest,
+    ResolveIncidentRequest,
     ResumeRequest,
     ResolveInteractionRequest,
     TaskActionRequest,
@@ -2138,10 +2139,9 @@ def list_incidents(
     subject_id: str = None,
 ):
     _set_user(user_id)
-    from agent.tools.operations.incidents import list_incidents as _list
-    # Pass base params through the tool, apply additional filters in Python
-    result_str = _list.invoke({"project_id": project_id, "status": status})
-    # The tool returns a string; for the new filters we query directly
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import incident_to_view_data
+
     session = SessionLocal()
     try:
         query = session.query(IncidentReport).filter(IncidentReport.user_id == user_id)
@@ -2164,20 +2164,7 @@ def list_incidents(
                 IncidentSubject.subject_id == subject_id,
             )
         incidents = query.order_by(IncidentReport.created_at.desc()).all()
-        return [
-            {
-                "id": inc.id,
-                "incident_type": inc.incident_type,
-                "status": inc.status,
-                "severity": inc.severity,
-                "summary": inc.summary,
-                "notes": inc.notes,
-                "project_id": inc.project_id,
-                "detected_at": inc.detected_at,
-                "created_at": inc.created_at,
-            }
-            for inc in incidents
-        ]
+        return [IncidentView(**incident_to_view_data(inc)) for inc in incidents]
     finally:
         session.close()
 
@@ -2185,20 +2172,52 @@ def list_incidents(
 @data_router.post("/incidents")
 def report_incident(user_id: str, body: ReportIncidentRequest):
     _set_user(user_id)
-    from agent.tools.operations.incidents import report_incident as _report
-    return {"result": _report.invoke(body.model_dump(exclude_none=True))}
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import create_incident_report, incident_to_view_data
+
+    session = SessionLocal()
+    try:
+        incident = create_incident_report(
+            session,
+            project_id=None,
+            incident_type=body.incident_type,
+            severity=body.severity,
+            summary=body.summary,
+            notes=body.notes,
+            subjects=body.subjects,
+        )
+        session.commit()
+        session.refresh(incident)
+        return IncidentView(**incident_to_view_data(incident))
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/incidents/{incident_id}")
 def get_incident(incident_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.incidents import get_incident as _get
-    return _result_or_404(_get.invoke({"incident_id": incident_id}))
+    from agent.api.views import IncidentDetailView
+    from agent.domain.incidents import incident_detail_to_view_data
+
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return IncidentDetailView(**incident_detail_to_view_data(session, incident))
+    finally:
+        session.close()
 
 
 @data_router.patch("/incidents/{incident_id}")
 def update_incident(incident_id: str, user_id: str, body: UpdateIncidentRequest):
     _set_user(user_id)
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import incident_to_view_data
+
     session = SessionLocal()
     try:
         incident = _get_incident_for_user(session, incident_id, user_id)
@@ -2213,16 +2232,7 @@ def update_incident(incident_id: str, user_id: str, body: UpdateIncidentRequest)
         if body.incident_type is not None:
             incident.incident_type = body.incident_type
         session.commit()
-        return {
-            "id": incident.id,
-            "incident_type": incident.incident_type,
-            "status": incident.status,
-            "severity": incident.severity,
-            "summary": incident.summary,
-            "notes": incident.notes,
-            "project_id": incident.project_id,
-            "created_at": incident.created_at,
-        }
+        return IncidentView(**incident_to_view_data(incident))
     finally:
         session.close()
 
@@ -2253,22 +2263,64 @@ def delete_incident(incident_id: str, user_id: str):
 
 
 @data_router.patch("/incidents/{incident_id}/resolve")
-def resolve_incident(incident_id: str, user_id: str):
+def resolve_incident(incident_id: str, user_id: str, body: ResolveIncidentRequest = None):
     _set_user(user_id)
-    from agent.tools.operations.incidents import resolve_incident as _resolve
-    return _result_or_404(_resolve.invoke({"incident_id": incident_id}))
+    from agent.api.views import IncidentView
+    from agent.domain.incidents import incident_to_view_data
+    from agent.domain.incidents import resolve_incident as _resolve_incident
+
+    session = SessionLocal()
+    try:
+        incident = _resolve_incident(session, incident_id, notes=body.notes if body else None)
+        session.commit()
+        session.refresh(incident)
+        return IncidentView(**incident_to_view_data(incident))
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/incidents/{incident_id}/treatment")
 def get_treatment_plan(incident_id: str, user_id: str):
+    """Latest treatment plan for an incident.
+
+    Bypasses the `get_treatment_plan` tool entirely — that tool takes a
+    `treatment_plan_id`, not an `incident_id`, so calling it from this route
+    (as the previous implementation did) raised a pydantic ValidationError on
+    every request (#135, same shape of bug as #136's `resolve_interaction`
+    mismatch). Querying directly here sidesteps the parameter mismatch rather
+    than papering over it.
+    """
     _set_user(user_id)
-    from agent.tools.operations.incidents import get_treatment_plan as _get
-    return _result_or_404(_get.invoke({"incident_id": incident_id}))
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import treatment_plan_to_view_data
+
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        plan = (
+            session.query(TreatmentPlan)
+            .filter(TreatmentPlan.incident_id == incident_id)
+            .order_by(TreatmentPlan.created_at.desc())
+            .first()
+        )
+        if not plan:
+            raise HTTPException(status_code=404, detail="No treatment plan found for this incident")
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
+    finally:
+        session.close()
 
 
 @data_router.post("/incidents/{incident_id}/treatment/manual")
 def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateManualTreatmentPlanRequest):
     _set_user(user_id)
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import treatment_plan_to_view_data
+
     session = SessionLocal()
     try:
         incident = _get_incident_for_user(session, incident_id, user_id)
@@ -2285,20 +2337,17 @@ def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateMan
             status="draft",
             approach_summary=body.approach_summary,
             recommended_steps=body.recommended_steps,
-            follow_up_strategy=[body.follow_up_strategy] if body.follow_up_strategy else [],
+            # AI-drafted plans always store follow_up_strategy as a list of
+            # {"title": ...} dicts (agent/domain/incidents.py's
+            # _treatment_steps) — wrap the manual string the same way instead
+            # of as a bare string, which crashed get_treatment_plan's prose
+            # renderer (`follow_up['title']` on a str) (#135).
+            follow_up_strategy=[{"title": body.follow_up_strategy}] if body.follow_up_strategy else [],
         )
         session.add(plan)
         session.commit()
         session.refresh(plan)
-        return {
-            "id": plan.id,
-            "incident_id": plan.incident_id,
-            "status": plan.status,
-            "approach_summary": plan.approach_summary,
-            "recommended_steps": plan.recommended_steps,
-            "follow_up_strategy": plan.follow_up_strategy,
-            "created_at": plan.created_at,
-        }
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
     finally:
         session.close()
 
@@ -2306,6 +2355,9 @@ def create_manual_treatment_plan(incident_id: str, user_id: str, body: CreateMan
 @data_router.patch("/treatment-plans/{plan_id}")
 def update_treatment_plan(plan_id: str, user_id: str, body: UpdateTreatmentPlanRequest):
     _set_user(user_id)
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import treatment_plan_to_view_data
+
     session = SessionLocal()
     try:
         plan = session.query(TreatmentPlan).filter(TreatmentPlan.id == plan_id).first()
@@ -2321,18 +2373,14 @@ def update_treatment_plan(plan_id: str, user_id: str, body: UpdateTreatmentPlanR
         if body.recommended_steps is not None:
             plan.recommended_steps = body.recommended_steps
         if body.follow_up_strategy is not None:
-            plan.follow_up_strategy = [body.follow_up_strategy] if isinstance(body.follow_up_strategy, str) else body.follow_up_strategy
+            plan.follow_up_strategy = (
+                [{"title": body.follow_up_strategy}]
+                if isinstance(body.follow_up_strategy, str)
+                else body.follow_up_strategy
+            )
         session.commit()
         session.refresh(plan)
-        return {
-            "id": plan.id,
-            "incident_id": plan.incident_id,
-            "status": plan.status,
-            "approach_summary": plan.approach_summary,
-            "recommended_steps": plan.recommended_steps,
-            "follow_up_strategy": plan.follow_up_strategy,
-            "created_at": plan.created_at,
-        }
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
     finally:
         session.close()
 
@@ -2360,15 +2408,39 @@ def delete_treatment_plan(plan_id: str, user_id: str):
 @data_router.patch("/treatment-plans/{plan_id}/approve")
 def approve_treatment_plan(plan_id: str, user_id: str):
     _set_user(user_id)
-    from agent.tools.operations.incidents import approve_treatment_plan as _approve
-    return _result_or_404(_approve.invoke({"treatment_plan_id": plan_id}))
+    from agent.api.views import TreatmentPlanView
+    from agent.domain.incidents import approve_treatment_plan as _approve_treatment_plan
+    from agent.domain.incidents import treatment_plan_to_view_data
+
+    session = SessionLocal()
+    try:
+        plan = _approve_treatment_plan(session, plan_id)
+        session.commit()
+        session.refresh(plan)
+        return TreatmentPlanView(**treatment_plan_to_view_data(plan))
+    except ValueError as e:
+        session.rollback()
+        status = 404 if "no treatment plan found" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    finally:
+        session.close()
 
 
 @data_router.get("/incidents/{incident_id}/activity")
 def get_incident_activity(incident_id: str, user_id: str, limit: int = 20):
     _set_user(user_id)
-    from agent.tools.operations.activity import get_incident_activity as _get
-    return _result_or_404(_get.invoke({"incident_id": incident_id, "limit": limit}))
+    from agent.api.views import ActivityEventView
+    from agent.domain.activity_log import activity_events_to_view_data, get_activity_for_subject
+
+    session = SessionLocal()
+    try:
+        incident = _get_incident_for_user(session, incident_id, user_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        events = get_activity_for_subject(session, subject_type="incident_report", subject_id=incident_id, limit=limit)
+        return [ActivityEventView(**data) for data in activity_events_to_view_data(session, events)]
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
