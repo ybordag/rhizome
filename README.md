@@ -120,6 +120,8 @@ python main.py
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest
 ```
 
+Common local workflows are also available through `make`. Run `make help` to see setup, API server, migration, test, OpenAPI, and background monitor targets.
+
 See [docs/getting-started/setup.md](docs/getting-started/setup.md) for full setup instructions.
 
 ---

@@ -154,6 +154,30 @@ Non-live tests do **not** require `GOOGLE_API_KEY` — the model is mocked outsi
 
 ---
 
+## Makefile shortcuts
+
+Rhizome includes a `Makefile` for common local workflows. Run:
+
+```bash
+make help
+```
+
+The Makefile wraps the documented setup, runtime, migration, test, OpenAPI, and background monitor commands. It defaults to `/opt/miniconda3/envs/RHIZOME_ENV/bin/python`; override with `PYTHON=/path/to/python` when using a different environment.
+
+Useful examples:
+
+```bash
+make setup
+make api
+make test
+make test-file FILE=tests/agent/api/test_internal_api.py
+make swagger
+```
+
+`make swagger` exports the generated FastAPI OpenAPI schema to `openapi.json`. For the interactive Swagger UI, start the API server with `make api`, then run `make swagger-ui` or open `http://localhost:8001/docs`.
+
+---
+
 ## Project layout reference
 
 ```
