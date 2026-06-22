@@ -1,11 +1,14 @@
 """Tests for thread management endpoints."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain.messages import AIMessage, HumanMessage
 
 from agent.api.app import app
+from agent.core import graph as graph_module
 from db.models import Thread
 from tests.support.factories import make_profile, make_project
 
@@ -669,6 +672,33 @@ def test_get_thread_messages_empty_thread(patched_sessionlocal, db_session):
     data = resp.json()
     assert data["thread_id"] == "silent-moss-vale"
     assert data["messages"] == []
+
+
+@pytest.mark.integration
+def test_get_thread_messages_normalizes_provider_content_blocks(monkeypatch):
+    """Refresh history should render assistant text, not provider metadata reprs."""
+
+    class FakeAgent:
+        def get_state(self, config):
+            return SimpleNamespace(values={
+                "messages": [
+                    HumanMessage(content="hello world"),
+                    AIMessage(content=[
+                        {"type": "text", "text": "I can", "extras": {"signature": "opaque"}},
+                        "'t show provider metadata.",
+                    ]),
+                ],
+            })
+
+    monkeypatch.setattr(graph_module, "agent", FakeAgent())
+
+    resp = client.get("/internal/data/threads/content-block-history/messages?user_id=1")
+
+    assert resp.status_code == 200
+    assert resp.json()["messages"] == [
+        {"role": "user", "content": "hello world", "type": "human"},
+        {"role": "assistant", "content": "I can't show provider metadata.", "type": "ai"},
+    ]
 
 
 # ---------------------------------------------------------------------------

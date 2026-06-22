@@ -105,14 +105,7 @@ def run_agent(req: AgentRequest):
         if hasattr(m, "type") and m.type == "ai"
     ]
     if ai_messages:
-        content = ai_messages[-1].content
-        if isinstance(content, list):
-            response_text = " ".join(
-                b.get("text", "") for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-        else:
-            response_text = content if isinstance(content, str) else str(content)
+        response_text = _message_content_to_text(ai_messages[-1].content)
     else:
         response_text = ""
 
@@ -142,6 +135,33 @@ def get_streaming_agent(request: Request):
     on a test-scoped async checkpointer (`app.dependency_overrides`) instead
     of the real one built in agent/api/app.py's lifespan — see #141."""
     return request.app.state.streaming_agent
+
+
+def _message_content_to_text(content) -> str:
+    """Normalize LangChain message content into user-visible text.
+
+    Some providers emit content blocks such as
+    [{"type": "text", "text": "Hello"}, " world"] rather than a single
+    string. The UI should see only the text, not provider metadata/signatures.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    if isinstance(content, dict):
+        text = content.get("text")
+        return text if isinstance(text, str) else ""
+    return str(content)
 
 
 def _is_user_visible_llm_stream_event(event: dict) -> bool:
@@ -188,8 +208,9 @@ async def stream_agent(req: AgentRequest, streaming_agent=Depends(get_streaming_
         ):
             if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
-                if chunk.content:
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+                text = _message_content_to_text(chunk.content)
+                if text:
+                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
 
         # After stream ends, check for a graph interrupt (interaction node).
         # Must use the async accessor — calling the sync .get_state() here
@@ -222,8 +243,9 @@ async def resume_agent_stream(req: ResumeRequest, streaming_agent=Depends(get_st
         ):
             if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
-                if chunk.content:
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+                text = _message_content_to_text(chunk.content)
+                if text:
+                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
 
         state = await streaming_agent.aget_state(config)
         if state.next:
@@ -2938,7 +2960,7 @@ def get_thread_messages(thread_id: str, user_id: str):
     for msg in state.values.get("messages", []):
         if not hasattr(msg, "type"):
             continue
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        content = _message_content_to_text(msg.content)
         messages.append({
             "role": "user" if msg.type == "human" else "assistant",
             "content": content,

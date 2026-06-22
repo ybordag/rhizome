@@ -37,7 +37,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 from agent.api.app import app
-from agent.api.routers import get_streaming_agent, _is_user_visible_llm_stream_event
+from agent.api.routers import get_streaming_agent, _is_user_visible_llm_stream_event, _message_content_to_text
 from agent.core import graph as graph_module
 from agent.core import nodes
 from agent.domain import triage as triage_module
@@ -58,6 +58,16 @@ def _parse_sse_events(body: bytes) -> list[dict]:
         assert frame.startswith("data: "), f"unexpected SSE frame shape: {frame!r}"
         events.append(json.loads(frame[len("data: "):]))
     return events
+
+
+@pytest.mark.unit
+def test_message_content_to_text_concatenates_provider_content_blocks():
+    content = [
+        {"type": "text", "text": "I can", "extras": {"signature": "opaque"}},
+        "'t show provider metadata.",
+    ]
+
+    assert _message_content_to_text(content) == "I can't show provider metadata."
 
 
 def test_user_visible_llm_stream_filter_only_allows_llm_call_tokens():
