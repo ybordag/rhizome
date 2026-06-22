@@ -23,7 +23,6 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'Run:'
 	@printf '%s\n' '  make rhizome ARGS="..." Start the Rhizome CLI, passing optional args'
-	@printf '%s\n' '  make cli                Alias for make rhizome'
 	@printf '%s\n' '  make api                Start the internal FastAPI server'
 	@printf '%s\n' '  make api-prod           Start the internal API without reload'
 	@printf '%s\n' '  make health             Check the internal API health endpoint'
@@ -90,9 +89,6 @@ seed:
 .PHONY: reset-sqlite
 reset-sqlite:
 	rm -f rhizome.db rhizome_checkpoints.db
-
-.PHONY: cli
-cli: rhizome
 
 .PHONY: rhizome
 rhizome:
