@@ -114,7 +114,7 @@ cp .env.example .env
 # alembic upgrade head
 
 # Run the CLI
-python main.py
+make rhizome
 
 # Run the test suite
 /opt/miniconda3/envs/RHIZOME_ENV/bin/python -m pytest

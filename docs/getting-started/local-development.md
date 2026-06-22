@@ -42,7 +42,7 @@ Leave `DATABASE_URL` unset for SQLite. Rhizome will create:
 Run the CLI:
 
 ```bash
-python main.py
+make rhizome
 ```
 
 Run the internal API:

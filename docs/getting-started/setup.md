@@ -107,7 +107,7 @@ The seed script creates a sample garden profile, a few beds and containers, and 
 ## Running the CLI
 
 ```bash
-python main.py
+make rhizome
 ```
 
 The CLI starts an interactive conversation. On first run (empty DB), the agent will introduce itself and ask about your garden. On subsequent runs, it loads the previous session state and current garden context.

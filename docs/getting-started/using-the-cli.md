@@ -7,7 +7,7 @@ The CLI is a simulation surface for the full app experience. Every feature — p
 ## Starting a session
 
 ```bash
-python main.py
+make rhizome
 ```
 
 On startup, the agent:
