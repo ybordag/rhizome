@@ -2958,13 +2958,16 @@ def get_thread_messages(thread_id: str, user_id: str):
     state = agent.get_state(config)
     messages = []
     for msg in state.values.get("messages", []):
-        if not hasattr(msg, "type"):
+        msg_type = getattr(msg, "type", None)
+        if msg_type not in {"human", "ai"}:
             continue
         content = _message_content_to_text(msg.content)
+        if not content.strip():
+            continue
         messages.append({
-            "role": "user" if msg.type == "human" else "assistant",
+            "role": "user" if msg_type == "human" else "assistant",
             "content": content,
-            "type": msg.type,
+            "type": msg_type,
         })
     return {"thread_id": thread_id, "messages": messages}
 

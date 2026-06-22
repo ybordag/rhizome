@@ -683,6 +683,8 @@ def test_get_thread_messages_normalizes_provider_content_blocks(monkeypatch):
             return SimpleNamespace(values={
                 "messages": [
                     HumanMessage(content="hello world"),
+                    SimpleNamespace(type="ai", content=[]),
+                    SimpleNamespace(type="tool", content="Error: no garden profile found."),
                     AIMessage(content=[
                         {"type": "text", "text": "I can", "extras": {"signature": "opaque"}},
                         "'t show provider metadata.",
