@@ -15,7 +15,7 @@ from unittest.mock import patch
 from agent.api.app import app
 from db.models import GardeningProject, Thread
 from tests.support.factories import (
-    make_bed, make_container, make_incident_report, make_plant, make_project,
+    make_batch, make_bed, make_container, make_incident_report, make_plant, make_project,
     make_project_brief, make_project_proposal, make_project_revision,
     make_task, make_task_generation_run,
 )
@@ -368,6 +368,29 @@ def test_add_container_owned_by_other_user_returns_400(patched_sessionlocal, db_
 
 
 @pytest.mark.integration
+def test_add_batch_to_context(patched_sessionlocal, db_session, seed_garden_profile):
+    batch = make_batch(db_session, seed_garden_profile, name="Cosmos Spring 2026")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "batch", "subject_id": batch.id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pinned_context"][0]["subject_type"] == "batch"
+
+
+@pytest.mark.integration
+def test_add_batch_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    batch = make_batch(db_session, seed_garden_profile, name="Other Batch", user_id="other-user")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "batch", "subject_id": batch.id},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
 def test_add_task_to_context(patched_sessionlocal, db_session, seed_garden_profile):
     task = _make_task_via_chain(db_session, seed_garden_profile, title="Prune roses")
     _make_thread(db_session)
@@ -560,6 +583,26 @@ def test_session_context_intake_injects_container_text(patched_sessionlocal, db_
     text = result.get("pinned_context_text") or ""
     assert "container" in text
     assert "Big Growbag" in text
+
+
+@pytest.mark.integration
+def test_session_context_intake_injects_batch_text(patched_sessionlocal, db_session, seed_garden_profile):
+    batch = make_batch(db_session, seed_garden_profile, name="Cosmos Spring 2026", plant_name="Cosmos")
+    _make_thread(db_session, thread_id="thread-batch", pinned=[{"subject_type": "batch", "subject_id": batch.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-batch"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "batch" in text
+    assert "Cosmos Spring 2026" in text
 
 
 @pytest.mark.integration

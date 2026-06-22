@@ -125,7 +125,7 @@ def _message_text(message) -> str:
 def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
     if not pinned:
         return ""
-    from db.models import Bed, Container, GardeningProject, IncidentReport, Plant, Task
+    from db.models import Bed, Container, GardeningProject, IncidentReport, Plant, PlantBatch, Task
     lines = []
     for item in pinned:
         stype = item.get("subject_type", "")
@@ -136,6 +136,11 @@ def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
                 if obj:
                     name = obj.name + (f" ({obj.variety})" if obj.variety else "")
                     lines.append(f"- plant: {name} · status: {obj.status or 'unknown'}")
+            elif stype == "batch":
+                obj = session.query(PlantBatch).filter(PlantBatch.id == sid, PlantBatch.user_id == user_id).first()
+                if obj:
+                    name = obj.plant_name + (f" ({obj.variety})" if obj.variety else "")
+                    lines.append(f"- batch: {obj.name} · plant: {name} · quantity: {obj.quantity_sown}")
             elif stype == "bed":
                 obj = session.query(Bed).filter(Bed.id == sid, Bed.user_id == user_id).first()
                 if obj:

@@ -2768,7 +2768,7 @@ def resolve_interaction(interaction_id: str, user_id: str, body: ResolveInteract
 # Threads — conversation management
 # ---------------------------------------------------------------------------
 
-_VALID_SUBJECT_TYPES = {"plant", "bed", "container", "task", "project", "incident"}
+_VALID_SUBJECT_TYPES = {"plant", "batch", "bed", "container", "task", "project", "incident"}
 
 
 class AddThreadContextRequest(_BaseModel):
@@ -2779,6 +2779,8 @@ class AddThreadContextRequest(_BaseModel):
 def _verify_entity_owner(session, user_id: str, subject_type: str, subject_id: str) -> bool:
     if subject_type == "plant":
         return session.query(Plant).filter(Plant.id == subject_id, Plant.user_id == user_id).first() is not None
+    if subject_type == "batch":
+        return session.query(PlantBatch).filter(PlantBatch.id == subject_id, PlantBatch.user_id == user_id).first() is not None
     if subject_type == "bed":
         return session.query(Bed).filter(Bed.id == subject_id, Bed.user_id == user_id).first() is not None
     if subject_type == "container":

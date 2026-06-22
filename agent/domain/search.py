@@ -13,10 +13,29 @@ from db.models import (
     IncidentReport,
     IncidentSubject,
     Plant,
+    PlantBatch,
     Task,
 )
 
-ALL_TYPES = ("plant", "bed", "container", "task", "project", "incident")
+ALL_TYPES = ("plant", "batch", "bed", "container", "task", "project", "incident")
+TYPE_ALIASES = {
+    "plant": "plant",
+    "plants": "plant",
+    "batch": "batch",
+    "batches": "batch",
+    "plant batch": "batch",
+    "plant batches": "batch",
+    "bed": "bed",
+    "beds": "bed",
+    "container": "container",
+    "containers": "container",
+    "task": "task",
+    "tasks": "task",
+    "project": "project",
+    "projects": "project",
+    "incident": "incident",
+    "incidents": "incident",
+}
 
 
 def _is_uuid(value: str) -> bool:
@@ -63,7 +82,7 @@ def _truncate(text: str, max_len: int = 60) -> str:
 # Per-type search helpers
 # ---------------------------------------------------------------------------
 
-def _search_plants(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
+def _search_plants(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
     search = f"%{query}%"
     if is_id:
         rows = session.query(Plant).filter(
@@ -74,7 +93,12 @@ def _search_plants(session, user_id: str, query: str, is_id: bool, limit: int) -
         if not rows:
             # fall through to ILIKE
             is_id = False
-    if not is_id:
+    if list_all:
+        rows = session.query(Plant).filter(
+            Plant.user_id == user_id,
+            Plant.status != "removed",
+        ).order_by(Plant.name.asc()).limit(limit).all()
+    elif not is_id:
         rows = session.query(Plant).filter(
             Plant.user_id == user_id,
             Plant.status != "removed",
@@ -115,7 +139,55 @@ def _search_plants(session, user_id: str, query: str, is_id: bool, limit: int) -
     return results
 
 
-def _search_beds(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
+def _search_batches(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
+    search = f"%{query}%"
+    if is_id:
+        rows = session.query(PlantBatch).filter(
+            PlantBatch.user_id == user_id,
+            PlantBatch.id == query,
+        ).limit(limit).all()
+        if not rows:
+            is_id = False
+    if list_all:
+        rows = session.query(PlantBatch).filter(
+            PlantBatch.user_id == user_id,
+        ).order_by(PlantBatch.created_at.desc()).limit(limit).all()
+    elif not is_id:
+        rows = session.query(PlantBatch).filter(
+            PlantBatch.user_id == user_id,
+            or_(
+                PlantBatch.name.ilike(search),
+                PlantBatch.plant_name.ilike(search),
+                PlantBatch.variety.ilike(search),
+            ),
+        ).limit(limit).all()
+
+    if not rows:
+        return []
+
+    project_names = {
+        p.id: p.name
+        for p in session.query(GardeningProject)
+        .filter(GardeningProject.id.in_({b.project_id for b in rows if b.project_id}))
+        .all()
+    }
+
+    return [
+        {
+            "subject_type": "batch",
+            "subject_id": b.id,
+            "label": b.name,
+            "secondary_label": " · ".join(filter(None, [
+                b.plant_name + (f" ({b.variety})" if b.variety else ""),
+                project_names.get(b.project_id),
+            ])) or None,
+            "summary": f"{b.quantity_sown} sown" + (f" · {b.source}" if b.source else ""),
+        }
+        for b in rows
+    ]
+
+
+def _search_beds(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
     search = f"%{query}%"
     if is_id:
         rows = session.query(Bed).filter(
@@ -124,7 +196,11 @@ def _search_beds(session, user_id: str, query: str, is_id: bool, limit: int) -> 
         ).limit(limit).all()
         if not rows:
             is_id = False
-    if not is_id:
+    if list_all:
+        rows = session.query(Bed).filter(
+            Bed.user_id == user_id,
+        ).order_by(Bed.name.asc()).limit(limit).all()
+    elif not is_id:
         rows = session.query(Bed).filter(
             Bed.user_id == user_id,
             or_(Bed.name.ilike(search), Bed.location.ilike(search)),
@@ -153,7 +229,7 @@ def _search_beds(session, user_id: str, query: str, is_id: bool, limit: int) -> 
     ]
 
 
-def _search_containers(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
+def _search_containers(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
     search = f"%{query}%"
     if is_id:
         rows = session.query(Container).filter(
@@ -162,7 +238,11 @@ def _search_containers(session, user_id: str, query: str, is_id: bool, limit: in
         ).limit(limit).all()
         if not rows:
             is_id = False
-    if not is_id:
+    if list_all:
+        rows = session.query(Container).filter(
+            Container.user_id == user_id,
+        ).order_by(Container.name.asc()).limit(limit).all()
+    elif not is_id:
         rows = session.query(Container).filter(
             Container.user_id == user_id,
             or_(Container.name.ilike(search), Container.location.ilike(search)),
@@ -191,7 +271,7 @@ def _search_containers(session, user_id: str, query: str, is_id: bool, limit: in
     ]
 
 
-def _search_tasks(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
+def _search_tasks(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
     user_pids = {
         pid for (pid,) in session.query(GardeningProject.id)
         .filter(GardeningProject.user_id == user_id)
@@ -211,7 +291,12 @@ def _search_tasks(session, user_id: str, query: str, is_id: bool, limit: int) ->
         ).limit(limit).all()
         if not rows:
             is_id = False
-    if not is_id:
+    if list_all:
+        rows = session.query(Task).filter(
+            Task.project_id.in_(user_pids),
+            Task.status.notin_(excluded),
+        ).order_by(Task.created_at.desc()).limit(limit).all()
+    elif not is_id:
         rows = session.query(Task).filter(
             Task.project_id.in_(user_pids),
             Task.status.notin_(excluded),
@@ -243,7 +328,7 @@ def _search_tasks(session, user_id: str, query: str, is_id: bool, limit: int) ->
     ]
 
 
-def _search_projects(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
+def _search_projects(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
     search = f"%{query}%"
     if is_id:
         rows = session.query(GardeningProject).filter(
@@ -253,7 +338,12 @@ def _search_projects(session, user_id: str, query: str, is_id: bool, limit: int)
         ).limit(limit).all()
         if not rows:
             is_id = False
-    if not is_id:
+    if list_all:
+        rows = session.query(GardeningProject).filter(
+            GardeningProject.user_id == user_id,
+            GardeningProject.status != "complete",
+        ).order_by(GardeningProject.created_at.desc()).limit(limit).all()
+    elif not is_id:
         rows = session.query(GardeningProject).filter(
             GardeningProject.user_id == user_id,
             GardeningProject.status != "complete",
@@ -286,7 +376,7 @@ def _search_projects(session, user_id: str, query: str, is_id: bool, limit: int)
     ]
 
 
-def _search_incidents(session, user_id: str, query: str, is_id: bool, limit: int) -> list[dict]:
+def _search_incidents(session, user_id: str, query: str, is_id: bool, limit: int, *, list_all: bool = False) -> list[dict]:
     search = f"%{query}%"
     base_filter = IncidentReport.user_id == user_id
 
@@ -298,7 +388,12 @@ def _search_incidents(session, user_id: str, query: str, is_id: bool, limit: int
         ).limit(limit).all()
         if not rows:
             is_id = False
-    if not is_id:
+    if list_all:
+        rows = session.query(IncidentReport).filter(
+            base_filter,
+            IncidentReport.status != "resolved",
+        ).order_by(IncidentReport.created_at.desc()).limit(limit).all()
+    elif not is_id:
         rows = session.query(IncidentReport).filter(
             base_filter,
             IncidentReport.status != "resolved",
@@ -337,6 +432,7 @@ def _search_incidents(session, user_id: str, query: str, is_id: bool, limit: int
 
 _TYPE_HANDLERS = {
     "plant": _search_plants,
+    "batch": _search_batches,
     "bed": _search_beds,
     "container": _search_containers,
     "task": _search_tasks,
@@ -358,7 +454,8 @@ def search_entities(
         session: SQLAlchemy session.
         user_id: Owning user.
         query: Search string. A valid UUID triggers an exact ID lookup first.
-        types: Entity types to search. Defaults to all six types.
+            A bare category label such as "plants" or "tasks" lists that entity type.
+        types: Entity types to search. Defaults to all supported types.
         limit_per_type: Max results per type (capped at 20).
 
     Returns:
@@ -368,18 +465,28 @@ def search_entities(
         raise ValueError("query must not be empty")
 
     limit_per_type = min(max(1, limit_per_type), 20)
-    requested = list(types) if types else list(ALL_TYPES)
+    normalized_query = " ".join(query.strip().lower().replace("_", " ").split())
+    category_type = TYPE_ALIASES.get(normalized_query)
+    requested = list(types) if types else ([category_type] if category_type else list(ALL_TYPES))
     unknown = set(requested) - set(ALL_TYPES)
     if unknown:
         raise ValueError(f"unknown entity type(s): {', '.join(sorted(unknown))}")
 
     is_id = _is_uuid(query.strip())
+    list_all = category_type is not None and category_type in requested
     results: list[dict] = []
     by_type: dict[str, int] = {t: 0 for t in ALL_TYPES}
 
     for entity_type in requested:
         handler = _TYPE_HANDLERS[entity_type]
-        type_results = handler(session, user_id, query.strip(), is_id, limit_per_type)
+        type_results = handler(
+            session,
+            user_id,
+            query.strip(),
+            is_id,
+            limit_per_type,
+            list_all=list_all and entity_type == category_type,
+        )
         results.extend(type_results)
         by_type[entity_type] = len(type_results)
 
