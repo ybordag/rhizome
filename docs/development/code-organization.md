@@ -8,20 +8,25 @@ A guide to every directory and file in the Rhizome codebase. Use this when you n
 
 ```
 rhizome/
-├── agent/          Core agent code — graph, domain logic, tools
-├── db/             Database models, session factory, seed data
-├── tests/          Test suite (850+ non-live tests)
+├── agent/          Agent runtime, domain logic, tools, and internal API
+├── alembic/        Postgres schema migrations
+├── db/             SQLAlchemy models, session factory, seed data
 ├── docs/           Documentation
+├── k8s/            Kubernetes deployment manifests
+├── scripts/        Maintenance and validation scripts
+├── tests/          Unit, API, domain, tool, and e2e tests
 ├── main.py         CLI entrypoint
-├── CLAUDE.md       Claude Code session memory
+├── server.py       Internal FastAPI server entrypoint
 └── README.md
 ```
 
 ---
 
-## `agent/` — the agent
+## `agent/` — runtime, domain, tools, API
 
-The agent is split into three layers: `core/` (the LangGraph runtime), `domain/` (business logic), and `tools/` (LLM-callable wrappers).
+The agent code is split into four layers: `core/` (LangGraph runtime),
+`domain/` (business logic), `tools/` (LLM-callable wrappers), and `api/`
+(structured internal HTTP surface for Cambium).
 
 ### `agent/core/` — LangGraph runtime
 
@@ -32,7 +37,7 @@ These files run the graph. They should be changed when the conversation flow, ro
 | `graph.py` | Defines and compiles the `StateGraph`. Wires nodes and conditional edges. Exposes the compiled `agent` object imported by `main.py`. |
 | `nodes.py` | All node implementations: `session_context_intake`, `weather_context_loader`, `triage_reasoner`, `llm_call`, `interaction_node`, `tool_node`. Also defines `DESTRUCTIVE_TOOLS`, `INTERACTION_REVIEW_TOOLS`, and routing functions (`should_continue`, `should_continue_after_interaction`). |
 | `state.py` | `GardenState` TypedDict — the state flowing through the graph. |
-| `model.py` | **Single model seam.** All LLM access goes through `get_model()` and `get_triage_model()`. Never instantiate a model client anywhere else. Reads `RHIZOME_MODEL` and `RHIZOME_TRIAGE_MODEL` env vars. |
+| `model.py` | **Single model seam.** All LLM access goes through `get_model()` and `get_triage_model()`. Never instantiate a model client anywhere else. Reads provider/model env vars such as `RHIZOME_MODEL_PROVIDER`, `RHIZOME_MODEL`, `RHIZOME_TRIAGE_MODEL_PROVIDER`, and `RHIZOME_TRIAGE_MODEL`. |
 | `telemetry.py` | OpenTelemetry setup and observer framework. `emit_state_snapshot`, `emit_tool_completed`, `emit_tool_started`, `start_span`. Wired into all node transitions. |
 | `temporal.py` | Timezone handling, `build_temporal_context` (day of week, season, frost proximity), `infer_session_context` (available time, energy, focus, location, outdoor/quick-win preferences from user input). |
 
@@ -73,11 +78,28 @@ agent/tools/
     care.py
     incidents.py
     interactions.py
+    search.py
     triage.py
     weather.py
 ```
 
 **Important:** `agent/tools/__init__.py` is the single source of truth for which tools are registered. Adding a tool to a tool file but not to `__init__.py` means the LLM can't see it. Add both.
+
+### `agent/api/` — structured internal API
+
+These files expose Rhizome's structured HTTP contract. Cambium proxies these
+routes under `/api/v1` after authenticating the user and injecting trusted user
+context.
+
+| File | Responsibility |
+|---|---|
+| `app.py` | FastAPI app assembly, router mounting, health/docs surface. |
+| `routers.py` | Internal route handlers. They should call domain logic and return Pydantic views, not agent-tool prose. |
+| `models.py` | Request models for structured API calls. |
+| `views.py` | Response models such as `TaskSummaryView`, `PlantSummaryView`, `ActivityEventView`, and `SessionContextView`. |
+
+Use API routes when Cambium, Verdant, or tests need typed data. Use tools when
+the LLM needs a conversational action surface.
 
 ---
 
@@ -89,6 +111,12 @@ agent/tools/
 | `database.py` | `SessionLocal = sessionmaker(bind=engine)`. `current_user_id: ContextVar[int]` — set by `nodes.py` at session start, read by tools. `engine` created from `DATABASE_URL` env var (defaults to SQLite). |
 | `seed.py` | Dev seed data — creates a sample garden profile, beds, containers, plants. Run with `python db/seed.py`. |
 
+## `alembic/` — migrations
+
+Postgres-backed shared environments use Alembic migrations. Local SQLite
+quickstarts and tests may rely on `create_all`, but schema changes intended for
+shared environments need a migration in `alembic/versions/`.
+
 ---
 
 ## `tests/` — test suite
@@ -96,8 +124,12 @@ agent/tools/
 ```
 tests/
   agent/
+    api/     ← structured internal API regression tests
     core/    ← graph + node tests (test_graph, test_nodes, test_node_edge_cases, test_telemetry)
     domain/  ← domain logic unit tests (test_domain_logic)
+    tools/   ← agent/tool integration tests
+  e2e/
+    test_full_stack.py
   tools/
     garden/      ← test_plants, test_beds_containers, test_profile, test_search
     projects/    ← test_projects, test_planning, test_task_tracker_tools,
@@ -179,6 +211,9 @@ tools = [
 - `agent/tools/` may import from `agent/domain/` ✓
 - `agent/tools/` may import from `db/` ✓
 - `agent/tools/` must NOT import from `agent/core/` ✗
+- `agent/api/` may import from `agent/domain/` and `db/` ✓
+- `agent/api/` should return Pydantic request/response models, not tool prose ✓
+- `agent/api/` should not call LLM tools when equivalent domain logic exists ✗
 
 This keeps domain logic testable in isolation without needing the LangGraph runtime.
 

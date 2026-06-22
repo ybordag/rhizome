@@ -2,7 +2,7 @@
 
 Rhizome is an AI-powered gardening assistant built on LangGraph. It acts as an **advisor, co-worker, and coach** for the hobby gardener — holding persistent knowledge of your specific garden, helping plan projects from seed to harvest, generating time-sensitive task schedules, surfacing daily priorities based on weather and deadlines, and tracking what happens over time.
 
-**Status:** Active development on `verbena` branch. Core agent loop is fully functional with 94 tools and 850+ non-live tests. API gateway ([Cambium](../cambium)) is active; frontend ([Verdant](../verdant-pages)) is not yet started.
+**Status:** Active development. Core agent loop is fully functional with 94 tools and 900+ non-live tests. API gateway ([Cambium](../cambium)) is active; frontend ([Verdant](../verdant-pages)) is in active development.
 
 ---
 
@@ -91,11 +91,11 @@ Fairlead (inference router)  ←— GPU routing, provider failover
 | Layer | Technology |
 |---|---|
 | Agent framework | LangGraph (Python) |
-| LLM | Google Gemini via `langchain-google-genai` |
-| Database | SQLite → Postgres (migration path in place) |
+| LLM | Provider factory via LangChain (`google_genai` default; OpenAI and Anthropic supported) |
+| Database | SQLite for quick local/CLI runs; Postgres + Alembic for shared dev/staging/prod |
 | Weather | Open-Meteo (free, no key required) |
 | Observability | OpenTelemetry (OTel) |
-| Tests | pytest, 850+ non-live tests |
+| Tests | pytest, 900+ non-live tests |
 
 ---
 
@@ -106,9 +106,12 @@ Fairlead (inference router)  ←— GPU routing, provider failover
 conda activate RHIZOME_ENV
 pip install -r requirements.txt -r requirements-dev.txt
 
-# Configure
+# Configure for quick local SQLite use
 cp .env.example .env
 # Add your GOOGLE_API_KEY to .env
+
+# For Postgres-backed development, set DATABASE_URL and run:
+# alembic upgrade head
 
 # Run the CLI
 python main.py
@@ -128,7 +131,9 @@ See [docs/getting-started/setup.md](docs/getting-started/setup.md) for full setu
 | [Vision and Design](docs/overview/vision-and-design.md) | Why Rhizome exists, design philosophy, interaction surface |
 | [Features](docs/overview/features.md) | Complete capability inventory |
 | [Setup Guide](docs/getting-started/setup.md) | Installation, configuration, first run |
+| [Local Development](docs/getting-started/local-development.md) | SQLite/Postgres modes, API server, Cambium/Verdant handoff |
 | [Using the CLI](docs/getting-started/using-the-cli.md) | How to have a session with the agent |
+| [Architecture Guide](docs/architecture/README.md) | Reading order, invariants, ownership boundaries |
 | [System Architecture](docs/architecture/system-overview.md) | Repos, runtime topology, deployment model |
 | [Agent Loop](docs/architecture/agent-loop.md) | End-to-end walkthrough of one session |
 | [Data Model](docs/architecture/data-model.md) | All models, lifecycle, relationships |

@@ -175,16 +175,16 @@ This migration is not warranted at 2-node scale. It would make sense if the proj
 
 ## Tooling stack
 
-### The four tools and what each one does
+### The tools and what each one does
 
 | Tool | Layer | Does |
 |---|---|---|
-| **Docker** | Container build + local runtime | Builds images from Dockerfiles; runs containers locally |
-| **Docker Compose** | Local orchestration | Defines and starts all services together on one machine |
+| **Python/conda** | Local development | Runs the CLI/API directly against SQLite or a local Postgres |
+| **Docker** | Container build + image validation | Builds deployable images from Dockerfiles |
 | **k3s** | Production orchestration | Manages containers across Thor + Loki; schedules, restarts, scales |
 | **Helm** | K8s package manager | Installs third-party software (Postgres, Redis) onto k3s with one command |
 
-These are complementary layers, not alternatives. Docker builds the images. Docker Compose runs them locally. k3s runs them in production. Helm installs pre-packaged third-party services onto k3s.
+These are complementary layers, not alternatives. Python/conda is the normal local development path. Docker builds the images. k3s runs them in production. Helm installs pre-packaged third-party services onto k3s.
 
 ### `kubectl` — the k3s remote control
 
@@ -194,13 +194,12 @@ k3s uses **containerd** as its container runtime (not Docker). Docker is not req
 
 ### Local dev workflow (Mac)
 
-```
-docker build -t ghcr.io/ybordag/rhizome:latest .   # build image
-docker compose up                                   # run full stack locally
-docker compose down                                 # tear down
+```bash
+conda activate RHIZOME_ENV
+python server.py
 ```
 
-`docker-compose.yml` defines all services — Postgres, Rhizome ×2, Cambium — and their environment variables. Service names (`postgres`, `rhizome`) become hostnames inside Docker's internal network.
+Rhizome does not currently ship a repo-local `docker-compose.yml`. For local details, including SQLite vs Postgres and Cambium/Verdant handoff, see [Local Development](../getting-started/local-development.md).
 
 ### Production workflow (Thor + Loki)
 
@@ -234,13 +233,13 @@ helm install rhizome-db bitnami/postgresql \
 
 **Rule of thumb:** use Helm charts for third-party software (Postgres, nginx, Prometheus); write raw K8s manifests for your own services (Rhizome, Cambium, Verdant).
 
-### Docker Compose vs Helm chart — same idea, different target
+### Docker image vs Helm chart
 
-Both describe "which services exist and how they connect." The difference is the runtime they target:
+The Dockerfile describes one Rhizome image. Helm/k8s manifests describe how services connect and run in the cluster:
 
 ```
-docker-compose.yml   →  Docker (local dev, one machine)
-Helm chart / K8s     →  k3s (production, cluster)
+Dockerfile       →  Rhizome container image
+Helm chart / K8s →  Postgres + Rhizome/Cambium/Verdant deployment topology
 ```
 
-`kompose` can convert a Compose file to K8s manifests as a starting point, though the output usually needs cleanup. In practice you maintain both: Compose for fast local iteration, K8s manifests for production.
+The current repo maintains k8s manifests for deployment and direct Python commands for local development.

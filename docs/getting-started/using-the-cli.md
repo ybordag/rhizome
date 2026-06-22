@@ -118,9 +118,9 @@ The conversation is paused at this point. The graph resumes only after you respo
 
 ## Session persistence
 
-Conversation history and pending interactions are persisted in the LangGraph PostgresSaver checkpointer (keyed by `thread_id`). The next session picks up exactly where you left off — including any pending approvals that weren't resolved.
+Conversation history and pending interactions are persisted in the LangGraph checkpointer keyed by `thread_id`. Local SQLite runs use `rhizome_checkpoints.db`; Postgres-backed environments use the LangGraph Postgres checkpointer. The next session picks up exactly where you left off — including any pending approvals that weren't resolved.
 
-Garden state (plants, tasks, projects, care history) is persisted in Postgres and is always current regardless of session state.
+Garden state (plants, tasks, projects, care history) is persisted in the application database selected by `DATABASE_URL` and is always current regardless of session state.
 
 ---
 

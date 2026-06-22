@@ -26,9 +26,11 @@ high-level result shape regardless of the underlying model pipeline.
 
 ## Current Feature Domains
 
-The following domain folders are TODO stubs for Rhizome's existing feature
-sets. They should be filled out as durable product specifications, separate
-from roadmap/build-order docs.
+These folders describe the product behavior that Rhizome already owns today.
+Use them to understand the feature boundaries before changing domain logic,
+agent tools, or structured API contracts. They intentionally sit above the API
+reference: API docs list routes and response shapes, while feature docs explain
+the user outcome, persistent objects, invariants, and cross-feature behavior.
 
 - [Garden Model](garden/README.md)
 - [Project Planning](projects/README.md)

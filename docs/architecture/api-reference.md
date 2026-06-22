@@ -6,7 +6,11 @@ Rhizome exposes two internal surfaces:
 - **`/internal/agent`** — LangGraph graph execution (AI operations: chat, triage, drafting)
 - **`/internal/data/...`** — direct SQLAlchemy queries (CRUD, no LLM overhead)
 
-Both surfaces are live. All ~115+ endpoints are wired across Rhizome and Cambium.
+Both surfaces are live. The route list below documents Rhizome's internal contract; Cambium owns the public `/api/v1` shape that Verdant calls.
+
+Use `/internal/agent` when the request needs the graph, model provider, tool calling, streaming, or resume semantics. Use `/internal/data/...` when the request is deterministic CRUD/query work that can be answered from SQLAlchemy/domain helpers without an LLM call.
+
+Cambium is the public contract owner. Verdant calls Cambium's `/api/v1` routes; Cambium maps them onto the Rhizome internal surfaces, injects `user_id`, and adds provider credentials/model overrides for agent calls.
 
 ---
 
@@ -48,6 +52,14 @@ All data endpoints return structured JSON (not `{"result": "...string..."}`). Re
 - `ActivityEventView`, `ActivitySubjectView`
 
 Tools continue to return strings for the LangGraph agent. The JSON layer is a parallel serialization path in the router only.
+
+This split is intentional:
+
+| Caller | Surface | Response Style |
+|---|---|---|
+| LLM inside LangGraph | tools in `agent/tools/` | human-readable strings |
+| Cambium/Verdant data UI | `/internal/data/...` routes | structured Pydantic views |
+| Cambium/Verdant chat UI | `/internal/agent` routes | agent response, stream, or interaction envelope |
 
 Mutation endpoints (`PATCH`/`POST` on a single entity) call the underlying tool for its
 validation + side effects, then re-query the entity and return its structured view — the

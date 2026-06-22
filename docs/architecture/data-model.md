@@ -1,6 +1,6 @@
 # Data Model
 
-All models live in `db/models.py`. The database is **Postgres** in staging and production (SQLite for in-memory test runs only). SQLAlchemy ORM throughout.
+All SQLAlchemy models live in `db/models.py`. Rhizome uses SQLite for quick local runs and isolated tests, and Postgres with Alembic migrations for shared development, staging, and production.
 
 ---
 
@@ -246,7 +246,7 @@ Thread
   created_at           datetime
 ```
 
-**Key design decision:** `Thread` stores metadata only, plus small app-facing context documents. Actual message content lives in the LangGraph PostgresSaver checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
+**Key design decision:** `Thread` stores metadata only, plus small app-facing context documents. Actual message content lives in the LangGraph checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
 
 **Session context:** `session_context` stores canonical startup intake values: `available_minutes`, `energy_level`, `focus_project_id`, `preferred_location_type`, `open_to_outdoor_work`, `wants_quick_wins`, `source`, and `updated_at`. `source` is `inferred` when `session_context_intake` derived the values from opener text, `user` after `PATCH /threads/{id}/session-context`, and `unset` only in the API response for threads with no stored context. `focus_label` is resolved at read time from `focus_project_id`.
 
@@ -258,7 +258,7 @@ Thread
 
 ## Session state (LangGraph)
 
-Conversation state lives in the LangGraph PostgresSaver checkpoint store, keyed by `thread_id`. The `GardenState` TypedDict carries: `messages`, `monitor_alerts`, `temporal_context`, `session_context`, `skip_tool_node`, `user_id`.
+Conversation state lives in the LangGraph checkpointer, keyed by `thread_id`. The `GardenState` typed state carries: `messages`, `monitor_alerts`, `temporal_context`, `session_context`, `weather_context`, `triage_snapshot`, `pending_interaction`, `interaction_history`, `skip_tool_node`, `user_id`, and `pinned_context_text`.
 
 `user_id` flows through `graph.config["configurable"]["user_id"]` and is set into the `current_user_id` ContextVar by `session_context_intake` at the start of every turn. All tool queries use `current_user_id.get()` — never a hardcoded value.
 
@@ -266,7 +266,7 @@ Conversation state lives in the LangGraph PostgresSaver checkpoint store, keyed 
 
 ## Schema and migrations
 
-All domain tables live in the **`rhizome` schema** in Postgres. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome` so queries and `create_all()` target the correct schema.
+All domain tables live in the **`rhizome` schema** in Postgres. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome` so queries and migrations target the correct schema.
 
 **Alembic** manages schema migrations in staging and production:
 
@@ -281,4 +281,4 @@ alembic upgrade head
 
 `alembic/versions/` contains the migration history. `alembic.ini` and `alembic/env.py` configure the connection (reads `DATABASE_URL` from environment) and target schema.
 
-Tests use `init_db()` with in-memory SQLite — they never run Alembic. `init_db()` remains as a safety net for fresh installs only.
+Tests use `init_db()` with isolated SQLite databases — they never run Alembic. `init_db()` remains a safety net for SQLite quickstarts and tests only; shared environments should use Alembic.

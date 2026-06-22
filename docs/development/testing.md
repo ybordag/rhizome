@@ -1,6 +1,6 @@
 # Testing Guide
 
-Rhizome has 850+ non-live tests. This guide explains the test structure, the patterns used throughout, and how to write new tests.
+Rhizome has 900+ non-live tests. This guide explains the test structure, the patterns used throughout, and how to write new tests.
 
 ---
 
@@ -177,12 +177,11 @@ For domain functions that need a DB session (like `compute_task_blocked_state`),
 
 ```python
 import pytest
-from agent import nodes  # now at agent.core.nodes, but `from agent.core import nodes` also works
+from agent.core import nodes
 from tests.support.fakes import make_tool_call_message
 
 @pytest.mark.graph
-def test_should_continue_routes_correctly(monkeypatch, patched_sessionlocal):
-    monkeypatch.setattr(nodes, "interrupt", lambda prompt: "confirm")
+def test_should_continue_routes_destructive_tool_to_interaction_node():
     state = {
         "messages": [
             make_tool_call_message(
@@ -193,11 +192,11 @@ def test_should_continue_routes_correctly(monkeypatch, patched_sessionlocal):
             )
         ]
     }
-    result = nodes.confirmation_node(state)
-    assert result["interaction_history"][0]["resolution_action"] == "confirm"
+
+    assert nodes.should_continue(state) == "interaction_node"
 ```
 
-The `make_tool_call_message` and `make_ai_message` helpers in `tests/support/fakes.py` build synthetic LangChain message objects.
+The `make_tool_call_message` and `make_ai_message` helpers in `tests/support/fakes.py` build synthetic LangChain message objects. For full interaction resolution tests, patch `nodes.interrupt` and call `interaction_node` or use `fresh_test_graph` so the routing and checkpoint behavior stay realistic.
 
 ---
 
@@ -224,11 +223,11 @@ def test_full_turn(fresh_test_graph, fake_bound_model):
 ## Deferred tests
 
 `tests/DEFERRED_TESTS.md` documents 11 test areas that are consciously not tested and why:
-- Bulk scale tests (wait for Postgres)
+- Bulk scale tests (wait for a Postgres-backed test harness)
 - DST edge cases (wait for timezone-aware columns)
 - Weather API failure simulation (needs HTTP mocking setup)
 - Circular dependency chains deeper than 2 levels
-- Concurrency / race conditions (SQLite serializes writes)
+- Concurrency / race conditions (SQLite-based tests serialize writes)
 
 Review this file before adding a test you think might already be covered or explicitly deferred.
 

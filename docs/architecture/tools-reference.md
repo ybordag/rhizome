@@ -1,6 +1,12 @@
 # Tools Reference
 
-All 94 tools registered in `agent/tools/__init__.py`, organized by domain. Tools are exposed to the LLM via LangChain's tool binding and are also callable directly from the Cambium proxy layer.
+All 94 tools registered in `agent/tools/__init__.py`, organized by domain.
+Tools are exposed to the LLM via LangChain's tool binding and return strings
+for chat use.
+
+Cambium and Verdant should use Rhizome's structured internal API routes for
+frontend data contracts. Those routes may share domain logic with tools, but
+they should not require parsing tool prose.
 
 ---
 
@@ -105,6 +111,11 @@ All 94 tools registered in `agent/tools/__init__.py`, organized by domain. Tools
 
 ## Operations (`agent/tools/operations/`)
 
+### Search (`search.py`)
+| Tool | Purpose |
+|---|---|
+| `search_domain(query, domains?, limit?)` | Search across structured Rhizome domain records for planning and triage context |
+
 ### Activity (`activity.py`)
 | Tool | Purpose |
 |---|---|
@@ -148,7 +159,7 @@ All 94 tools registered in `agent/tools/__init__.py`, organized by domain. Tools
 |---|---|
 | `run_daily_triage(opener?, timezone?)` | Run triage and persist snapshot |
 | `get_latest_triage_snapshot()` | Most recent triage snapshot |
-| `list_triage_recommendations(limit?)` | Recommended task IDs from today's triage |
+| `list_triage_recommendations(limit?)` | Agent-facing helper that formats recommended task IDs from today's triage. This is not a frontend API route; use `GET /triage/latest` for structured app data. |
 
 ### Weather (`weather.py`)
 | Tool | Purpose |

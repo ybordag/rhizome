@@ -12,10 +12,10 @@ Infrastructure that everything else depends on.
 
 | Initiative | Status | Scope |
 |---|---|---|
-| FastAPI internal layer | **complete** (narcissus → main) | `/internal/agent` (LangGraph) + `/internal/data/...` (~80 endpoints); SSE streaming; `server.py` entry point |
-| Thread management | **complete** (narcissus) | `Thread` model; botanical name generation in Cambium; conversation list, history, delete endpoints |
-| Cambium proxy + full API | **complete** (phloem + periderm → main) | Cambium Phases 1–4: auth, key management, proxy, all ~95 routes wired |
-| Multi-tenancy | pending | Audit all tool queries to confirm `user_id` scoping; harden against any remaining hardcoded `1` |
+| FastAPI internal layer | **complete** (narcissus → main) | `/internal/agent` (LangGraph) + `/internal/data/...`; SSE streaming; `server.py` entry point |
+| Thread management | **complete** (narcissus + follow-up cleanup) | `Thread` model; botanical name generation in Cambium; conversation list, history, pinned context, structured session context, delete endpoints |
+| Cambium proxy + full API | **complete** (phloem + periderm → main) | Auth, key management, proxy, and core route coverage for Verdant |
+| Multi-tenancy hardening | **substantial progress** | Core API and recent structured endpoints scope by `user_id`; remaining work is continued audit of older tool paths and concurrency-sensitive cases |
 | k3s deployment | pending | Thor + Loki cluster setup, Helm for Postgres, raw manifests for Rhizome/Cambium/Verdant |
 
 ---
@@ -28,7 +28,7 @@ Capabilities that make the agent smarter and better grounded.
 |---|---|---|
 | Google Search grounding | pending | Live search for planning queries — grounds proposals in current information rather than training data |
 | RAG / knowledge base | pending | pgvector embeddings over plant care guides, pest/disease references, seed databases |
-| Full-text search | pending | Postgres `tsvector` across plants, tasks, projects, activity; `GET /api/v1/search` |
+| Full-text search | partial | `GET /api/v1/search` exists for structured entity search; deeper Postgres `tsvector`/ranking remains pending |
 | iNaturalist | pending | Local species/pest observation data via public API; feeds sighting catalog and reactive monitoring |
 
 See [Intelligence initiative plan](initiatives/intelligence.md) for design detail.
@@ -64,7 +64,7 @@ See [Onboarding and data import plan](initiatives/onboarding_and_data_import.md)
 
 | Initiative | Status | Scope |
 |---|---|---|
-| Verdant | not started | React app — dashboard, alert banners, task list, project view, chat interface, conversation history |
+| Verdant | in active development | React app — dashboard, alert banners, task list, project view, chat interface, conversation history |
 
 See [Verdant initiative plan](initiatives/app_frontend_experience.md).
 
@@ -76,7 +76,7 @@ See [Verdant initiative plan](initiatives/app_frontend_experience.md).
 |---|---|---|
 | Fairlead + vLLM | **in progress** (Phases 1–4 on main, Phase 5 active on trim) | Inference router (Rust), vLLM on Loki GPU, fallback chain (local → cloud) |
 
-See [Fairlead design doc](../../../fairlead/design.md).
+See [Fairlead README](../../../fairlead/README.md).
 
 ---
 
