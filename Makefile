@@ -19,6 +19,10 @@ help:
 	@printf '%s\n' '  make install            Install runtime and dev dependencies'
 	@printf '%s\n' '  make setup              Create .env if needed and install dependencies'
 	@printf '%s\n' '  make seed               Seed local development data'
+	@printf '%s\n' '  make seed-verdant-test USER_ID=...'
+	@printf '%s\n' '                          Seed Verdant UI fixture data for a Cambium user id'
+	@printf '%s\n' '  make clean-verdant-test USER_ID=...'
+	@printf '%s\n' '                          Remove Verdant UI fixture data for a Cambium user id'
 	@printf '%s\n' '  make reset-sqlite       Remove local SQLite app/checkpoint databases'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Run:'
@@ -85,6 +89,16 @@ setup: env-file install
 .PHONY: seed
 seed:
 	$(PYTHON) db/seed.py
+
+.PHONY: seed-verdant-test
+seed-verdant-test:
+	@test "$(USER_ID)" != "1" || (printf '%s\n' 'Set USER_ID to the Cambium user id from /auth/session.' && exit 1)
+	$(PYTHON) db/seed_verdant_test_user.py --user-id "$(USER_ID)"
+
+.PHONY: clean-verdant-test
+clean-verdant-test:
+	@test "$(USER_ID)" != "1" || (printf '%s\n' 'Set USER_ID to the Cambium user id from /auth/session.' && exit 1)
+	$(PYTHON) db/seed_verdant_test_user.py --user-id "$(USER_ID)" --cleanup
 
 .PHONY: reset-sqlite
 reset-sqlite:
