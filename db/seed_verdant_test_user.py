@@ -5,11 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
+from dotenv import load_dotenv
 from sqlalchemy import or_
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+load_dotenv(ROOT / ".env")
 
 from db import seed as base_seed
 from db.database import SessionLocal, current_user_id, init_db
