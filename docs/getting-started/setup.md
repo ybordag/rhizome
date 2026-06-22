@@ -170,11 +170,12 @@ Useful examples:
 make setup
 make api
 make test
+make check
 make test-file FILE=tests/agent/api/test_internal_api.py
 make swagger
 ```
 
-`make swagger` exports the generated FastAPI OpenAPI schema to `openapi.json`. For the interactive Swagger UI, start the API server with `make api`, then run `make swagger-ui` or open `http://localhost:8001/docs`.
+`make check` runs a broad non-live local check over API, tool, and DB tests. `make swagger` exports the generated FastAPI OpenAPI schema to `openapi.json` using temporary SQLite database and checkpoint files under `/tmp`; use `make openapi-check` when you only want to validate schema generation without updating that file. For the interactive Swagger UI, start the API server with `make api`, then run `make swagger-ui` or open `http://localhost:8001/docs`.
 
 ---
 

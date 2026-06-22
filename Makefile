@@ -3,6 +3,8 @@ PYTEST ?= $(PYTHON) -m pytest
 PORT ?= 8001
 POSTGRES_DSN ?= postgresql+psycopg2://postgres:dev@localhost:5432/postgres
 OPENAPI_OUT ?= openapi.json
+OPENAPI_DATABASE_URL ?= sqlite:////tmp/rhizome-openapi.db
+OPENAPI_CHECKPOINT_PATH ?= /tmp/rhizome-openapi-checkpoints.db
 USER_ID ?= 1
 MESSAGE ?= migration
 
@@ -29,8 +31,12 @@ help:
 	@printf '%s\n' '  make migrate            Apply Alembic migrations using current DATABASE_URL'
 	@printf '%s\n' '  make migrate-postgres   Apply migrations using POSTGRES_DSN'
 	@printf '%s\n' '  make migration MESSAGE="..."'
+	@printf '%s\n' '  make db-current         Show the current Alembic revision'
+	@printf '%s\n' '  make db-history         Show Alembic migration history'
+	@printf '%s\n' '  make db-heads           Show Alembic migration heads'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Tests:'
+	@printf '%s\n' '  make check              Run broad non-live local checks'
 	@printf '%s\n' '  make test               Run non-live regression tests'
 	@printf '%s\n' '  make test-all           Run the full pytest suite, including live tests'
 	@printf '%s\n' '  make test-unit          Run unit tests'
@@ -38,12 +44,14 @@ help:
 	@printf '%s\n' '  make test-graph         Run graph/orchestration tests'
 	@printf '%s\n' '  make test-e2e           Run e2e tests; requires Rhizome and Cambium running'
 	@printf '%s\n' '  make test-api           Run internal API tests'
+	@printf '%s\n' '  make smoke-api          Run focused API smoke tests'
 	@printf '%s\n' '  make test-tools         Run tool tests'
 	@printf '%s\n' '  make test-file FILE=... Run a focused pytest target'
 	@printf '%s\n' '  make test-cov           Run non-live tests with coverage'
 	@printf '%s\n' ''
 	@printf '%s\n' 'OpenAPI and monitor jobs:'
 	@printf '%s\n' '  make openapi            Export FastAPI OpenAPI schema to OPENAPI_OUT'
+	@printf '%s\n' '  make openapi-check      Validate OpenAPI generation without changing OPENAPI_OUT'
 	@printf '%s\n' '  make swagger            Alias for openapi'
 	@printf '%s\n' '  make monitor            Run all background monitor jobs'
 	@printf '%s\n' '  make monitor-weather    Run weather monitor job'
@@ -105,6 +113,22 @@ migrate-postgres:
 migration:
 	alembic revision --autogenerate -m "$(MESSAGE)"
 
+.PHONY: db-current
+db-current:
+	alembic current
+
+.PHONY: db-history
+db-history:
+	alembic history
+
+.PHONY: db-heads
+db-heads:
+	alembic heads
+
+.PHONY: check
+check:
+	$(PYTEST) -m "not live" tests/agent/api tests/tools tests/db
+
 .PHONY: test
 test:
 	$(PYTEST) -m "not live"
@@ -133,6 +157,10 @@ test-e2e:
 test-api:
 	$(PYTEST) tests/agent/api
 
+.PHONY: smoke-api
+smoke-api:
+	$(PYTEST) tests/agent/api/test_internal_api.py tests/agent/api/test_streaming_endpoints.py
+
 .PHONY: test-tools
 test-tools:
 	$(PYTEST) tests/tools
@@ -148,7 +176,11 @@ test-cov:
 
 .PHONY: openapi
 openapi:
-	$(PYTHON) -c "import json; from agent.api.app import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))" > $(OPENAPI_OUT)
+	DATABASE_URL=$(OPENAPI_DATABASE_URL) RHIZOME_CHECKPOINT_SQLITE_PATH=$(OPENAPI_CHECKPOINT_PATH) $(PYTHON) -c "import json; from agent.api.app import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))" > $(OPENAPI_OUT)
+
+.PHONY: openapi-check
+openapi-check:
+	DATABASE_URL=$(OPENAPI_DATABASE_URL) RHIZOME_CHECKPOINT_SQLITE_PATH=$(OPENAPI_CHECKPOINT_PATH) $(PYTHON) -c "import json; from agent.api.app import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))" > /tmp/rhizome-openapi.json
 
 .PHONY: swagger
 swagger: openapi
