@@ -37,6 +37,7 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'Tests:'
 	@printf '%s\n' '  make check              Run broad non-live local checks'
+	@printf '%s\n' '  make check-full         Run broader non-live local checks'
 	@printf '%s\n' '  make test               Run non-live regression tests'
 	@printf '%s\n' '  make test-all           Run the full pytest suite, including live tests'
 	@printf '%s\n' '  make test-unit          Run unit tests'
@@ -44,6 +45,12 @@ help:
 	@printf '%s\n' '  make test-graph         Run graph/orchestration tests'
 	@printf '%s\n' '  make test-e2e           Run e2e tests; requires Rhizome and Cambium running'
 	@printf '%s\n' '  make test-api           Run internal API tests'
+	@printf '%s\n' '  make test-core          Run LangGraph/core tests'
+	@printf '%s\n' '  make test-db            Run database tests'
+	@printf '%s\n' '  make test-domain        Run domain tests'
+	@printf '%s\n' '  make test-cli           Run CLI tests'
+	@printf '%s\n' '  make test-live          Run live provider tests'
+	@printf '%s\n' '  make test-telemetry     Run telemetry tests'
 	@printf '%s\n' '  make smoke-api          Run focused API smoke tests'
 	@printf '%s\n' '  make test-tools         Run tool tests'
 	@printf '%s\n' '  make test-file FILE=... Run a focused pytest target'
@@ -52,6 +59,7 @@ help:
 	@printf '%s\n' 'OpenAPI and monitor jobs:'
 	@printf '%s\n' '  make openapi            Export FastAPI OpenAPI schema to OPENAPI_OUT'
 	@printf '%s\n' '  make openapi-check      Validate OpenAPI generation without changing OPENAPI_OUT'
+	@printf '%s\n' '  make clean-openapi      Remove generated OpenAPI temp/output files'
 	@printf '%s\n' '  make swagger            Alias for openapi'
 	@printf '%s\n' '  make monitor            Run all background monitor jobs'
 	@printf '%s\n' '  make monitor-weather    Run weather monitor job'
@@ -129,6 +137,10 @@ db-heads:
 check:
 	$(PYTEST) -m "not live" tests/agent/api tests/tools tests/db
 
+.PHONY: check-full
+check-full:
+	$(PYTEST) -m "not live" tests/agent/api tests/tools tests/db tests/agent/domain tests/agent/core tests/test_main_cli.py
+
 .PHONY: test
 test:
 	$(PYTEST) -m "not live"
@@ -157,6 +169,30 @@ test-e2e:
 test-api:
 	$(PYTEST) tests/agent/api
 
+.PHONY: test-core
+test-core:
+	$(PYTEST) tests/agent/core
+
+.PHONY: test-db
+test-db:
+	$(PYTEST) tests/db
+
+.PHONY: test-domain
+test-domain:
+	$(PYTEST) tests/agent/domain
+
+.PHONY: test-cli
+test-cli:
+	$(PYTEST) tests/test_main_cli.py
+
+.PHONY: test-live
+test-live:
+	$(PYTEST) -m live
+
+.PHONY: test-telemetry
+test-telemetry:
+	$(PYTEST) -m telemetry
+
 .PHONY: smoke-api
 smoke-api:
 	$(PYTEST) tests/agent/api/test_internal_api.py tests/agent/api/test_streaming_endpoints.py
@@ -181,6 +217,10 @@ openapi:
 .PHONY: openapi-check
 openapi-check:
 	DATABASE_URL=$(OPENAPI_DATABASE_URL) RHIZOME_CHECKPOINT_SQLITE_PATH=$(OPENAPI_CHECKPOINT_PATH) $(PYTHON) -c "import json; from agent.api.app import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))" > /tmp/rhizome-openapi.json
+
+.PHONY: clean-openapi
+clean-openapi:
+	rm -f $(OPENAPI_OUT) /tmp/rhizome-openapi.json /tmp/rhizome-openapi.db /tmp/rhizome-openapi-checkpoints.db
 
 .PHONY: swagger
 swagger: openapi
