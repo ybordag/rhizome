@@ -7,6 +7,7 @@ OPENAPI_DATABASE_URL ?= sqlite:////tmp/rhizome-openapi.db
 OPENAPI_CHECKPOINT_PATH ?= /tmp/rhizome-openapi-checkpoints.db
 USER_ID ?= 1
 MESSAGE ?= migration
+ARGS ?=
 
 .PHONY: help
 help:
@@ -21,7 +22,8 @@ help:
 	@printf '%s\n' '  make reset-sqlite       Remove local SQLite app/checkpoint databases'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Run:'
-	@printf '%s\n' '  make cli                Start the Rhizome CLI'
+	@printf '%s\n' '  make rhizome ARGS="..." Start the Rhizome CLI, passing optional args'
+	@printf '%s\n' '  make cli                Alias for make rhizome'
 	@printf '%s\n' '  make api                Start the internal FastAPI server'
 	@printf '%s\n' '  make api-prod           Start the internal API without reload'
 	@printf '%s\n' '  make health             Check the internal API health endpoint'
@@ -90,8 +92,11 @@ reset-sqlite:
 	rm -f rhizome.db rhizome_checkpoints.db
 
 .PHONY: cli
-cli:
-	$(PYTHON) main.py
+cli: rhizome
+
+.PHONY: rhizome
+rhizome:
+	$(PYTHON) main.py $(ARGS)
 
 .PHONY: api
 api:

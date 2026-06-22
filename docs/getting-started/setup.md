@@ -168,6 +168,7 @@ Useful examples:
 
 ```bash
 make setup
+make rhizome
 make api
 make test
 make check
@@ -177,7 +178,7 @@ make swagger
 make clean-openapi
 ```
 
-`make check` runs a broad non-live local check over API, tool, and DB tests; `make check-full` adds domain, core, and CLI tests. `make swagger` exports the generated FastAPI OpenAPI schema to `openapi.json` using temporary SQLite database and checkpoint files under `/tmp`; use `make openapi-check` when you only want to validate schema generation without updating that file, and `make clean-openapi` to remove generated OpenAPI artifacts. For the interactive Swagger UI, start the API server with `make api`, then run `make swagger-ui` or open `http://localhost:8001/docs`.
+`make rhizome` starts the CLI and replaces the older `make cli` entry point; `make cli` remains as an alias. If the CLI adds or needs command-line arguments, pass them with `ARGS="..."`, for example `make rhizome ARGS="--help"`. `make check` runs a broad non-live local check over API, tool, and DB tests; `make check-full` adds domain, core, and CLI tests. `make swagger` exports the generated FastAPI OpenAPI schema to `openapi.json` using temporary SQLite database and checkpoint files under `/tmp`; use `make openapi-check` when you only want to validate schema generation without updating that file, and `make clean-openapi` to remove generated OpenAPI artifacts. For the interactive Swagger UI, start the API server with `make api`, then run `make swagger-ui` or open `http://localhost:8001/docs`.
 
 ---
 
