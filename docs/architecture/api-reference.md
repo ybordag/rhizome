@@ -663,6 +663,12 @@ Thread metadata.
 `ThreadView` preserves the existing wire shape:
 `{ thread_id, title, project_id, last_message_preview, last_active_at, message_count, pinned_context, session_context, created_at }`
 
+`ThreadView.session_context` is the raw JSON stored on the thread row. Verdant
+should use the dedicated `GET /api/v1/threads/{id}/session-context` endpoint
+for display/edit flows because it returns the normalized `SessionContextView`
+shape, including `source: "unset"` for missing context and read-time
+`focus_label` resolution.
+
 ### `GET /api/v1/threads/{id}/session-context`
 Structured startup/session context for a thread. Used by Verdant's SessionStrip.
 **Response:** `SessionContextView`:
