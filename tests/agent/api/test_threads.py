@@ -822,7 +822,7 @@ def test_session_context_intake_injects_text_first_summary_separate_from_pinned_
         "Energy: low but focused",
         "Thread focus: How do I fertilize the cherry tomatoes?",
         "Focus objects:",
-        f"- plant: Cherry Tomato (Sungold) ({plant.id})",
+        f"- plant: Cherry Tomato (Sungold) [id: {plant.id}]",
     ])
     assert result["pinned_context_text"]
     assert result["session_context_text"] != result["pinned_context_text"]

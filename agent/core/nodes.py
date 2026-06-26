@@ -70,7 +70,11 @@ Recent structured interactions:
 
 Guidelines:
 - Always ground your advice in the specific conditions of this garden
-- Never recommend plants that are toxic to dogs or children — flag this immediately if the user asks about one
+- Respect hard constraints and household safety needs from the garden profile. If the user asks about a plant that may be toxic
+  to people or pets, warn once and suggest safer alternatives when relevant.
+- Treat session context and pinned context as the current working set. Use included ids for tool calls. If the user's focus text
+  implies that more detail is needed, retrieve the relevant object with a detail/list tool before giving specific advice or
+  making changes.
 - Prefer organic solutions: manual pest removal, neem oil, companion planting before anything chemical
 - Be cost-conscious: suggest seeds over starter plants, propagation over buying, DIY over purchasing where sensible
 - Be honest about what won't work in zone 9b or in the specific conditions of each bed
@@ -145,22 +149,22 @@ def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
                 obj = session.query(Plant).filter(Plant.id == sid, Plant.user_id == user_id).first()
                 if obj:
                     name = obj.name + (f" ({obj.variety})" if obj.variety else "")
-                    lines.append(f"- plant: {name} · status: {obj.status or 'unknown'}")
+                    lines.append(f"- plant: {name} [id: {sid}] · status: {obj.status or 'unknown'}")
             elif stype == "batch":
                 obj = session.query(PlantBatch).filter(PlantBatch.id == sid, PlantBatch.user_id == user_id).first()
                 if obj:
                     name = obj.plant_name + (f" ({obj.variety})" if obj.variety else "")
-                    lines.append(f"- batch: {obj.name} · plant: {name} · quantity: {obj.quantity_sown}")
+                    lines.append(f"- batch: {obj.name} [id: {sid}] · plant: {name} · quantity: {obj.quantity_sown}")
             elif stype == "bed":
                 obj = session.query(Bed).filter(Bed.id == sid, Bed.user_id == user_id).first()
                 if obj:
                     loc = f" · {obj.location}" if obj.location else ""
-                    lines.append(f"- bed: {obj.name}{loc}")
+                    lines.append(f"- bed: {obj.name} [id: {sid}]{loc}")
             elif stype == "container":
                 obj = session.query(Container).filter(Container.id == sid, Container.user_id == user_id).first()
                 if obj:
                     typ = f" · {obj.container_type}" if obj.container_type else ""
-                    lines.append(f"- container: {obj.name}{typ}")
+                    lines.append(f"- container: {obj.name} [id: {sid}]{typ}")
             elif stype == "task":
                 obj = (
                     session.query(Task)
@@ -169,20 +173,20 @@ def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
                     .first()
                 )
                 if obj:
-                    lines.append(f"- task: {obj.title} · status: {obj.status or 'pending'}")
+                    lines.append(f"- task: {obj.title} [id: {sid}] · status: {obj.status or 'pending'}")
             elif stype == "project":
                 obj = session.query(GardeningProject).filter(
                     GardeningProject.id == sid, GardeningProject.user_id == user_id
                 ).first()
                 if obj:
-                    lines.append(f"- project: {obj.name} · status: {obj.status or 'active'}")
+                    lines.append(f"- project: {obj.name} [id: {sid}] · status: {obj.status or 'active'}")
             elif stype == "incident":
                 incident = session.query(IncidentReport).filter(
                     IncidentReport.id == sid, IncidentReport.user_id == user_id
                 ).first()
                 if incident:
                     summary = f" · {incident.summary[:60]}" if incident.summary else ""
-                    lines.append(f"- incident: {incident.incident_type}{summary}")
+                    lines.append(f"- incident: {incident.incident_type} [id: {sid}]{summary}")
         except Exception:
             pass
     return "\n".join(lines)

@@ -229,9 +229,9 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
             "Energy: low but focused",
             "Thread focus: How do I fertilize the cherry tomatoes?",
             "Focus objects:",
-            "- batch: Courtyard Tomatoes March 2026 (batch-1)",
+            "- batch: Courtyard Tomatoes March 2026 [id: batch-1]",
         ]),
-        "pinned_context_text": "- plant: Basil (plant-1)",
+        "pinned_context_text": "- plant: Basil [id: plant-1]",
     }
 
     result = nodes.llm_call(state, {"configurable": {"user_id": "1"}})
@@ -241,8 +241,12 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
     assert "Session context for this thread:" in system_prompt
     assert "Time available: 45 minutes" in system_prompt
     assert "Thread focus: How do I fertilize the cherry tomatoes?" in system_prompt
-    assert "- batch: Courtyard Tomatoes March 2026 (batch-1)" in system_prompt
-    assert "Pinned context for this thread:\n- plant: Basil (plant-1)" in system_prompt
+    assert "- batch: Courtyard Tomatoes March 2026 [id: batch-1]" in system_prompt
+    assert "Pinned context for this thread:\n- plant: Basil [id: plant-1]" in system_prompt
+    assert "If the user asks about a plant that may be toxic" in system_prompt
+    assert "Treat session context and pinned context as the current working set" in system_prompt
+    assert "Use included ids for tool calls" in system_prompt
+    assert "retrieve the relevant object with a detail/list tool" in system_prompt
     assert fake_model.invocations[0][1].content == "What should I do next?"
     assert (
         "snapshot",

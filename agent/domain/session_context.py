@@ -171,7 +171,7 @@ def session_context_summary_text(session, user_id: str, context: dict[str, Any] 
         lines.append("Focus objects:")
         for item in focus_items:
             label = item.get("label") or item["subject_id"]
-            lines.append(f"- {item['subject_type']}: {label} ({item['subject_id']})")
+            lines.append(f"- {item['subject_type']}: {label} [id: {item['subject_id']}]")
 
     if not lines:
         return None

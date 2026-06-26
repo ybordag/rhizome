@@ -416,6 +416,7 @@ def test_session_context_intake_injects_pinned_text(patched_sessionlocal, db_ses
     assert result.get("pinned_context_text")
     assert "plant" in result["pinned_context_text"]
     assert "Basil" in result["pinned_context_text"]
+    assert f"[id: {plant.id}]" in result["pinned_context_text"]
 
 
 @pytest.mark.integration

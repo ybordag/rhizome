@@ -84,7 +84,7 @@ If no actionable context exists, the graph can skip the main LLM call and route 
 
 The main LLM inference call. It builds the system prompt from the garden profile, temporal context, session context, pinned context, monitor alerts, weather context, latest triage, and recent structured interactions, then sends that prompt plus conversation history to the configured model. The model has access to all 94 tools via LangChain's tool binding.
 
-Pinned context appears in the system prompt under `Pinned context for this thread:`. It is not prepended as a user message and is not stored as separate conversation content. The garden profile is also loaded into the system prompt, under `You know this specific garden well:`.
+Pinned context appears in the system prompt under `Pinned context for this thread:`. It is not prepended as a user message and is not stored as separate conversation content. Session focus objects and pinned context lines include object ids in `[id: ...]` form so the model can call tools with exact ids. The prompt also instructs the model to treat session and pinned context as the current working set and to retrieve object details with a detail/list tool when the focus text requires more context than the compact summary provides. The garden profile is loaded into the system prompt under `You know this specific garden well:`.
 
 Prompt-assembly telemetry emits a sanitized `llm_prompt_context` state snapshot with booleans/counts for which prompt sections were present. It does not emit the raw garden profile, session context text, pinned context text, or user message content.
 
