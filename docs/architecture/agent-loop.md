@@ -70,11 +70,14 @@ Builds or loads the current triage snapshot. This is separate from the main conv
 The triage reasoner:
 1. Queries all active tasks with urgency tiers and deadlines
 2. Queries the latest weather impacts
-3. Makes a fast LLM call asking: "given this garden context, what should this user focus on today?"
-4. Persists a `TriageSnapshot` with recommended_task_ids, urgent/routine/project groupings, reasoning summary
-5. Records a `triage_view` interaction envelope so the app can present the snapshot as structured UI
+3. Uses the already-loaded `GardenState.session_context` when present, instead of re-inferring time, energy, and focus from the visible message text
+4. Makes a fast LLM call asking: "given this garden context, what should this user focus on today?"
+5. Persists a `TriageSnapshot` with recommended_task_ids, urgent/routine/project groupings, reasoning summary
+6. Records a `triage_view` interaction envelope so the app can present the snapshot as structured UI
 
 The main LLM call can then reference "today's triage" without needing to re-derive it.
+
+Triage failures emit sanitized `triage_snapshot_error` telemetry with error type, truncated error text, and session-context metadata. Raw user text, prompt text, profile notes, provider keys, and full object notes are not emitted.
 
 If no actionable context exists, the graph can skip the main LLM call and route to END for first-session/setup flows.
 
@@ -84,9 +87,9 @@ If no actionable context exists, the graph can skip the main LLM call and route 
 
 The main LLM inference call. It builds the system prompt from the garden profile, temporal context, session context, pinned context, monitor alerts, weather context, latest triage, and recent structured interactions, then sends that prompt plus conversation history to the configured model. The model has access to all 94 tools via LangChain's tool binding.
 
-Pinned context appears in the system prompt under `Pinned context for this thread:`. It is not prepended as a user message and is not stored as separate conversation content. Session focus objects and pinned context lines include object ids in `[id: ...]` form so the model can call tools with exact ids. The prompt also instructs the model to treat session and pinned context as the current working set and to retrieve object details with a detail/list tool when the focus text requires more context than the compact summary provides. The garden profile is loaded into the system prompt under `You know this specific garden well:`.
+Pinned context appears in the system prompt under `Pinned context for this thread:`. It is not prepended as a user message and is not stored as separate conversation content. Session focus objects and pinned context render through the same context-ref formatter, include object ids in `[id: ...]` / `(id: ...)` form, and can include a capped `Related open tasks:` shortlist for the selected plant, batch, bed, container, project, task, or incident. The prompt also instructs the model to treat session and pinned context as the current working set and to retrieve object details with a detail/list tool when the focus text requires more context than the compact summary provides. The garden profile is loaded into the system prompt under `You know this specific garden well:`.
 
-Prompt-assembly telemetry emits a sanitized `llm_prompt_context` state snapshot with booleans/counts for which prompt sections were present. It does not emit the raw garden profile, session context text, pinned context text, or user message content.
+Prompt-assembly telemetry emits a sanitized `llm_prompt_context` state snapshot with booleans/counts for which prompt sections were present, session-context source/ref metadata, triage snapshot id/counts, and whether related focus tasks were included. It does not emit the raw garden profile, session context text, pinned context text, or user message content.
 
 The prompt guidelines are grouped by context priority, gardening advice, safety and confirmation, tool use, and duplicate prevention. Context priority tells the model to prefer fresh tool/database results over compact pinned/session summaries, and to avoid tool calls when the compact prompt context is already enough for an accurate answer.
 
@@ -165,7 +168,7 @@ class GardenState(MessagesState):
     pinned_context_text: Optional[str]
 ```
 
-`messages` comes from LangGraph's `MessagesState`. `user_id` is carried in both graph config and state for observability, but tools scope themselves through the `current_user_id` ContextVar set at intake. Runtime telemetry records intermediate graph events such as prompt-context assembly, tool start/completion, triage snapshots, and interaction snapshots. Tool telemetry records tool names and argument keys/counts rather than raw argument values. Rhizome does not emit private model chain-of-thought; it emits observable state transitions and sanitized decision/context metadata.
+`messages` comes from LangGraph's `MessagesState`. `user_id` is carried in both graph config and state for observability. `session_context_intake`, `weather_context_loader`, `triage_reasoner`, `llm_call`, and `tool_node` set the `current_user_id` ContextVar before tenant-scoped reads or tool execution. Runtime telemetry records intermediate graph events such as prompt-context assembly, tool start/completion, triage snapshots, and interaction snapshots. Tool telemetry records tool names and argument keys/counts rather than raw argument values. Rhizome does not emit private model chain-of-thought; it emits observable state transitions and sanitized decision/context metadata.
 
 ---
 

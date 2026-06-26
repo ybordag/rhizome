@@ -41,8 +41,16 @@ and context so the user can act without re-reading the whole garden state.
   `focus_text`, `time_text`, `energy_text`, and `focus_context` should not
   hard-filter candidate tasks unless a future explicit triage filter contract
   is added.
+- When Verdant patches structured session context before chat starts, the graph
+  triage node preserves that stored context instead of re-inferring a different
+  focus from the chat message text.
+- Focus objects can add a capped related open-task shortlist to prompt context
+  so "what should I do first?" questions about a selected batch, project, plant,
+  bed, container, task, or incident are grounded in existing work.
 - Missing profile, weather, or task data should produce an honest low-context
   snapshot rather than a failed session.
+- Triage failures should emit sanitized diagnostic telemetry rather than looking
+  identical to a normal empty snapshot.
 - Triage explanations should identify the reasoning without duplicating the
   full task list in prose.
 

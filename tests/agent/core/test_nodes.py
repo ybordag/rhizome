@@ -6,9 +6,19 @@ from langgraph.graph import END
 from agent.core import nodes
 from agent.core import telemetry
 from langchain.messages import HumanMessage, ToolMessage
-from db.models import MonitorAlert
+from db.models import MonitorAlert, TriageSnapshot
 from tests.support.fakes import FakeBoundModel, FakeTool, make_ai_message, make_tool_call_message
-from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
+from tests.support.factories import (
+    make_incident_report,
+    make_profile,
+    make_project,
+    make_project_brief,
+    make_project_proposal,
+    make_project_revision,
+    make_task,
+    make_task_generation_run,
+    make_treatment_plan,
+)
 
 
 class RecordingObserver:
@@ -26,6 +36,13 @@ class RecordingObserver:
 
     def record_state_snapshot(self, snapshot_name, *, payload=None, tags=None, metadata=None):
         self.calls.append(("snapshot", snapshot_name, payload, tags, metadata))
+
+
+def _snapshot_payload(observer: RecordingObserver, name: str) -> dict:
+    for kind, snapshot_name, payload, _tags, _metadata in observer.calls:
+        if kind == "snapshot" and snapshot_name == name:
+            return payload
+    raise AssertionError(f"snapshot {name!r} not recorded: {observer.calls}")
 
 
 @pytest.mark.graph
@@ -295,21 +312,15 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
     assert "climate zone, season, weather, space, soil, budget, and household" in system_prompt
     assert "zone 9b" not in system_prompt
     assert fake_model.invocations[0][1].content == "What should I do next?"
-    assert (
-        "snapshot",
-        "llm_prompt_context",
-        {
-            "has_garden_profile": True,
-            "has_session_context": True,
-            "has_pinned_context": True,
-            "has_monitor_alerts": False,
-            "has_weather_context": True,
-            "has_triage_context": True,
-            "interaction_count": 0,
-        },
-        ["llm", "prompt"],
-        None,
-    ) in observer.calls
+    payload = _snapshot_payload(observer, "llm_prompt_context")
+    assert payload["has_garden_profile"] is True
+    assert payload["has_session_context"] is True
+    assert payload["has_pinned_context"] is True
+    assert payload["has_monitor_alerts"] is False
+    assert payload["has_weather_context"] is True
+    assert payload["has_triage_context"] is True
+    assert payload["interaction_count"] == 0
+    assert payload["prompt_has_related_focus_tasks"] is False
     telemetry.set_observer(None)
 
 
@@ -341,21 +352,96 @@ def test_llm_call_omits_optional_context_sections_when_empty(monkeypatch, patche
     assert "No triage snapshot available." in system_prompt
     assert "Context priority:" in system_prompt
     assert "zone 9b" not in system_prompt
-    assert (
-        "snapshot",
-        "llm_prompt_context",
+    payload = _snapshot_payload(observer, "llm_prompt_context")
+    assert payload["has_garden_profile"] is False
+    assert payload["has_session_context"] is False
+    assert payload["has_pinned_context"] is False
+    assert payload["has_monitor_alerts"] is False
+    assert payload["has_weather_context"] is True
+    assert payload["has_triage_context"] is True
+    assert payload["interaction_count"] == 0
+    assert payload["session_context_source"] == "unset"
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_triage_reasoner_uses_stored_session_context_from_state(patched_sessionlocal, db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare tomato growbag",
+        estimated_minutes=35,
+    )
+    stored_context = {
+        "time_text": "35 minutes",
+        "energy_text": "low but focused",
+        "focus_text": "Courtyard Tomatoes March 2026",
+        "focus_context": [{"subject_type": "project", "subject_id": project.id}],
+        "source": "user",
+    }
+
+    result = nodes.triage_reasoner(
         {
-            "has_garden_profile": False,
-            "has_session_context": False,
-            "has_pinned_context": False,
-            "has_monitor_alerts": False,
-            "has_weather_context": True,
-            "has_triage_context": True,
-            "interaction_count": 0,
-        },
-        ["llm", "prompt"],
-        None,
-    ) in observer.calls
+            "messages": [HumanMessage(content="Ignore this opener text")],
+            "session_context": stored_context,
+            "user_id": "1",
+        }
+    )
+
+    assert result["triage_snapshot"]["id"]
+    assert task.id in result["triage_snapshot"]["project_task_ids"]
+    snapshot = db_session.query(TriageSnapshot).filter_by(id=result["triage_snapshot"]["id"]).first()
+    assert snapshot.session_context == stored_context
+    assert "time=35 minutes" in snapshot.user_focus_summary
+    assert "focus=Courtyard Tomatoes March 2026" in snapshot.user_focus_summary
+    payload = _snapshot_payload(observer, "triage_snapshot")
+    assert payload["session_context_source"] == "user"
+    assert payload["session_context_has_time_text"] is True
+    assert payload["session_context_has_energy_text"] is True
+    assert payload["session_context_has_focus_text"] is True
+    assert payload["session_context_ref_count"] == 1
+    assert payload["session_context_subject_types"] == ["project"]
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_triage_reasoner_emits_sanitized_error_telemetry(monkeypatch, patched_sessionlocal):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(nodes, "build_triage_snapshot", fail)
+    result = nodes.triage_reasoner(
+        {
+            "messages": [HumanMessage(content="What should I do?")],
+            "session_context": {
+                "focus_text": "tomatoes",
+                "focus_context": [{"subject_type": "batch", "subject_id": "batch-1"}],
+                "source": "user",
+            },
+            "user_id": "tenant-a",
+        }
+    )
+
+    assert result["triage_snapshot"]["id"] is None
+    payload = _snapshot_payload(observer, "triage_snapshot_error")
+    assert payload["user_id"] == "tenant-a"
+    assert payload["triage_error_type"] == "RuntimeError"
+    assert payload["triage_error_message_sanitized"] == "RuntimeError: database unavailable"
+    assert payload["session_context_source"] == "user"
+    assert payload["session_context_subject_types"] == ["batch"]
     telemetry.set_observer(None)
 
 

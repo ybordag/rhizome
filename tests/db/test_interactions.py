@@ -8,7 +8,9 @@ from agent.domain.interactions import (
     infer_resolution_status,
     record_interaction_summary,
     resolve_interaction_record,
+    get_pending_interaction_record,
 )
+from db.database import current_user_id
 from db.models import InteractionRecord, ProjectProposal, TriageSnapshot, WeatherSnapshot, WeatherTaskChangeSet
 from tests.support.factories import (
     make_profile,
@@ -18,6 +20,7 @@ from tests.support.factories import (
     make_project_revision,
     make_task,
     make_task_generation_run,
+    make_triage_snapshot,
 )
 
 
@@ -152,6 +155,77 @@ def test_get_pending_interaction_record_scoped_to_current_user(db_session):
 
     current_user_id.set("user-a")
     assert get_pending_interaction_record(db_session) is not None
+
+
+def test_get_pending_interaction_record_skips_empty_triage_view(db_session):
+    make_profile(db_session)
+    current_user_id.set("1")
+    triage = make_triage_snapshot(db_session, recommended_task_ids=[], routine_task_ids=[])
+    record_interaction_summary(
+        db_session,
+        build_triage_view_interaction(db_session, triage),
+        source_type="triage",
+        source_id=triage.id,
+    )
+    db_session.commit()
+
+    assert get_pending_interaction_record(db_session) is None
+
+
+def test_get_pending_interaction_record_skips_superseded_triage_view(db_session):
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(db_session, project, revision, run, title="Water tomatoes")
+    current_user_id.set("1")
+    old_triage = make_triage_snapshot(
+        db_session,
+        recommended_task_ids=[task.id],
+        routine_task_ids=[task.id],
+    )
+    record_interaction_summary(
+        db_session,
+        build_triage_view_interaction(db_session, old_triage),
+        source_type="triage",
+        source_id=old_triage.id,
+    )
+    make_triage_snapshot(
+        db_session,
+        recommended_task_ids=[task.id],
+        routine_task_ids=[task.id],
+        reasoning_summary="Newer snapshot.",
+    )
+    db_session.commit()
+
+    assert get_pending_interaction_record(db_session) is None
+
+
+def test_get_pending_interaction_record_returns_latest_nonempty_triage_view(db_session):
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(db_session, project, revision, run, title="Water tomatoes")
+    current_user_id.set("1")
+    triage = make_triage_snapshot(
+        db_session,
+        recommended_task_ids=[task.id],
+        routine_task_ids=[task.id],
+    )
+    record = record_interaction_summary(
+        db_session,
+        build_triage_view_interaction(db_session, triage),
+        source_type="triage",
+        source_id=triage.id,
+    )
+    db_session.commit()
+
+    assert get_pending_interaction_record(db_session).id == record.id
 
 
 def test_list_recent_interaction_records_scoped_to_current_user(db_session):

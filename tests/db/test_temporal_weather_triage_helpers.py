@@ -193,6 +193,43 @@ def test_build_triage_snapshot_does_not_filter_tasks_from_text_first_session_con
     }
 
 
+@pytest.mark.unit
+def test_build_triage_snapshot_preserves_session_context_override(db_session):
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile, name="Tomato Project")
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare growbag",
+    )
+    context = {
+        "time_text": "35 minutes",
+        "energy_text": "low but focused",
+        "focus_text": "Courtyard Tomatoes March 2026",
+        "focus_context": [{"subject_type": "project", "subject_id": project.id}],
+        "source": "user",
+    }
+
+    current_user_id.set("1")
+    snapshot = build_triage_snapshot(
+        db_session,
+        opener="A different opener should not replace stored context.",
+        session_context=context,
+        now=datetime(2026, 4, 14),
+    )
+
+    assert task.id in snapshot.recommended_task_ids
+    assert snapshot.session_context == context
+    assert "time=35 minutes" in snapshot.user_focus_summary
+    assert "focus=Courtyard Tomatoes March 2026" in snapshot.user_focus_summary
+
+
 # ---------------------------------------------------------------------------
 # WeatherSnapshot / TriageSnapshot garden_profile_id isolation
 #

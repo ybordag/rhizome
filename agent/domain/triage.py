@@ -237,6 +237,7 @@ def build_triage_snapshot(
     session,
     *,
     opener: str,
+    session_context: dict[str, Any] | None = None,
     timezone: str = DEFAULT_TIMEZONE,
     days_ahead: int = 7,
     now: Optional[datetime] = None,
@@ -248,7 +249,7 @@ def build_triage_snapshot(
 
     _step("Loading garden state", "running")
     temporal_context = build_temporal_context(session, timezone=timezone, now=now, days_ahead=days_ahead)
-    session_context = infer_session_context(session, opener, timezone=timezone)
+    session_context = dict(session_context or infer_session_context(session, opener, timezone=timezone) or {})
     _step("Loading garden state", "done")
 
     _step("Checking weather impacts", "running")

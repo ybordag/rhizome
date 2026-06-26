@@ -250,19 +250,23 @@ Thread
 
 **Pinned context:** `pinned_context` stores refs as `{ subject_type, subject_id }`. Adding or
 removing a pinned ref mutates only thread metadata, not the referenced garden object. During
-`session_context_intake`, Rhizome resolves accessible refs into compact prompt lines under
-`Pinned context for this thread:` and includes each object id as `[id: ...]`. Successful pin/unpin
-writes semantic `thread_context_pinned` / `thread_context_unpinned` activity events and is also
-covered by generic sanitized `database_change` telemetry.
+`session_context_intake`, Rhizome resolves accessible refs through the shared context-ref prompt
+formatter under `Pinned context for this thread:`. Prompt text includes exact object ids and can
+include a capped `Related open tasks:` shortlist for the focused object. Successful pin/unpin writes
+semantic `thread_context_pinned` / `thread_context_unpinned` activity events and is also covered by
+generic sanitized `database_change` telemetry.
 
 **Session context:** `session_context` stores text-first startup/focus values:
 `time_text`, `energy_text`, `focus_text`, `focus_context`, `source`, and `updated_at`.
 `focus_context` stores owned object refs as `{ subject_type, subject_id }`; labels are resolved
-on read by the dedicated session-context endpoint. Prompt summaries include the resolved label
-plus `[id: ...]`; if a label cannot be resolved, the raw id is still shown so the context remains
-actionable. `source` is `inferred` when `session_context_intake` preserved opener text for a
-thread with no user override, `user` after `PATCH /threads/{id}/session-context`, and `unset` only
-in the API response for threads with no stored context.
+on read by the dedicated session-context endpoint. Prompt summaries use the same context-ref
+formatter as pinned context, preserve exact object ids, and include related open tasks when Rhizome
+can derive them from project/object links. If a label cannot be resolved, the raw id is still shown
+so the context remains actionable. `source` is `inferred` when `session_context_intake` preserved
+opener text for a thread with no user override, `user` after `PATCH /threads/{id}/session-context`,
+and `unset` only in the API response for threads with no stored context. Triage snapshots preserve
+the already-loaded graph session context instead of re-inferring a different context from the
+visible user message.
 
 **Thread ID generation:** Cambium generates botanical three-word names (31 descriptors × 41 plants × 36 phenomena ≈ 45,700 combinations). Rhizome stores and uses them as opaque strings.
 
@@ -274,7 +278,9 @@ in the API response for threads with no stored context.
 
 Conversation state lives in the LangGraph checkpointer, keyed by `thread_id`. The `GardenState` typed state carries: `messages`, `monitor_alerts`, `temporal_context`, `session_context`, `weather_context`, `triage_snapshot`, `pending_interaction`, `interaction_history`, `skip_tool_node`, `user_id`, and `pinned_context_text`.
 
-`user_id` flows through `graph.config["configurable"]["user_id"]` and is set into the `current_user_id` ContextVar by `session_context_intake` at the start of every turn. All tool queries use `current_user_id.get()` — never a hardcoded value.
+`user_id` flows through `graph.config["configurable"]["user_id"]` and graph state. Graph nodes that
+perform tenant-scoped reads reset the `current_user_id` ContextVar before querying, and all tool
+queries use `current_user_id.get()` — never a hardcoded value.
 
 ---
 

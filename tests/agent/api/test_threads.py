@@ -817,13 +817,14 @@ def test_session_context_intake_injects_text_first_summary_separate_from_pinned_
         {"configurable": {"thread_id": "summary-context-thread", "user_id": "1"}},
     )
 
-    assert result["session_context_text"] == "\n".join([
-        "Time available: 45 minutes",
-        "Energy: low but focused",
-        "Thread focus: How do I fertilize the cherry tomatoes?",
-        "Focus objects:",
-        f"- plant: Cherry Tomato (Sungold) [id: {plant.id}]",
-    ])
+    assert "Time available: 45 minutes" in result["session_context_text"]
+    assert "Energy: low but focused" in result["session_context_text"]
+    assert "Thread focus: How do I fertilize the cherry tomatoes?" in result["session_context_text"]
+    assert "Focus objects:" in result["session_context_text"]
+    assert f"[Plant] Cherry Tomato Sungold (id: {plant.id})" in result["session_context_text"]
+    assert "Quantity: 1 | Status:" in result["session_context_text"]
+    assert "Fertilizing:" in result["session_context_text"]
+    assert "Last inspected:" in result["session_context_text"]
     assert result["pinned_context_text"]
     assert result["session_context_text"] != result["pinned_context_text"]
 

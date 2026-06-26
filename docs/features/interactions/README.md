@@ -43,6 +43,10 @@ the proposal.
   frontend reloads.
 - Duplicate pending interactions should be reused rather than creating parallel
   approval records for the same source object.
+- Non-blocking `triage_view` records should only surface as the current pending
+  interaction when they correspond to the latest non-empty triage snapshot.
+  Stale or empty triage cards are skipped so the frontend review panel does not
+  display old "no work" summaries as current state.
 - Destructive confirmations route back through the tool node after approval.
 - Structured review tools execute inside the interaction node after approval
   when they already have enough persisted source data.

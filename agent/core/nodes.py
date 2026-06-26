@@ -27,6 +27,7 @@ from db.database import current_user_id
 from agent.core.state import GardenState
 from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
 from agent.domain.session_context import (
+    context_refs_prompt_text,
     normalize_inferred_session_context,
     session_context_for_graph,
     session_context_summary_text,
@@ -49,6 +50,51 @@ INTERACTION_REVIEW_TOOLS = {
     "approve_treatment_plan": "treatment_plan_review",
     "approve_weather_task_changes": "weather_change_review",
 }
+
+
+def _state_user_id(state: GardenState, default: str = "1") -> str:
+    return str(state.get("user_id") or current_user_id.get(default) or default)
+
+
+def _set_current_user_from_state(state: GardenState, default: str = "1") -> str:
+    uid = _state_user_id(state, default=default)
+    current_user_id.set(uid)
+    return uid
+
+
+def _set_current_user_from_state_or_config(state: GardenState, config: RunnableConfig, default: str = "1") -> str:
+    configurable = config.get("configurable") or {}
+    uid = str(state.get("user_id") or configurable.get("user_id") or current_user_id.get(default) or default)
+    current_user_id.set(uid)
+    return uid
+
+
+def _session_context_metadata(context: dict[str, Any] | None) -> dict[str, Any]:
+    context = context or {}
+    focus_context = context.get("focus_context") or []
+    subject_types = sorted(
+        {
+            item.get("subject_type")
+            for item in focus_context
+            if isinstance(item, dict) and item.get("subject_type")
+        }
+    )
+    return {
+        "session_context_source": context.get("source") or "unset",
+        "session_context_has_time_text": bool(context.get("time_text")),
+        "session_context_has_energy_text": bool(context.get("energy_text")),
+        "session_context_has_focus_text": bool(context.get("focus_text")),
+        "session_context_ref_count": len(focus_context),
+        "session_context_subject_types": subject_types,
+    }
+
+
+def _sanitize_error_message(exc: BaseException, *, limit: int = 160) -> str:
+    text = str(exc.__class__.__name__)
+    detail = str(exc).strip()
+    if detail:
+        text = f"{text}: {detail}"
+    return text[:limit]
 
 SYSTEM_PROMPT_TEMPLATE = """You are Rhizome, a knowledgeable and practical gardening assistant.
 
@@ -153,57 +199,10 @@ def _tool_arg_metadata(args: dict | None) -> dict:
 def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
     if not pinned:
         return ""
-    from db.models import Bed, Container, GardeningProject, IncidentReport, Plant, PlantBatch, Task
-    lines = []
-    for item in pinned:
-        stype = item.get("subject_type", "")
-        sid = item.get("subject_id", "")
-        try:
-            if stype == "plant":
-                obj = session.query(Plant).filter(Plant.id == sid, Plant.user_id == user_id).first()
-                if obj:
-                    name = obj.name + (f" ({obj.variety})" if obj.variety else "")
-                    lines.append(f"- plant: {name} [id: {sid}] · status: {obj.status or 'unknown'}")
-            elif stype == "batch":
-                obj = session.query(PlantBatch).filter(PlantBatch.id == sid, PlantBatch.user_id == user_id).first()
-                if obj:
-                    name = obj.plant_name + (f" ({obj.variety})" if obj.variety else "")
-                    lines.append(f"- batch: {obj.name} [id: {sid}] · plant: {name} · quantity: {obj.quantity_sown}")
-            elif stype == "bed":
-                obj = session.query(Bed).filter(Bed.id == sid, Bed.user_id == user_id).first()
-                if obj:
-                    loc = f" · {obj.location}" if obj.location else ""
-                    lines.append(f"- bed: {obj.name} [id: {sid}]{loc}")
-            elif stype == "container":
-                obj = session.query(Container).filter(Container.id == sid, Container.user_id == user_id).first()
-                if obj:
-                    typ = f" · {obj.container_type}" if obj.container_type else ""
-                    lines.append(f"- container: {obj.name} [id: {sid}]{typ}")
-            elif stype == "task":
-                obj = (
-                    session.query(Task)
-                    .join(GardeningProject, Task.project_id == GardeningProject.id)
-                    .filter(Task.id == sid, GardeningProject.user_id == user_id)
-                    .first()
-                )
-                if obj:
-                    lines.append(f"- task: {obj.title} [id: {sid}] · status: {obj.status or 'pending'}")
-            elif stype == "project":
-                obj = session.query(GardeningProject).filter(
-                    GardeningProject.id == sid, GardeningProject.user_id == user_id
-                ).first()
-                if obj:
-                    lines.append(f"- project: {obj.name} [id: {sid}] · status: {obj.status or 'active'}")
-            elif stype == "incident":
-                incident = session.query(IncidentReport).filter(
-                    IncidentReport.id == sid, IncidentReport.user_id == user_id
-                ).first()
-                if incident:
-                    summary = f" · {incident.summary[:60]}" if incident.summary else ""
-                    lines.append(f"- incident: {incident.incident_type} [id: {sid}]{summary}")
-        except Exception:
-            pass
-    return "\n".join(lines)
+    try:
+        return context_refs_prompt_text(session, user_id, pinned)
+    except Exception:
+        return ""
 
 
 def session_context_intake(state: GardenState, config: RunnableConfig):
@@ -375,6 +374,7 @@ def _upsert_thread(
 
 
 def weather_context_loader(state: GardenState):
+    _set_current_user_from_state(state)
     session = SessionLocal()
     try:
         snapshot = get_latest_weather_snapshot(session)
@@ -416,6 +416,7 @@ def weather_context_loader(state: GardenState):
 
 
 def triage_reasoner(state: GardenState):
+    uid = _set_current_user_from_state(state)
     if state.get("triage_snapshot"):
         return {}
 
@@ -429,13 +430,21 @@ def triage_reasoner(state: GardenState):
 
     session = SessionLocal()
     try:
-        snapshot = build_triage_snapshot(session, opener=opener or "hi", timezone=DEFAULT_TIMEZONE)
+        session_context = state.get("session_context") or None
+        snapshot = build_triage_snapshot(
+            session,
+            opener=opener or "hi",
+            session_context=session_context,
+            timezone=DEFAULT_TIMEZONE,
+        )
         emit_state_snapshot(
             "triage_snapshot",
             payload={
                 "snapshot_id": snapshot.id,
+                "user_id": uid,
                 "urgent_count": len(snapshot.urgent_task_ids or []),
                 "recommended_count": len(snapshot.recommended_task_ids or []),
+                **_session_context_metadata(snapshot.session_context),
             },
             tags=["triage"],
         )
@@ -463,8 +472,18 @@ def triage_reasoner(state: GardenState):
             },
             "pending_interaction": triage_interaction,
         }
-    except Exception:
+    except Exception as exc:
         session.rollback()
+        emit_state_snapshot(
+            "triage_snapshot_error",
+            payload={
+                "user_id": uid,
+                "triage_error_type": exc.__class__.__name__,
+                "triage_error_message_sanitized": _sanitize_error_message(exc),
+                **_session_context_metadata(state.get("session_context")),
+            },
+            tags=["triage", "error"],
+        )
         return {
             "triage_snapshot": {
                 "id": None,
@@ -489,6 +508,7 @@ def should_enter_llm_after_triage(state: GardenState):
 
 def llm_call(state: GardenState, config: RunnableConfig):
     """Always loads fresh profile from DB before building the system prompt."""
+    _set_current_user_from_state_or_config(state, config)
     profile_obj = None
     session = SessionLocal()
     try:
@@ -521,6 +541,12 @@ def llm_call(state: GardenState, config: RunnableConfig):
             "has_weather_context": bool(weather_text),
             "has_triage_context": bool(triage_text),
             "interaction_count": len(state.get("interaction_history") or []),
+            "triage_snapshot_id": (state.get("triage_snapshot") or {}).get("id"),
+            "triage_recommended_count": len((state.get("triage_snapshot") or {}).get("project_task_ids") or [])
+            + len((state.get("triage_snapshot") or {}).get("routine_task_ids") or [])
+            + len((state.get("triage_snapshot") or {}).get("urgent_task_ids") or []),
+            "prompt_has_related_focus_tasks": "Related open tasks:" in session_context_text,
+            **_session_context_metadata(state.get("session_context")),
         },
         tags=["llm", "prompt"],
     )
@@ -543,6 +569,7 @@ def llm_call(state: GardenState, config: RunnableConfig):
 
 def tool_node(state: GardenState):
     """Performs the tool call"""
+    _set_current_user_from_state(state)
 
     result = []
     for tool_call in state["messages"][-1].tool_calls:

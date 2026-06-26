@@ -613,7 +613,9 @@ class Bed(Base):
             f"  Size: {self.dimensions_sqft if self.dimensions_sqft is not None else 'unknown'} sqft | "
             f"Soil: {self.soil_type or 'unknown'}\n"
             f"  Last watered: {_fmt_date(self.last_watered_at)} | "
-            f"Last amended: {_fmt_date(self.last_amended_at)}\n"
+            f"Last fertilized: {_fmt_date(self.last_fertilized_at)} | "
+            f"Last amended: {_fmt_date(self.last_amended_at)} | "
+            f"Last inspected: {_fmt_date(self.last_inspected_at)}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
 
@@ -693,7 +695,9 @@ class Container(Base):
             f"Location: {self.location or 'unknown'}"
             f"\n  Mobile: {self.is_mobile}\n"
             f"  Last watered: {_fmt_date(self.last_watered_at)} | "
-            f"Last amended: {_fmt_date(self.last_amended_at)}\n"
+            f"Last fertilized: {_fmt_date(self.last_fertilized_at)} | "
+            f"Last amended: {_fmt_date(self.last_amended_at)} | "
+            f"Last inspected: {_fmt_date(self.last_inspected_at)}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
 
@@ -836,7 +840,8 @@ class Plant(Base):
     def to_summary(self, location_name: Optional[str] = None) -> str:
         return (
             f"[Plant] {self.name} {self.variety or ''} (id: {self.id})\n"
-            f"  Status: {self.status} | {self._state_text()}\n"
+            f"  Quantity: {self.quantity if self.quantity is not None else 1} | "
+            f"Status: {self.status} | {self._state_text()}\n"
             f"  Location: {self._location_text(location_name)} | "
             f"Source: {self.source or 'unknown'}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
