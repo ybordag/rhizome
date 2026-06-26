@@ -238,14 +238,14 @@ Review this file before adding a test you think might already be covered or expl
 | Area | File | Key scenarios covered |
 |---|---|---|
 | Domain logic | `tests/agent/domain/test_domain_logic.py` | compute_task_blocked_state (9 cases), planner estimates, infer_care_action patterns, _resolve_subjects |
-| Graph routing and prompt assembly | `tests/agent/core/test_nodes.py` | routing branches, prompt guideline sections, optional prompt-section omission, prompt telemetry flags, sanitized tool telemetry, stored session-context use in triage, triage error telemetry |
+| Graph routing and prompt assembly | `tests/agent/core/test_nodes.py`, `tests/agent/core/test_graph.py` | routing branches, prompt guideline sections, optional prompt-section omission, prompt telemetry flags, sanitized tool telemetry, stored session-context use in triage, first-turn graph preservation of patched session context, triage error telemetry |
 | Node edge cases | `tests/agent/core/test_node_edge_cases.py` | empty string confirm, special chars, missing plan, mixed calls |
 | Telemetry | `tests/agent/core/test_telemetry.py` | observer/no-op behavior, sanitized `database_change` insert/update/delete snapshots, multi-change commits, no-op commits, rollback suppression |
-| Thread/session context APIs | `tests/agent/api/test_threads.py`, `tests/agent/api/test_thread_context.py` | normalized session context, focus-object prompt summaries with ids, related open-task prompt context, pinned-context prompt summaries, pin/unpin activity events, successful mutation telemetry, failed mutation silence |
+| Thread/session context APIs | `tests/agent/api/test_threads.py`, `tests/agent/api/test_thread_context.py` | normalized session context, focus-object prompt summaries with ids, batch/project related open-task prompt context, pinned-context prompt summaries, pin/unpin activity events, successful mutation telemetry, failed mutation silence |
 | Task tracker | `tests/tools/projects/test_task_tracker_tools.py` | generate, regenerate, materialize, all lifecycle actions |
 | Priority/progress | `tests/tools/projects/test_priority_and_progress.py` | daily scoring, priority field, project progress |
 | Bulk assign | `tests/tools/projects/test_bulk_assign.py` | partial success, conflicts, dedup, idempotency |
 | Query efficiency | `tests/tools/projects/test_query_efficiency.py` | count correctness, location resolution, unique constraints |
 | Status transitions | `tests/tools/operations/test_status_and_orphans.py` | all invalid transition rejections, orphan prevention |
 | Activity history | `tests/tools/operations/test_activity_history.py` | all new tools, filtering, pagination, interaction events |
-| Structured interactions | `tests/db/test_interactions.py`, `tests/agent/api/test_internal_api.py` | pending interaction scoping, latest non-empty triage-view freshness, stale triage-view suppression |
+| Structured interactions | `tests/db/test_interactions.py`, `tests/agent/api/test_internal_api.py` | pending interaction scoping, latest non-empty triage-view freshness, stale triage-view suppression at domain and API boundaries, `/triage/latest` after graph-created triage |

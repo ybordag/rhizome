@@ -284,7 +284,16 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
             "Thread focus: How do I fertilize the cherry tomatoes?",
             "Focus objects:",
             "- batch: Courtyard Tomatoes March 2026 [id: batch-1]",
+            "  Related open tasks:",
+            "  - Prepare growbag_1 [id: task-1] (pending, high, 45 min, due 2026-04-12)",
         ]),
+        "session_context": {
+            "time_text": "45 minutes",
+            "energy_text": "low but focused",
+            "focus_text": "How do I fertilize the cherry tomatoes?",
+            "focus_context": [{"subject_type": "batch", "subject_id": "batch-1"}],
+            "source": "user",
+        },
         "pinned_context_text": "- plant: Basil [id: plant-1]",
     }
 
@@ -296,6 +305,8 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
     assert "Time available: 45 minutes" in system_prompt
     assert "Thread focus: How do I fertilize the cherry tomatoes?" in system_prompt
     assert "- batch: Courtyard Tomatoes March 2026 [id: batch-1]" in system_prompt
+    assert "Related open tasks:" in system_prompt
+    assert "Prepare growbag_1" in system_prompt
     assert "Pinned context for this thread:\n- plant: Basil [id: plant-1]" in system_prompt
     assert "Context priority:" in system_prompt
     assert "Gardening advice:" in system_prompt
@@ -320,7 +331,9 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
     assert payload["has_weather_context"] is True
     assert payload["has_triage_context"] is True
     assert payload["interaction_count"] == 0
-    assert payload["prompt_has_related_focus_tasks"] is False
+    assert payload["prompt_has_related_focus_tasks"] is True
+    assert payload["session_context_source"] == "user"
+    assert payload["session_context_subject_types"] == ["batch"]
     telemetry.set_observer(None)
 
 

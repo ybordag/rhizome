@@ -817,6 +817,27 @@ def test_session_context_intake_injects_project_text(patched_sessionlocal, db_se
     batch = make_batch(db_session, seed_garden_profile, project=proj, name="Summer Batch")
     plant = make_plant(db_session, seed_garden_profile, batch=batch, name="Pepper")
     link_plant_to_project(db_session, proj, plant)
+    brief = make_project_brief(db_session, proj)
+    proposal = make_project_proposal(db_session, proj, brief)
+    revision = make_project_revision(db_session, proj, proposal)
+    run = make_task_generation_run(db_session, proj, revision)
+    make_task(
+        db_session,
+        project=proj,
+        revision=revision,
+        generation_run=run,
+        title="Prepare pepper supports",
+        priority="high",
+        estimated_minutes=30,
+    )
+    make_task(
+        db_session,
+        project=proj,
+        revision=revision,
+        generation_run=run,
+        title="Completed old prep",
+        status="done",
+    )
     _make_thread(db_session, thread_id="thread-proj", pinned=[{"subject_type": "project", "subject_id": proj.id}])
 
     from agent.core.nodes import session_context_intake
@@ -835,6 +856,9 @@ def test_session_context_intake_injects_project_text(patched_sessionlocal, db_se
     assert "Plants: 1" in text
     assert "Batches: 1" in text
     assert "Budget:" in text
+    assert "Related open tasks:" in text
+    assert "Prepare pepper supports" in text
+    assert "Completed old prep" not in text
 
 
 @pytest.mark.integration

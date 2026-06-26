@@ -480,6 +480,34 @@ def test_get_pending_interaction_excludes_other_users_records(patched_sessionloc
 
 
 @pytest.mark.integration
+def test_get_pending_interaction_skips_stale_empty_triage_view(patched_sessionlocal, db_session, seed_garden_profile):
+    from agent.domain.interactions import build_triage_view_interaction, record_interaction_summary
+    from db.database import current_user_id
+    from tests.support.factories import make_triage_snapshot
+
+    current_user_id.set("1")
+    triage = make_triage_snapshot(
+        db_session,
+        garden_profile_id=seed_garden_profile.id,
+        recommended_task_ids=[],
+        routine_task_ids=[],
+        project_task_ids=[],
+    )
+    record_interaction_summary(
+        db_session,
+        build_triage_view_interaction(db_session, triage),
+        source_type="triage",
+        source_id=triage.id,
+    )
+    db_session.commit()
+
+    resp = client.get("/internal/data/interactions/pending?user_id=1")
+
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+@pytest.mark.integration
 def test_list_recent_activity_empty(patched_sessionlocal, db_session, seed_garden_profile):
     resp = client.get("/internal/data/activity?user_id=1")
     assert resp.status_code == 200
@@ -583,6 +611,56 @@ def test_get_triage_snapshot_returns_structured_view(patched_sessionlocal, db_se
     assert len(body["routine_tasks"]) == 1
     assert body["routine_tasks"][0]["title"] == "Check soil moisture"
     assert body["project_tasks"] == []
+
+
+@pytest.mark.integration
+def test_get_triage_latest_after_graph_triage_run(patched_sessionlocal, db_session, seed_garden_profile):
+    from agent.core import nodes
+    from langchain.messages import HumanMessage
+    from tests.support.factories import (
+        make_project,
+        make_project_brief,
+        make_project_proposal,
+        make_project_revision,
+        make_task,
+        make_task_generation_run,
+    )
+
+    project = make_project(db_session, seed_garden_profile, name="Courtyard Tomatoes")
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare growbag_1",
+    )
+
+    result = nodes.triage_reasoner(
+        {
+            "messages": [HumanMessage(content="What should I do first?")],
+            "session_context": {
+                "time_text": "35 minutes",
+                "energy_text": "low but focused",
+                "focus_text": "Courtyard Tomatoes March 2026",
+                "focus_context": [{"subject_type": "project", "subject_id": project.id}],
+                "source": "user",
+            },
+            "user_id": "1",
+        }
+    )
+    assert result["triage_snapshot"]["id"]
+
+    resp = client.get("/internal/data/triage/latest?user_id=1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == result["triage_snapshot"]["id"]
+    all_tasks = body["urgent_tasks"] + body["routine_tasks"] + body["project_tasks"]
+    assert any(item["id"] == task.id and item["title"] == "Prepare growbag_1" for item in all_tasks)
 
 
 @pytest.mark.integration

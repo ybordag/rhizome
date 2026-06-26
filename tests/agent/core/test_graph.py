@@ -4,8 +4,16 @@ from langgraph.types import Command
 
 from agent.tools.operations.incidents import approve_treatment_plan, draft_treatment_plan, report_incident
 from agent.tools.projects.planning import save_project_proposal, update_project_brief
-from db.models import GardeningProject, ProjectProposal, Task, TreatmentPlan
+from db.models import GardeningProject, ProjectProposal, Task, Thread, TreatmentPlan, TriageSnapshot
 from tests.support.fakes import make_ai_message, make_tool_call_message
+from tests.support.factories import (
+    make_project,
+    make_project_brief,
+    make_project_proposal,
+    make_project_revision,
+    make_task,
+    make_task_generation_run,
+)
 
 
 @pytest.mark.graph
@@ -55,6 +63,54 @@ def test_first_user_turn_reuses_startup_triage_snapshot_without_regenerating(
     assert resumed_state.values["pending_interaction"]["id"] == startup_interaction_id
     assert resumed_state.values["triage_snapshot"]["id"] == startup_snapshot_id
     assert len(fake_bound_model.invocations) == 1
+
+
+@pytest.mark.graph
+def test_first_user_turn_preserves_patched_session_context_in_triage(
+    fresh_test_graph,
+    fake_bound_model,
+    seed_garden_profile,
+    db_session,
+):
+    project = make_project(db_session, seed_garden_profile, name="Courtyard Tomatoes")
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare growbag_1",
+    )
+    stored_context = {
+        "time_text": "35 minutes",
+        "energy_text": "low but focused",
+        "focus_text": "Courtyard Tomatoes March 2026",
+        "focus_context": [{"subject_type": "project", "subject_id": project.id}],
+        "source": "user",
+    }
+    db_session.add(
+        Thread(
+            id="thread-session-context-graph",
+            user_id="1",
+            session_context=stored_context,
+        )
+    )
+    db_session.commit()
+    fake_bound_model.queue(make_ai_message("Use the tomato task first."))
+    config = {"configurable": {"thread_id": "thread-session-context-graph", "user_id": "1"}}
+
+    result = fresh_test_graph.invoke({"messages": [HumanMessage(content="What should I do first?")]}, config=config)
+    state = fresh_test_graph.get_state(config)
+    snapshot_id = state.values["triage_snapshot"]["id"]
+    snapshot = db_session.get(TriageSnapshot, snapshot_id)
+
+    assert result["messages"][-1].content == "Use the tomato task first."
+    assert snapshot.session_context == stored_context
+    assert task.id in snapshot.recommended_task_ids
+    assert state.values["session_context"] == stored_context
 
 
 @pytest.mark.graph
