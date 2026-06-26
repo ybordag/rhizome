@@ -204,12 +204,18 @@ def test_add_entity_owned_by_other_user_returns_400(patched_sessionlocal, db_ses
 def test_add_duplicate_entity_returns_409(patched_sessionlocal, db_session, seed_garden_profile):
     plant = make_plant(db_session, seed_garden_profile)
     _make_thread(db_session, pinned=[{"subject_type": "plant", "subject_id": plant.id}])
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",
         json={"subject_type": "plant", "subject_id": plant.id},
     )
+
     assert resp.status_code == 409
     assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").count() == 0
+    assert [snapshot for snapshot in observer.snapshots if snapshot[0] == "database_change"] == []
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -218,12 +224,19 @@ def test_add_context_at_limit_returns_400(patched_sessionlocal, db_session, seed
     pinned = [{"subject_type": "bed", "subject_id": b.id} for b in beds]
     _make_thread(db_session, pinned=pinned)
     extra = make_bed(db_session, seed_garden_profile, name="Extra Bed")
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",
         json={"subject_type": "bed", "subject_id": extra.id},
     )
+
     assert resp.status_code == 400
     assert "limit" in resp.json()["detail"].lower()
+    assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").count() == 0
+    assert [snapshot for snapshot in observer.snapshots if snapshot[0] == "database_change"] == []
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -314,11 +327,17 @@ def test_remove_one_of_two_context_entries(patched_sessionlocal, db_session, see
 @pytest.mark.integration
 def test_remove_context_not_found_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
     _make_thread(db_session)
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
     resp = client.delete(
         f"/internal/data/threads/thread-1/context/plant/ghost-id?user_id={USER}",
     )
+
     assert resp.status_code == 404
     assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_unpinned").count() == 0
+    assert [snapshot for snapshot in observer.snapshots if snapshot[0] == "database_change"] == []
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration

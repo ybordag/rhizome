@@ -112,6 +112,43 @@ def test_tool_node_invokes_expected_tool(monkeypatch):
 
 
 @pytest.mark.graph
+def test_tool_node_telemetry_omits_raw_argument_values(monkeypatch):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    fake_tool = FakeTool("update_task", "updated")
+    monkeypatch.setattr(nodes, "tools_by_name", {"update_task": fake_tool})
+    state = {
+        "messages": [
+            make_tool_call_message(
+                "Updating task",
+                name="update_task",
+                args={
+                    "task_id": "task-1",
+                    "notes": "Sensitive free text from the user",
+                    "status": "done",
+                },
+                call_id="call-1",
+            )
+        ]
+    }
+
+    nodes.tool_node(state)
+
+    assert fake_tool.calls == [{
+        "task_id": "task-1",
+        "notes": "Sensitive free text from the user",
+        "status": "done",
+    }]
+    assert (
+        "tool_started",
+        "update_task",
+        {"arg_count": 3, "arg_keys": ["notes", "status", "task_id"]},
+    ) in observer.calls
+    assert "Sensitive free text from the user" not in str(observer.calls)
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
 def test_tool_node_returns_error_for_unknown_tool(monkeypatch):
     monkeypatch.setattr(nodes, "tools_by_name", {})
     state = {
@@ -265,6 +302,52 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
             "has_garden_profile": True,
             "has_session_context": True,
             "has_pinned_context": True,
+            "has_monitor_alerts": False,
+            "has_weather_context": True,
+            "has_triage_context": True,
+            "interaction_count": 0,
+        },
+        ["llm", "prompt"],
+        None,
+    ) in observer.calls
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_llm_call_omits_optional_context_sections_when_empty(monkeypatch, patched_sessionlocal):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    fake_model = FakeBoundModel([make_ai_message("ok")])
+    monkeypatch.setattr(nodes, "model_with_tools", fake_model)
+
+    result = nodes.llm_call(
+        {
+            "messages": [HumanMessage(content="Hello")],
+            "temporal_context": {"current_date": "2026-06-25", "timezone": "America/Los_Angeles"},
+            "weather_context": None,
+            "triage_snapshot": None,
+            "interaction_history": [],
+        },
+        {"configurable": {"user_id": "missing-profile-user"}},
+    )
+
+    assert result["messages"][0].content == "ok"
+    system_prompt = fake_model.invocations[0][0].content
+    assert "No garden profile found." in system_prompt
+    assert "Session context for this thread:" not in system_prompt
+    assert "Pinned context for this thread:" not in system_prompt
+    assert "Active monitor alerts:" not in system_prompt
+    assert "No weather snapshot available." in system_prompt
+    assert "No triage snapshot available." in system_prompt
+    assert "Context priority:" in system_prompt
+    assert "zone 9b" not in system_prompt
+    assert (
+        "snapshot",
+        "llm_prompt_context",
+        {
+            "has_garden_profile": False,
+            "has_session_context": False,
+            "has_pinned_context": False,
             "has_monitor_alerts": False,
             "has_weather_context": True,
             "has_triage_context": True,

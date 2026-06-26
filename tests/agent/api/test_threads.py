@@ -828,6 +828,26 @@ def test_session_context_intake_injects_text_first_summary_separate_from_pinned_
     assert result["session_context_text"] != result["pinned_context_text"]
 
 
+@pytest.mark.integration
+def test_session_context_summary_text_keeps_id_for_unresolved_focus_object(db_session, seed_garden_profile):
+    from agent.domain.session_context import session_context_summary_text
+
+    text = session_context_summary_text(
+        db_session,
+        "1",
+        {
+            "focus_text": "Check a stale object reference",
+            "focus_context": [{"subject_type": "plant", "subject_id": "missing-plant"}],
+        },
+    )
+
+    assert text == "\n".join([
+        "Thread focus: Check a stale object reference",
+        "Focus objects:",
+        "- plant: missing-plant [id: missing-plant]",
+    ])
+
+
 # ---------------------------------------------------------------------------
 # GET /internal/data/threads/{id}/messages — message history
 # ---------------------------------------------------------------------------

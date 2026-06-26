@@ -151,6 +151,79 @@ def test_database_session_commits_emit_sanitized_mutation_snapshots(db_session):
 
 
 @pytest.mark.telemetry
+def test_database_session_delete_emits_sanitized_mutation_snapshot(db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    thread = Thread(id="delete-telemetry-thread", user_id="1", title="Delete me")
+    db_session.add(thread)
+    db_session.commit()
+    observer.calls.clear()
+
+    db_session.delete(thread)
+    db_session.commit()
+
+    assert (
+        "snapshot",
+        "database_change",
+        {
+            "operation": "delete",
+            "table": "thread",
+            "record_id": "delete-telemetry-thread",
+            "model": "Thread",
+            "tenant_user_id": "1",
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in observer.calls
+
+
+@pytest.mark.telemetry
+def test_database_session_noop_update_does_not_emit_mutation_snapshot(db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    thread = Thread(id="noop-telemetry-thread", user_id="1", title="Same")
+    db_session.add(thread)
+    db_session.commit()
+    observer.calls.clear()
+
+    db_session.commit()
+
+    assert [call for call in observer.calls if call[0] == "snapshot" and call[1] == "database_change"] == []
+
+
+@pytest.mark.telemetry
+def test_database_session_same_value_assignment_after_load_does_not_emit_mutation_snapshot(db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    thread = Thread(id="same-value-telemetry-thread", user_id="1", title="Same")
+    db_session.add(thread)
+    db_session.commit()
+    assert thread.title == "Same"
+    observer.calls.clear()
+
+    thread.title = "Same"
+    db_session.commit()
+
+    assert [call for call in observer.calls if call[0] == "snapshot" and call[1] == "database_change"] == []
+
+
+@pytest.mark.telemetry
+def test_database_session_multiple_changes_in_one_commit_emit_all_snapshots(db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    first = Thread(id="multi-telemetry-a", user_id="1", title="A")
+    second = Thread(id="multi-telemetry-b", user_id="1", title="B")
+
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    database_changes = [call for call in observer.calls if call[0] == "snapshot" and call[1] == "database_change"]
+    records = {(call[2]["operation"], call[2]["table"], call[2]["record_id"]) for call in database_changes}
+    assert ("insert", "thread", "multi-telemetry-a") in records
+    assert ("insert", "thread", "multi-telemetry-b") in records
+
+
+@pytest.mark.telemetry
 def test_database_session_rollbacks_do_not_emit_mutation_snapshots(db_session):
     observer = RecordingObserver()
     telemetry.set_observer(observer)
