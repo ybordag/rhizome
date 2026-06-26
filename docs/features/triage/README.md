@@ -20,12 +20,13 @@ and context so the user can act without re-reading the whole garden state.
 - Request daily work, due work, blocked work, or a refreshed monitor pass.
 - See weather and monitor alerts folded into the reasoning behind priorities.
 - Keep session context explicit so the agent can distinguish planning,
-  catch-up, harvest, maintenance, and emergency modes.
+  catch-up, harvest, maintenance, and emergency modes without forcing the
+  user's words into numeric/enum filters.
 
 ## Owned Domain Objects
 
 - `TriageSnapshot`
-- session-context fields on `Thread`
+- text-first session-context fields on `Thread`
 - monitor alert references included in graph state
 
 ## Invariants
@@ -36,6 +37,10 @@ and context so the user can act without re-reading the whole garden state.
   should use `GET /triage/latest`, task list routes, or chat triage envelopes.
 - Triage snapshots should be scoped to the current user and derived from that
   user's profile, tasks, projects, weather, and monitor alerts.
+- Thread session context is prompt context, not an automatic task filter:
+  `focus_text`, `time_text`, `energy_text`, and `focus_context` should not
+  hard-filter candidate tasks unless a future explicit triage filter contract
+  is added.
 - Missing profile, weather, or task data should produce an honest low-context
   snapshot rather than a failed session.
 - Triage explanations should identify the reasoning without duplicating the

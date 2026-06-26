@@ -35,7 +35,7 @@ agent/
                       provider/provider_key from config["configurable"] (Cambium injection path),
                       falling back to RHIZOME_MODEL_PROVIDER + provider key env vars for local dev
     telemetry.py    — OTel + observer framework wired into all node transitions
-    temporal.py     — timezone handling, temporal context, session context inference
+    temporal.py     — timezone handling, temporal context, text-first opener preservation
 
   domain/
     activity_log.py — ActivityEvent write helpers (record_create/update/delete/activity_event)
@@ -187,8 +187,9 @@ main.py             — CLI entrypoint
 - `Thread` model: id = LangGraph thread_id (botanical name), user_id, title (auto from first
   message), project_id?, last_message_preview, last_active_at, message_count,
   `pinned_context`, `session_context`, created_at
-- `session_context_intake` upserts thread metadata and inferred session context on every turn
-  via `_upsert_thread()`; user-edited session context is preserved over later inferred values.
+- `session_context_intake` upserts thread metadata and text-first inferred session context on
+  every turn via `_upsert_thread()`; user-edited session context is preserved over later
+  inferred values.
 - Thread data endpoints include POST (register, idempotent), GET list (sorted by last_active_at),
   GET {id}, GET/PATCH `{id}/session-context`, GET {id}/messages (from LangGraph checkpoint),
   and DELETE.
