@@ -667,19 +667,23 @@ Thread metadata.
 should use the dedicated `GET /api/v1/threads/{id}/session-context` endpoint
 for display/edit flows because it returns the normalized `SessionContextView`
 shape, including `source: "unset"` for missing context and read-time
-`focus_label` resolution.
+display-label resolution for selected focus objects.
 
 ### `GET /api/v1/threads/{id}/session-context`
 Structured startup/session context for a thread. Used by Verdant's SessionStrip.
 **Response:** `SessionContextView`:
-`{ available_minutes, energy_level, focus_project_id, focus_label, preferred_location_type, open_to_outdoor_work, wants_quick_wins, source, updated_at }`
+`{ time_text, energy_text, focus_text, focus_context, source, updated_at }`
 
-Unset threads return all nullable values as `null`, `source: "unset"`, and `updated_at: null`.
+`focus_context` entries use `{ subject_type, subject_id, label }`, where `label` is resolved on
+read for display. Supported subject types are `plant`, `task`, `project`, `bed`, `container`,
+`batch`, and `incident`. Unset threads return nullable text fields as `null`,
+`focus_context: []`, `source: "unset"`, and `updated_at: null`.
 
 ### `PATCH /api/v1/threads/{id}/session-context`
-User override for structured startup/session context.
-**Body:** one or more fields from `{ available_minutes, energy_level, focus_project_id, preferred_location_type, open_to_outdoor_work, wants_quick_wins }`; empty bodies return `400`, and unknown fields return validation errors.
-Explicit `null` clears a field. `energy_level` is `low | medium | high`; `preferred_location_type` is `bed | container`.
+User override for text-first startup/session context.
+**Body:** one or more fields from `{ time_text, energy_text, focus_text, focus_context }`; empty bodies return `400`, and unknown fields return validation errors.
+Explicit `null` clears nullable text fields. `focus_context` is capped at 10 entries; Rhizome
+validates each subject type and confirms object ownership before storing refs.
 **Response:** `SessionContextView` with `source: "user"`.
 
 ### `GET /api/v1/threads/{id}/messages`

@@ -2884,6 +2884,13 @@ def _request_fields_set(model) -> set[str]:
     return set(getattr(model, "__fields_set__", set()))
 
 
+def _model_to_dict(model) -> dict:
+    dump = getattr(model, "model_dump", None)
+    if dump is not None:
+        return dump()
+    return model.dict()
+
+
 @data_router.get("/threads/{thread_id}/session-context")
 def get_thread_session_context(thread_id: str, user_id: str):
     """Get structured startup/session context for a thread."""
@@ -2926,15 +2933,18 @@ def update_thread_session_context(thread_id: str, user_id: str, body: UpdateSess
         if not fields:
             raise HTTPException(status_code=400, detail="No session context fields provided")
         updates = {field: getattr(body, field) for field in fields}
-        focus_project_id = updates.get("focus_project_id")
-        if focus_project_id is not None:
-            project = (
-                session.query(GardeningProject)
-                .filter(GardeningProject.id == focus_project_id, GardeningProject.user_id == uid)
-                .first()
-            )
-            if project is None:
-                raise HTTPException(status_code=400, detail="focus_project_id is not accessible")
+        if "focus_context" in updates and updates["focus_context"] is not None:
+            focus_context = []
+            for item in updates["focus_context"]:
+                ref = _model_to_dict(item)
+                stype = ref.get("subject_type", "")
+                sid = ref.get("subject_id", "")
+                if stype not in _VALID_SUBJECT_TYPES:
+                    raise HTTPException(status_code=400, detail=f"Invalid subject_type: {stype!r}")
+                if not _verify_entity_owner(session, uid, stype, sid):
+                    raise HTTPException(status_code=400, detail=f"Entity not found or not accessible: {stype}/{sid}")
+                focus_context.append({"subject_type": stype, "subject_id": sid})
+            updates["focus_context"] = focus_context
 
         thread.session_context = apply_session_context_patch(
             session,

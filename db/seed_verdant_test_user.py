@@ -131,11 +131,15 @@ def _ensure_fixture_thread(user_id: str) -> None:
         thread.message_count = 0
         thread.pinned_context = pinned_context
         thread.session_context = {
-            "available_minutes": 45,
-            "energy_level": "medium",
-            "focus": "Courtyard tomatoes",
-            "focus_project_id": project.id if project else None,
-            "source": "verdant_dev_fixture",
+            "time_text": "45 minutes",
+            "energy_text": "medium",
+            "focus_text": "Courtyard tomatoes",
+            "focus_context": (
+                [{"subject_type": "project", "subject_id": project.id}]
+                if project else []
+            ),
+            "source": "inferred",
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
 
         session.commit()

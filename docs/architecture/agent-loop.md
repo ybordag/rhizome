@@ -48,11 +48,12 @@ result = graph.invoke(
 Sets the `current_user_id` ContextVar from `config["configurable"]["user_id"]`. This is the user-scoping bridge for tools: tool modules read the current user from `db.database.current_user_id` instead of accepting user-controlled IDs.
 
 This node also:
-- Infers structured session context from the user's opener (`available_minutes`, `energy_level`, focus, location preference, outdoor preference, quick-win preference)
+- Preserves opener text as text-first session focus when no user-supplied context exists
 - Persists inferred context on `Thread.session_context` unless the user has explicitly overridden it through the API
 - Updates thread metadata such as title, last activity, message count, and last AI preview
 - Loads pending high/critical monitor alerts for prompt injection
 - Loads pinned thread context and resolves it to prompt text
+- Loads session focus context and resolves it to a separate prompt section from pinned context
 
 ---
 

@@ -111,35 +111,36 @@ class CreateThreadRequest(BaseModel):
     initial_context: Optional[list[dict]] = None
 
 
+class SessionContextObjectRefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_type: str
+    subject_id: str
+
+
 class UpdateSessionContextRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    available_minutes: Optional[int] = None
-    energy_level: Optional[str] = None
-    focus_project_id: Optional[str] = None
-    preferred_location_type: Optional[str] = None
-    open_to_outdoor_work: Optional[bool] = None
-    wants_quick_wins: Optional[bool] = None
+    time_text: Optional[str] = None
+    energy_text: Optional[str] = None
+    focus_text: Optional[str] = None
+    focus_context: Optional[list[SessionContextObjectRefRequest]] = None
 
-    @field_validator("available_minutes")
+    @field_validator("time_text", "energy_text", "focus_text")
     @classmethod
-    def _positive_minutes(cls, value: Optional[int]) -> Optional[int]:
-        if value is not None and value < 0:
-            raise ValueError("available_minutes must be >= 0")
+    def _normalize_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            value = value.strip()
         return value
 
-    @field_validator("energy_level")
+    @field_validator("focus_context")
     @classmethod
-    def _valid_energy(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and value not in {"low", "medium", "high"}:
-            raise ValueError("energy_level must be one of low, medium, high")
-        return value
-
-    @field_validator("preferred_location_type")
-    @classmethod
-    def _valid_location_type(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and value not in {"bed", "container"}:
-            raise ValueError("preferred_location_type must be one of bed, container")
+    def _valid_focus_context_length(
+        cls,
+        value: Optional[list[SessionContextObjectRefRequest]],
+    ) -> Optional[list[SessionContextObjectRefRequest]]:
+        if value is not None and len(value) > 10:
+            raise ValueError("focus_context cannot exceed 10 items")
         return value
 
 

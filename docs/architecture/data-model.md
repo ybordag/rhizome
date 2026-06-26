@@ -248,7 +248,13 @@ Thread
 
 **Key design decision:** `Thread` stores metadata only, plus small app-facing context documents. Actual message content lives in the LangGraph checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
 
-**Session context:** `session_context` stores canonical startup intake values: `available_minutes`, `energy_level`, `focus_project_id`, `preferred_location_type`, `open_to_outdoor_work`, `wants_quick_wins`, `source`, and `updated_at`. `source` is `inferred` when `session_context_intake` derived the values from opener text, `user` after `PATCH /threads/{id}/session-context`, and `unset` only in the API response for threads with no stored context. `focus_label` is resolved at read time from `focus_project_id`.
+**Session context:** `session_context` stores text-first startup/focus values:
+`time_text`, `energy_text`, `focus_text`, `focus_context`, `source`, and `updated_at`.
+`focus_context` stores owned object refs as `{ subject_type, subject_id }`; labels are resolved
+on read by the dedicated session-context endpoint. `source` is `inferred` when
+`session_context_intake` preserved opener text for a thread with no user override, `user` after
+`PATCH /threads/{id}/session-context`, and `unset` only in the API response for threads with no
+stored context.
 
 **Thread ID generation:** Cambium generates botanical three-word names (31 descriptors × 41 plants × 36 phenomena ≈ 45,700 combinations). Rhizome stores and uses them as opaque strings.
 

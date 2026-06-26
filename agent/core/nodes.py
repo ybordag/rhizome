@@ -26,7 +26,11 @@ from agent.core.telemetry import emit_state_snapshot, emit_tool_completed, emit_
 from db.database import current_user_id
 from agent.core.state import GardenState
 from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
-from agent.domain.session_context import normalize_inferred_session_context, session_context_for_graph
+from agent.domain.session_context import (
+    normalize_inferred_session_context,
+    session_context_for_graph,
+    session_context_summary_text,
+)
 from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
 from agent.domain.weather import get_latest_weather_snapshot
@@ -55,7 +59,7 @@ You know this specific garden well:
 Session time context:
 {temporal_context}
 
-{pinned_context_section}{alert_section}Latest weather:
+{session_context_section}{pinned_context_section}{alert_section}Latest weather:
 {weather_context}
 
 Latest triage:
@@ -238,6 +242,7 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         ]
 
         pinned_text = ""
+        session_context_text = ""
         if thread_id:
             thread_row = (
                 session.query(Thread)
@@ -246,10 +251,13 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
             )
             if thread_row and thread_row.pinned_context:
                 pinned_text = _pinned_context_text(session, uid, thread_row.pinned_context)
+            if thread_row:
+                session_context_text = session_context_summary_text(session, uid, session_context) or ""
 
         return {
             "temporal_context": temporal_context,
             "session_context": session_context,
+            "session_context_text": session_context_text or None,
             "skip_tool_node": False,
             "user_id": uid,
             "monitor_alerts": monitor_alerts,
@@ -475,11 +483,14 @@ def llm_call(state: GardenState, config: RunnableConfig):
     interaction_text = _interaction_context_text(state)
     alerts_text = _monitor_alerts_text(state)
     alert_section = f"⚠ Active monitor alerts:\n{alerts_text}\n\n" if alerts_text else ""
+    session_context_text = state.get("session_context_text") or ""
+    session_context_section = f"Session context for this thread:\n{session_context_text}\n\n" if session_context_text else ""
     pinned_text = state.get("pinned_context_text") or ""
     pinned_context_section = f"Pinned context for this thread:\n{pinned_text}\n\n" if pinned_text else ""
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         garden_profile=profile_text,
         temporal_context=temporal_text,
+        session_context_section=session_context_section,
         pinned_context_section=pinned_context_section,
         alert_section=alert_section,
         weather_context=weather_text,

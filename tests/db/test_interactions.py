@@ -217,7 +217,7 @@ def test_build_weather_and_triage_interactions_capture_sections(db_session):
     )
     triage = TriageSnapshot(
         timezone="America/Los_Angeles",
-        session_context={"available_minutes": 20},
+        session_context={"time_text": "20 minutes"},
         temporal_context={"today": "2026-04-12"},
         weather_snapshot_id=snapshot.id,
         recommended_task_ids=[child_task.id],

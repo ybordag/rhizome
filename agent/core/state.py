@@ -5,6 +5,7 @@ from typing import Any, Optional
 class GardenState(MessagesState):
     temporal_context: Optional[dict[str, Any]]
     session_context: Optional[dict[str, Any]]
+    session_context_text: Optional[str]
     startup_opener: Optional[str]
     weather_context: Optional[dict[str, Any]]
     triage_snapshot: Optional[dict[str, Any]]

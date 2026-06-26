@@ -18,27 +18,6 @@ EMERGENCY_TITLE_TERMS = ("treat", "spray", "weed", "protect", "cover", "shield",
 triage_summary_model = get_triage_model()
 
 
-def _task_matches_project_focus(task: Task, focus_project_id: Optional[str]) -> bool:
-    return not focus_project_id or task.project_id == focus_project_id
-
-
-def _task_matches_location_preference(task: Task, preferred_location_type: Optional[str]) -> bool:
-    if not preferred_location_type:
-        return True
-    linked = task.linked_subjects or []
-    return any(subject.get("subject_type") == preferred_location_type for subject in linked)
-
-
-def _task_matches_effort(task: Task, available_minutes: Optional[int], energy_level: str, wants_quick_wins: bool) -> bool:
-    if available_minutes is not None and task.estimated_minutes and task.estimated_minutes > max(available_minutes, 1):
-        return False
-    if energy_level == "low" and task.estimated_minutes and task.estimated_minutes > 45:
-        return False
-    if wants_quick_wins and task.estimated_minutes and task.estimated_minutes > 30:
-        return False
-    return True
-
-
 def _weather_impacts_by_task(impacts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for impact in impacts:
@@ -282,18 +261,6 @@ def build_triage_snapshot(
     rows = build_due_task_view(session, days_ahead=days_ahead, now=now)
     filtered_rows: list[dict[str, Any]] = []
     for row in rows:
-        task = row["task"]
-        if not _task_matches_project_focus(task, session_context.get("focus_project_id")):
-            continue
-        if not _task_matches_location_preference(task, session_context.get("preferred_location_type")):
-            continue
-        if row["urgency"] not in {"blocker", "time_sensitive"} and not _task_matches_effort(
-            task,
-            session_context.get("available_minutes"),
-            session_context.get("energy_level", "medium"),
-            session_context.get("wants_quick_wins", False),
-        ):
-            continue
         filtered_rows.append(row)
 
     if not filtered_rows:
@@ -319,11 +286,14 @@ def build_triage_snapshot(
 
     _step("Generating recommendations", "running")
     focus_summary = []
-    if session_context.get("available_minutes") is not None:
-        focus_summary.append(f"{session_context['available_minutes']} minutes available")
-    focus_summary.append(f"energy={session_context.get('energy_level', 'medium')}")
-    if session_context.get("focus_project_id"):
-        focus_summary.append(f"focused on project {session_context['focus_project_id']}")
+    if session_context.get("time_text"):
+        focus_summary.append(f"time={session_context['time_text']}")
+    if session_context.get("energy_text"):
+        focus_summary.append(f"energy={session_context['energy_text']}")
+    if session_context.get("focus_text"):
+        focus_summary.append(f"focus={session_context['focus_text']}")
+    if session_context.get("focus_context"):
+        focus_summary.append(f"focus objects={len(session_context['focus_context'])}")
 
     profile = session.query(GardenProfile).filter(GardenProfile.user_id == current_user_id.get()).first()
     snapshot = TriageSnapshot(

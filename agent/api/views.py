@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -400,14 +400,17 @@ class ThreadView(BaseModel):
     created_at: datetime
 
 
+class SessionContextObjectRefView(BaseModel):
+    subject_type: str
+    subject_id: str
+    label: Optional[str] = None
+
+
 class SessionContextView(BaseModel):
-    available_minutes: Optional[int] = None
-    energy_level: Optional[str] = None
-    focus_project_id: Optional[str] = None
-    focus_label: Optional[str] = None
-    preferred_location_type: Optional[str] = None
-    open_to_outdoor_work: Optional[bool] = None
-    wants_quick_wins: Optional[bool] = None
+    time_text: Optional[str] = None
+    energy_text: Optional[str] = None
+    focus_text: Optional[str] = None
+    focus_context: list[SessionContextObjectRefView] = Field(default_factory=list)
     source: str
     updated_at: Optional[datetime] = None
 

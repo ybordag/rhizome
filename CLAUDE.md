@@ -194,11 +194,12 @@ main.py             — CLI entrypoint
   and DELETE.
 - Structured session context is exposed for Verdant's SessionStrip with unset/inferred/user
   source semantics. PATCH requires at least one known field, rejects unknown fields, supports
-  explicit `null` clears, validates enum/minute fields, resolves `focus_label` on read, and
-  scopes reads/writes by `user_id` and `thread_id`.
+  explicit `null` clears, validates `focus_context` subject types/ownership, resolves display
+  labels on read, and scopes reads/writes by `user_id` and `thread_id`.
 - Current focused thread/API coverage includes serializer shape, unset/stored session context,
-  happy path and edge PATCH cases, focus label resolution, explicit clears, invalid payloads,
-  user isolation, inferred refresh, and user override precedence.
+  happy path and edge PATCH cases, focus object labels, explicit clears, invalid payloads,
+  user isolation, graph prompt injection, triage decoupling, inferred refresh, and user override
+  precedence.
 
 **Frontend API pass complete (2026-06-19):**
 - `ActivityEvent.user_id` column added (migration); `list_recent_activity_entries` now scopes
@@ -320,12 +321,13 @@ main.py             — CLI entrypoint
   shape exactly. Added regression coverage in `tests/agent/api/test_threads.py` for the direct
   serializer contract, exact field order/key set, compact raw JSON for list/detail responses,
   ISO datetime encoding, and default `pinned_context: []`/`message_count: 0` behavior.
-- `#146` in progress on `ranunculus` - structured startup/session context for Verdant is now
-  persisted on `Thread.session_context` and exposed via GET/PATCH
-  `/threads/{id}/session-context`. The API distinguishes `unset`, `inferred`, and `user`
-  sources, preserves user overrides across later graph intake, resolves `focus_label` from
-  `focus_project_id` on read, rejects empty/unknown PATCH payloads, and includes multitenancy
-  regression coverage for API and graph-side thread lookup.
+- `#148` in progress on `ranunculus` - startup/session context is now text-first:
+  `time_text`, `energy_text`, `focus_text`, and `focus_context`. The dedicated
+  GET/PATCH `/threads/{id}/session-context` endpoint distinguishes `unset`, `inferred`, and
+  `user` sources, preserves user overrides across later graph intake, resolves focus object
+  labels on read, rejects empty/unknown PATCH payloads, validates focus object ownership, keeps
+  pinned context separate from session focus, and no longer lets session context hard-filter
+  triage candidates.
 - Small structured endpoint cleanup: `GET /tasks/blocked` now returns `TaskSummaryView[]`
   instead of `{"result": "<prose>"}` using `build_blocked_task_view()` in
   `agent/domain/tracker.py`. The route is scoped to the current user's projects and no longer
