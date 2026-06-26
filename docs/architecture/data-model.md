@@ -241,20 +241,28 @@ Thread
   last_message_preview string?      — first 150 chars of last AI response (updated each turn)
   last_active_at       datetime?    — updated by session_context_intake on every turn
   message_count        int          — human message count; updated each turn
-  pinned_context       JSON         — pinned entities injected into the prompt
+  pinned_context       JSON         — pinned entity refs resolved into compact prompt context
   session_context      JSON?        — structured startup/session context for Verdant
   created_at           datetime
 ```
 
 **Key design decision:** `Thread` stores metadata only, plus small app-facing context documents. Actual message content lives in the LangGraph checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
 
+**Pinned context:** `pinned_context` stores refs as `{ subject_type, subject_id }`. Adding or
+removing a pinned ref mutates only thread metadata, not the referenced garden object. During
+`session_context_intake`, Rhizome resolves accessible refs into compact prompt lines under
+`Pinned context for this thread:` and includes each object id as `[id: ...]`. Successful pin/unpin
+writes semantic `thread_context_pinned` / `thread_context_unpinned` activity events and is also
+covered by generic sanitized `database_change` telemetry.
+
 **Session context:** `session_context` stores text-first startup/focus values:
 `time_text`, `energy_text`, `focus_text`, `focus_context`, `source`, and `updated_at`.
 `focus_context` stores owned object refs as `{ subject_type, subject_id }`; labels are resolved
-on read by the dedicated session-context endpoint. `source` is `inferred` when
-`session_context_intake` preserved opener text for a thread with no user override, `user` after
-`PATCH /threads/{id}/session-context`, and `unset` only in the API response for threads with no
-stored context.
+on read by the dedicated session-context endpoint. Prompt summaries include the resolved label
+plus `[id: ...]`; if a label cannot be resolved, the raw id is still shown so the context remains
+actionable. `source` is `inferred` when `session_context_intake` preserved opener text for a
+thread with no user override, `user` after `PATCH /threads/{id}/session-context`, and `unset` only
+in the API response for threads with no stored context.
 
 **Thread ID generation:** Cambium generates botanical three-word names (31 descriptors × 41 plants × 36 phenomena ≈ 45,700 combinations). Rhizome stores and uses them as opaque strings.
 

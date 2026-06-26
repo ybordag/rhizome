@@ -238,8 +238,10 @@ Review this file before adding a test you think might already be covered or expl
 | Area | File | Key scenarios covered |
 |---|---|---|
 | Domain logic | `tests/agent/domain/test_domain_logic.py` | compute_task_blocked_state (9 cases), planner estimates, infer_care_action patterns, _resolve_subjects |
-| Graph routing | `tests/agent/core/test_nodes.py` | all routing branches |
+| Graph routing and prompt assembly | `tests/agent/core/test_nodes.py` | routing branches, prompt guideline sections, optional prompt-section omission, prompt telemetry flags, sanitized tool telemetry |
 | Node edge cases | `tests/agent/core/test_node_edge_cases.py` | empty string confirm, special chars, missing plan, mixed calls |
+| Telemetry | `tests/agent/core/test_telemetry.py` | observer/no-op behavior, sanitized `database_change` insert/update/delete snapshots, multi-change commits, no-op commits, rollback suppression |
+| Thread/session context APIs | `tests/agent/api/test_threads.py`, `tests/agent/api/test_thread_context.py` | normalized session context, focus-object `[id: ...]` prompt summaries, pinned-context prompt summaries, pin/unpin activity events, successful mutation telemetry, failed mutation silence |
 | Task tracker | `tests/tools/projects/test_task_tracker_tools.py` | generate, regenerate, materialize, all lifecycle actions |
 | Priority/progress | `tests/tools/projects/test_priority_and_progress.py` | daily scoring, priority field, project progress |
 | Bulk assign | `tests/tools/projects/test_bulk_assign.py` | partial success, conflicts, dedup, idempotency |

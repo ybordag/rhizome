@@ -679,6 +679,10 @@ read for display. Supported subject types are `plant`, `task`, `project`, `bed`,
 `batch`, and `incident`. Unset threads return nullable text fields as `null`,
 `focus_context: []`, `source: "unset"`, and `updated_at: null`.
 
+When the graph builds prompt context, focus objects are rendered with the resolved label and an
+explicit `[id: ...]` marker. If the label cannot be resolved, Rhizome keeps the raw id in the
+prompt summary so stale refs remain visible instead of silently becoming ambiguous.
+
 Verdant should update this endpoint before starting a chat stream when a user selects a concrete
 garden object. The intended sequence is: create or select the thread, PATCH `focus_text` and
 `focus_context` refs, then start the agent stream. If an object such as a batch is only mentioned
