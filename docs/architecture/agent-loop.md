@@ -88,6 +88,8 @@ Pinned context appears in the system prompt under `Pinned context for this threa
 
 Prompt-assembly telemetry emits a sanitized `llm_prompt_context` state snapshot with booleans/counts for which prompt sections were present. It does not emit the raw garden profile, session context text, pinned context text, or user message content.
 
+The prompt guidelines are grouped by context priority, gardening advice, safety and confirmation, tool use, and duplicate prevention. Context priority tells the model to prefer fresh tool/database results over compact pinned/session summaries, and to avoid tool calls when the compact prompt context is already enough for an accurate answer.
+
 If the model returns a plain text response (no tool calls), the conversation turn is complete → `should_continue` routes to END.
 
 If the model calls one or more tools, execution continues.

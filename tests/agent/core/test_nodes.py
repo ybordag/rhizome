@@ -243,10 +243,20 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
     assert "Thread focus: How do I fertilize the cherry tomatoes?" in system_prompt
     assert "- batch: Courtyard Tomatoes March 2026 [id: batch-1]" in system_prompt
     assert "Pinned context for this thread:\n- plant: Basil [id: plant-1]" in system_prompt
-    assert "If the user asks about a plant that may be toxic" in system_prompt
+    assert "Context priority:" in system_prompt
+    assert "Gardening advice:" in system_prompt
+    assert "Safety and confirmation:" in system_prompt
+    assert "Tool use:" in system_prompt
+    assert "Duplicate prevention:" in system_prompt
+    assert "Treat fresh tool/database results as the most current source of truth" in system_prompt
     assert "Treat session context and pinned context as the current working set" in system_prompt
     assert "Use included ids for tool calls" in system_prompt
     assert "retrieve the relevant object with a detail/list tool" in system_prompt
+    assert "Do not use tools when the compact prompt context is enough" in system_prompt
+    assert "If the user asks about a plant that may be toxic" in system_prompt
+    assert "warn once for that relevant recommendation or topic" in system_prompt
+    assert "climate zone, season, weather, space, soil, budget, and household" in system_prompt
+    assert "zone 9b" not in system_prompt
     assert fake_model.invocations[0][1].content == "What should I do next?"
     assert (
         "snapshot",
