@@ -4,10 +4,28 @@ import pytest
 from langgraph.graph import END
 
 from agent.core import nodes
+from agent.core import telemetry
 from langchain.messages import HumanMessage, ToolMessage
 from db.models import MonitorAlert
 from tests.support.fakes import FakeBoundModel, FakeTool, make_ai_message, make_tool_call_message
 from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
+
+
+class RecordingObserver:
+    def __init__(self):
+        self.calls = []
+
+    def record_message(self, role, text, *, payload=None, metadata=None):
+        self.calls.append(("message", role, text, payload, metadata))
+
+    def record_tool_call_started(self, tool_name, *, payload=None):
+        self.calls.append(("tool_started", tool_name, payload))
+
+    def record_tool_call_completed(self, tool_name, *, success, payload=None, error=""):
+        self.calls.append(("tool_completed", tool_name, success, payload, error))
+
+    def record_state_snapshot(self, snapshot_name, *, payload=None, tags=None, metadata=None):
+        self.calls.append(("snapshot", snapshot_name, payload, tags, metadata))
 
 
 @pytest.mark.graph
@@ -67,6 +85,8 @@ def test_should_continue_routes_to_interaction_node_for_review_tool():
 
 @pytest.mark.graph
 def test_tool_node_invokes_expected_tool(monkeypatch):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
     fake_tool = FakeTool("list_projects", "tool output")
     monkeypatch.setattr(nodes, "tools_by_name", {"list_projects": fake_tool})
     state = {
@@ -87,6 +107,8 @@ def test_tool_node_invokes_expected_tool(monkeypatch):
     assert isinstance(result["messages"][0], ToolMessage)
     assert result["messages"][0].tool_call_id == "call-1"
     assert result["messages"][0].content == "tool output"
+    assert ("tool_started", "list_projects", {"arg_count": 1, "arg_keys": ["status"]}) in observer.calls
+    telemetry.set_observer(None)
 
 
 @pytest.mark.graph
@@ -191,6 +213,8 @@ def test_monitor_alerts_text_empty_when_no_alerts():
 
 @pytest.mark.graph
 def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, patched_sessionlocal, db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
     make_profile(db_session)
     fake_model = FakeBoundModel([make_ai_message("ok")])
     monkeypatch.setattr(nodes, "model_with_tools", fake_model)
@@ -220,6 +244,22 @@ def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, p
     assert "- batch: Courtyard Tomatoes March 2026 (batch-1)" in system_prompt
     assert "Pinned context for this thread:\n- plant: Basil (plant-1)" in system_prompt
     assert fake_model.invocations[0][1].content == "What should I do next?"
+    assert (
+        "snapshot",
+        "llm_prompt_context",
+        {
+            "has_garden_profile": True,
+            "has_session_context": True,
+            "has_pinned_context": True,
+            "has_monitor_alerts": False,
+            "has_weather_context": True,
+            "has_triage_context": True,
+            "interaction_count": 0,
+        },
+        ["llm", "prompt"],
+        None,
+    ) in observer.calls
+    telemetry.set_observer(None)
 
 
 # ---------------------------------------------------------------------------

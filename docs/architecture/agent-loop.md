@@ -52,7 +52,7 @@ This node also:
 - Persists inferred context on `Thread.session_context` unless the user has explicitly overridden it through the API
 - Updates thread metadata such as title, last activity, message count, and last AI preview
 - Loads pending high/critical monitor alerts for prompt injection
-- Loads pinned thread context and resolves it to prompt text
+- Loads pinned thread context from `Thread.pinned_context` and resolves it to prompt text
 - Loads session focus context and resolves it to a separate prompt section from pinned context
 
 ---
@@ -82,7 +82,11 @@ If no actionable context exists, the graph can skip the main LLM call and route 
 
 ## Step 5: llm_call
 
-The main LLM inference call. It builds the system prompt from the garden profile, temporal context, pinned context, monitor alerts, weather context, latest triage, and recent structured interactions, then sends that prompt plus conversation history to the configured model. The model has access to all 94 tools via LangChain's tool binding.
+The main LLM inference call. It builds the system prompt from the garden profile, temporal context, session context, pinned context, monitor alerts, weather context, latest triage, and recent structured interactions, then sends that prompt plus conversation history to the configured model. The model has access to all 94 tools via LangChain's tool binding.
+
+Pinned context appears in the system prompt under `Pinned context for this thread:`. It is not prepended as a user message and is not stored as separate conversation content. The garden profile is also loaded into the system prompt, under `You know this specific garden well:`.
+
+Prompt-assembly telemetry emits a sanitized `llm_prompt_context` state snapshot with booleans/counts for which prompt sections were present. It does not emit the raw garden profile, session context text, pinned context text, or user message content.
 
 If the model returns a plain text response (no tool calls), the conversation turn is complete → `should_continue` routes to END.
 
@@ -159,7 +163,7 @@ class GardenState(MessagesState):
     pinned_context_text: Optional[str]
 ```
 
-`messages` comes from LangGraph's `MessagesState`. `user_id` is carried in both graph config and state for observability, but tools scope themselves through the `current_user_id` ContextVar set at intake.
+`messages` comes from LangGraph's `MessagesState`. `user_id` is carried in both graph config and state for observability, but tools scope themselves through the `current_user_id` ContextVar set at intake. Runtime telemetry records intermediate graph events such as prompt-context assembly, tool start/completion, triage snapshots, and interaction snapshots. Tool telemetry records tool names and argument keys/counts rather than raw argument values. Rhizome does not emit private model chain-of-thought; it emits observable state transitions and sanitized decision/context metadata.
 
 ---
 
@@ -168,6 +172,10 @@ class GardenState(MessagesState):
 Two persistence layers:
 
 **Application database** — SQLAlchemy models in `db/models.py`. Every tool write is persisted here. Plant care, tasks, projects, proposals, activity events, thread metadata, alerts, and API-facing context documents are durable.
+
+SQLAlchemy session hooks emit sanitized `database_change` telemetry after committed ORM inserts, updates, and deletes. Payloads include operation, table, model, record id, tenant context, and changed field names for updates; they do not include row values or free-text fields.
+
+Pinned-context changes are thread metadata writes. `POST /internal/data/threads/{thread_id}/context` and `DELETE /internal/data/threads/{thread_id}/context/{subject_type}/{subject_id}` update only `Thread.pinned_context`; they do not mutate the referenced plant, task, project, incident, bed, container, or batch. Successful pin/unpin operations also write durable `thread_context_pinned` / `thread_context_unpinned` activity events with subject links, in addition to the generic committed-write telemetry.
 
 **LangGraph checkpoint store** — full graph state, including message history and interrupt state. A session can be resumed exactly mid-graph, including mid-approval-flow, by loading the checkpoint for its `thread_id`.
 

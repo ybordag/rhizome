@@ -1,6 +1,8 @@
 import pytest
 
 from agent.core import telemetry
+from db.database import current_user_id
+from db.models import Thread
 
 
 class RecordingObserver:
@@ -83,8 +85,78 @@ def test_emit_helpers_forward_to_observer():
     telemetry.emit_tool_started("list_projects", payload={"status": "active"})
     telemetry.emit_tool_completed("list_projects", success=True, payload={"status": "active"})
     telemetry.emit_state_snapshot("confirmation_requested", payload={"interrupt": "Confirm?"}, tags=["confirmation"])
+    telemetry.emit_database_change("update", table="thread", record_id="thread-1", payload={"field": "pinned_context"})
 
     assert observer.calls[0][0] == "message"
     assert observer.calls[1][0] == "tool_started"
     assert observer.calls[2][0] == "tool_completed"
     assert observer.calls[3][0] == "snapshot"
+    assert observer.calls[4] == (
+        "snapshot",
+        "database_change",
+        {
+            "operation": "update",
+            "table": "thread",
+            "record_id": "thread-1",
+            "field": "pinned_context",
+        },
+        ["database", "mutation", "thread"],
+        None,
+    )
+
+
+@pytest.mark.telemetry
+def test_database_session_commits_emit_sanitized_mutation_snapshots(db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    token = current_user_id.set("tenant-a")
+    thread = Thread(id="thread-telemetry", user_id="tenant-a", title="Initial")
+
+    try:
+        db_session.add(thread)
+        db_session.commit()
+        thread.title = "Updated"
+        db_session.commit()
+    finally:
+        current_user_id.reset(token)
+
+    database_changes = [call for call in observer.calls if call[0] == "snapshot" and call[1] == "database_change"]
+    assert (
+        "snapshot",
+        "database_change",
+        {
+            "operation": "insert",
+            "table": "thread",
+            "record_id": "thread-telemetry",
+            "model": "Thread",
+            "tenant_user_id": "tenant-a",
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in database_changes
+    assert (
+        "snapshot",
+        "database_change",
+        {
+            "operation": "update",
+            "table": "thread",
+            "record_id": "thread-telemetry",
+            "model": "Thread",
+            "tenant_user_id": "tenant-a",
+            "changed_fields": ["title"],
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in database_changes
+
+
+@pytest.mark.telemetry
+def test_database_session_rollbacks_do_not_emit_mutation_snapshots(db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
+    db_session.add(Thread(id="rolled-back-thread", user_id="1", title="Transient"))
+    db_session.flush()
+    db_session.rollback()
+
+    assert [call for call in observer.calls if call[0] == "snapshot" and call[1] == "database_change"] == []

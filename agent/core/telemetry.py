@@ -304,3 +304,26 @@ def emit_state_snapshot(
             "rhizome.snapshot.payload": json.dumps(payload or {}, default=str),
         },
     )
+
+
+def emit_database_change(
+    operation: str,
+    *,
+    table: str,
+    record_id: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Emit sanitized database mutation metadata to the runtime observer."""
+    event_payload = {
+        "operation": operation,
+        "table": table,
+        "record_id": record_id,
+        **(payload or {}),
+    }
+    emit_state_snapshot(
+        "database_change",
+        payload=event_payload,
+        tags=["database", "mutation", table],
+        metadata=metadata,
+    )

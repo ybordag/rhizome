@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from agent.api.app import app
-from db.models import GardeningProject, Thread
+from agent.core import telemetry
+from db.models import ActivityEvent, ActivitySubject, GardeningProject, Thread
 from tests.support.factories import (
     make_batch, make_bed, make_container, make_incident_report, make_plant, make_project,
     make_project_brief, make_project_proposal, make_project_revision,
@@ -49,6 +50,23 @@ def _make_task_via_chain(db_session, profile, user_id=USER, **overrides):
     revision = make_project_revision(db_session, project, proposal)
     run = make_task_generation_run(db_session, project=project, revision=revision)
     return make_task(db_session, project=project, revision=revision, generation_run=run, **overrides)
+
+
+class RecordingObserver:
+    def __init__(self):
+        self.snapshots = []
+
+    def record_message(self, role, text, *, payload=None, metadata=None):
+        pass
+
+    def record_tool_call_started(self, tool_name, *, payload=None):
+        pass
+
+    def record_tool_call_completed(self, tool_name, *, success, payload=None, error=""):
+        pass
+
+    def record_state_snapshot(self, snapshot_name, *, payload=None, tags=None, metadata=None):
+        self.snapshots.append((snapshot_name, payload, tags, metadata))
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +106,52 @@ def test_add_plant_to_context(patched_sessionlocal, db_session, seed_garden_prof
     )
     assert resp.status_code == 200
     assert resp.json()["pinned_context"] == [{"subject_type": "plant", "subject_id": plant.id}]
+
+
+@pytest.mark.integration
+def test_add_context_records_activity_and_telemetry(patched_sessionlocal, db_session, seed_garden_profile):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    plant = make_plant(db_session, seed_garden_profile, name="Basil")
+    _make_thread(db_session)
+
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "plant", "subject_id": plant.id},
+    )
+
+    assert resp.status_code == 200
+    event = db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").one()
+    assert event.user_id == USER
+    assert event.thread_id == "thread-1"
+    assert event.category == "thread"
+    assert event.event_metadata["operation"] == "pin"
+    assert event.event_metadata["before_count"] == 0
+    assert event.event_metadata["after_count"] == 1
+    subjects = {
+        (subject.subject_type, subject.subject_id, subject.role)
+        for subject in db_session.query(ActivitySubject).filter_by(event_id=event.id).all()
+    }
+    assert ("thread", "thread-1", "context_owner") in subjects
+    assert ("plant", plant.id, "pinned_context") in subjects
+    assert (
+        "database_change",
+        {
+            "operation": "update",
+            "table": "thread",
+            "record_id": "thread-1",
+            "field": "pinned_context",
+            "action": "pin",
+            "subject_type": "plant",
+            "subject_id": plant.id,
+            "before_count": 0,
+            "after_count": 1,
+            "activity_event_id": event.id,
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in observer.snapshots
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -145,6 +209,7 @@ def test_add_duplicate_entity_returns_409(patched_sessionlocal, db_session, seed
         json={"subject_type": "plant", "subject_id": plant.id},
     )
     assert resp.status_code == 409
+    assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").count() == 0
 
 
 @pytest.mark.integration
@@ -186,6 +251,50 @@ def test_remove_context_entry(patched_sessionlocal, db_session, seed_garden_prof
 
 
 @pytest.mark.integration
+def test_remove_context_records_activity_and_telemetry(patched_sessionlocal, db_session, seed_garden_profile):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    plant = make_plant(db_session, seed_garden_profile)
+    _make_thread(db_session, pinned=[{"subject_type": "plant", "subject_id": plant.id}])
+
+    resp = client.delete(
+        f"/internal/data/threads/thread-1/context/plant/{plant.id}?user_id={USER}",
+    )
+
+    assert resp.status_code == 200
+    event = db_session.query(ActivityEvent).filter_by(event_type="thread_context_unpinned").one()
+    assert event.user_id == USER
+    assert event.thread_id == "thread-1"
+    assert event.event_metadata["operation"] == "unpin"
+    assert event.event_metadata["before_count"] == 1
+    assert event.event_metadata["after_count"] == 0
+    subjects = {
+        (subject.subject_type, subject.subject_id, subject.role)
+        for subject in db_session.query(ActivitySubject).filter_by(event_id=event.id).all()
+    }
+    assert ("thread", "thread-1", "context_owner") in subjects
+    assert ("plant", plant.id, "pinned_context") in subjects
+    assert (
+        "database_change",
+        {
+            "operation": "update",
+            "table": "thread",
+            "record_id": "thread-1",
+            "field": "pinned_context",
+            "action": "unpin",
+            "subject_type": "plant",
+            "subject_id": plant.id,
+            "before_count": 1,
+            "after_count": 0,
+            "activity_event_id": event.id,
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in observer.snapshots
+    telemetry.set_observer(None)
+
+
+@pytest.mark.integration
 def test_remove_one_of_two_context_entries(patched_sessionlocal, db_session, seed_garden_profile):
     bed1 = make_bed(db_session, seed_garden_profile, name="Bed A")
     bed2 = make_bed(db_session, seed_garden_profile, name="Bed B")
@@ -209,6 +318,7 @@ def test_remove_context_not_found_returns_404(patched_sessionlocal, db_session, 
         f"/internal/data/threads/thread-1/context/plant/ghost-id?user_id={USER}",
     )
     assert resp.status_code == 404
+    assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_unpinned").count() == 0
 
 
 @pytest.mark.integration

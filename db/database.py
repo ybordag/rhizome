@@ -3,6 +3,8 @@ import os
 from contextvars import ContextVar
 
 from sqlalchemy import create_engine
+from sqlalchemy import event, inspect
+from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import sessionmaker
 from db.models import Base
 
@@ -28,6 +30,80 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind=engine)
+
+
+def _object_identity(obj) -> str | None:
+    state = inspect(obj)
+    if state.identity:
+        return ":".join(str(part) for part in state.identity)
+    values = []
+    for column in state.mapper.primary_key:
+        value = getattr(obj, column.key, None)
+        if value is None:
+            return None
+        values.append(str(value))
+    return ":".join(values)
+
+
+def _changed_column_names(obj) -> list[str]:
+    state = inspect(obj)
+    changed = []
+    for attr in state.mapper.column_attrs:
+        if state.attrs[attr.key].history.has_changes():
+            changed.append(attr.key)
+    return sorted(changed)
+
+
+def _record_session_change(session, operation: str, obj, *, changed_fields: list[str] | None = None) -> None:
+    state = inspect(obj)
+    changes = session.info.setdefault("_rhizome_database_changes", [])
+    changes.append(
+        {
+            "operation": operation,
+            "table": state.mapper.local_table.name,
+            "model": obj.__class__.__name__,
+            "record_id": _object_identity(obj),
+            "tenant_user_id": str(current_user_id.get()),
+            **({"changed_fields": changed_fields} if changed_fields else {}),
+        }
+    )
+
+
+@event.listens_for(OrmSession, "after_flush")
+def _capture_database_changes(session, flush_context):
+    for obj in session.new:
+        if inspect(obj).mapper is not None:
+            _record_session_change(session, "insert", obj)
+    for obj in session.dirty:
+        if not session.is_modified(obj, include_collections=False):
+            continue
+        changed_fields = _changed_column_names(obj)
+        if changed_fields:
+            _record_session_change(session, "update", obj, changed_fields=changed_fields)
+    for obj in session.deleted:
+        if inspect(obj).mapper is not None:
+            _record_session_change(session, "delete", obj)
+
+
+@event.listens_for(OrmSession, "after_commit")
+def _emit_database_changes(session):
+    changes = session.info.pop("_rhizome_database_changes", [])
+    if not changes:
+        return
+    from agent.core.telemetry import emit_database_change
+
+    for change in changes:
+        emit_database_change(
+            change.pop("operation"),
+            table=change.pop("table"),
+            record_id=change.pop("record_id"),
+            payload=change,
+        )
+
+
+@event.listens_for(OrmSession, "after_rollback")
+def _clear_database_changes(session):
+    session.info.pop("_rhizome_database_changes", None)
 
 
 def init_db():

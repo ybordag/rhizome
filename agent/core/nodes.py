@@ -126,6 +126,12 @@ def _message_text(message) -> str:
     return str(content)
 
 
+def _tool_arg_metadata(args: dict | None) -> dict:
+    if not isinstance(args, dict):
+        return {"arg_count": 0, "arg_keys": []}
+    return {"arg_count": len(args), "arg_keys": sorted(str(key) for key in args.keys())}
+
+
 def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
     if not pinned:
         return ""
@@ -487,6 +493,19 @@ def llm_call(state: GardenState, config: RunnableConfig):
     session_context_section = f"Session context for this thread:\n{session_context_text}\n\n" if session_context_text else ""
     pinned_text = state.get("pinned_context_text") or ""
     pinned_context_section = f"Pinned context for this thread:\n{pinned_text}\n\n" if pinned_text else ""
+    emit_state_snapshot(
+        "llm_prompt_context",
+        payload={
+            "has_garden_profile": bool(profile_obj),
+            "has_session_context": bool(session_context_text),
+            "has_pinned_context": bool(pinned_text),
+            "has_monitor_alerts": bool(alerts_text),
+            "has_weather_context": bool(weather_text),
+            "has_triage_context": bool(triage_text),
+            "interaction_count": len(state.get("interaction_history") or []),
+        },
+        tags=["llm", "prompt"],
+    )
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         garden_profile=profile_text,
         temporal_context=temporal_text,
@@ -519,7 +538,7 @@ def tool_node(state: GardenState):
             )
             emit_tool_completed(tool_name, success=False, error="unknown tool")
         else:
-            emit_tool_started(tool_name, payload={"args": tool_call["args"]})
+            emit_tool_started(tool_name, payload=_tool_arg_metadata(tool_call.get("args")))
             try:
                 observation = tool.invoke(tool_call["args"])
                 emit_tool_completed(tool_name, success=True)

@@ -47,6 +47,7 @@ from agent.api.models import (
     UpdateTreatmentPlanRequest,
 )
 from agent.core.graph import agent
+from agent.core.telemetry import emit_database_change
 from db.database import SessionLocal, current_user_id
 from db.models import (
     Bed, CalendarAnnotation, Container, GardenProfile, GardeningProject,
@@ -3007,6 +3008,8 @@ def delete_thread(thread_id: str, user_id: str):
 @data_router.post("/threads/{thread_id}/context")
 def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextRequest):
     """Pin an entity to a thread for persistent context injection."""
+    from agent.domain.activity_log import record_activity_event
+
     uid = _set_user(user_id)
     if body.subject_type not in _VALID_SUBJECT_TYPES:
         raise HTTPException(status_code=400, detail=f"subject_type must be one of {sorted(_VALID_SUBJECT_TYPES)}")
@@ -3016,6 +3019,7 @@ def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextReque
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
         pinned = list(thread.pinned_context or [])
+        before_count = len(pinned)
         if len(pinned) >= 10:
             raise HTTPException(status_code=400, detail="Thread context limit reached (max 10 items)")
         if any(p["subject_type"] == body.subject_type and p["subject_id"] == body.subject_id for p in pinned):
@@ -3024,7 +3028,41 @@ def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextReque
             raise HTTPException(status_code=400, detail="Entity not found or not accessible")
         pinned.append({"subject_type": body.subject_type, "subject_id": body.subject_id})
         thread.pinned_context = pinned
+        event = record_activity_event(
+            session,
+            actor_type="user",
+            actor_label="thread_context",
+            event_type="thread_context_pinned",
+            category="thread",
+            summary=f"Pinned {body.subject_type} to thread context.",
+            thread_id=thread_id,
+            metadata={
+                "operation": "pin",
+                "subject_type": body.subject_type,
+                "subject_id": body.subject_id,
+                "before_count": before_count,
+                "after_count": len(pinned),
+            },
+            subjects=[
+                {"subject_type": "thread", "subject_id": thread_id, "role": "context_owner"},
+                {"subject_type": body.subject_type, "subject_id": body.subject_id, "role": "pinned_context"},
+            ],
+        )
         session.commit()
+        emit_database_change(
+            "update",
+            table="thread",
+            record_id=thread_id,
+            payload={
+                "field": "pinned_context",
+                "action": "pin",
+                "subject_type": body.subject_type,
+                "subject_id": body.subject_id,
+                "before_count": before_count,
+                "after_count": len(pinned),
+                "activity_event_id": event.id,
+            },
+        )
         return {"thread_id": thread_id, "pinned_context": thread.pinned_context}
     finally:
         session.close()
@@ -3033,6 +3071,8 @@ def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextReque
 @data_router.delete("/threads/{thread_id}/context/{subject_type}/{subject_id}")
 def remove_thread_context(thread_id: str, subject_type: str, subject_id: str, user_id: str):
     """Remove a pinned entity from a thread's context."""
+    from agent.domain.activity_log import record_activity_event
+
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
@@ -3044,7 +3084,41 @@ def remove_thread_context(thread_id: str, subject_type: str, subject_id: str, us
         if len(updated) == len(pinned):
             raise HTTPException(status_code=404, detail="Context entry not found")
         thread.pinned_context = updated
+        event = record_activity_event(
+            session,
+            actor_type="user",
+            actor_label="thread_context",
+            event_type="thread_context_unpinned",
+            category="thread",
+            summary=f"Removed {subject_type} from thread context.",
+            thread_id=thread_id,
+            metadata={
+                "operation": "unpin",
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "before_count": len(pinned),
+                "after_count": len(updated),
+            },
+            subjects=[
+                {"subject_type": "thread", "subject_id": thread_id, "role": "context_owner"},
+                {"subject_type": subject_type, "subject_id": subject_id, "role": "pinned_context"},
+            ],
+        )
         session.commit()
+        emit_database_change(
+            "update",
+            table="thread",
+            record_id=thread_id,
+            payload={
+                "field": "pinned_context",
+                "action": "unpin",
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "before_count": len(pinned),
+                "after_count": len(updated),
+                "activity_event_id": event.id,
+            },
+        )
         return {"thread_id": thread_id, "pinned_context": thread.pinned_context}
     finally:
         session.close()
