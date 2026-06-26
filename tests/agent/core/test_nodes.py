@@ -4,9 +4,9 @@ import pytest
 from langgraph.graph import END
 
 from agent.core import nodes
-from langchain.messages import ToolMessage
+from langchain.messages import HumanMessage, ToolMessage
 from db.models import MonitorAlert
-from tests.support.fakes import FakeTool, make_ai_message, make_tool_call_message
+from tests.support.fakes import FakeBoundModel, FakeTool, make_ai_message, make_tool_call_message
 from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
 
 
@@ -187,6 +187,39 @@ def test_monitor_alerts_text_formats_critical_and_high():
 def test_monitor_alerts_text_empty_when_no_alerts():
     assert nodes._monitor_alerts_text({"monitor_alerts": []}) == ""
     assert nodes._monitor_alerts_text({}) == ""
+
+
+@pytest.mark.graph
+def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, patched_sessionlocal, db_session):
+    make_profile(db_session)
+    fake_model = FakeBoundModel([make_ai_message("ok")])
+    monkeypatch.setattr(nodes, "model_with_tools", fake_model)
+
+    state = {
+        "messages": [HumanMessage(content="What should I do next?")],
+        "temporal_context": {"current_date": "2026-06-25", "timezone": "America/Los_Angeles"},
+        "weather_context": {"alerts_summary": "No weather alerts."},
+        "triage_snapshot": {"formatted": "No triage snapshot available."},
+        "session_context_text": "\n".join([
+            "Time available: 45 minutes",
+            "Energy: low but focused",
+            "Thread focus: How do I fertilize the cherry tomatoes?",
+            "Focus objects:",
+            "- batch: Courtyard Tomatoes March 2026 (batch-1)",
+        ]),
+        "pinned_context_text": "- plant: Basil (plant-1)",
+    }
+
+    result = nodes.llm_call(state, {"configurable": {"user_id": "1"}})
+
+    assert result["messages"][0].content == "ok"
+    system_prompt = fake_model.invocations[0][0].content
+    assert "Session context for this thread:" in system_prompt
+    assert "Time available: 45 minutes" in system_prompt
+    assert "Thread focus: How do I fertilize the cherry tomatoes?" in system_prompt
+    assert "- batch: Courtyard Tomatoes March 2026 (batch-1)" in system_prompt
+    assert "Pinned context for this thread:\n- plant: Basil (plant-1)" in system_prompt
+    assert fake_model.invocations[0][1].content == "What should I do next?"
 
 
 # ---------------------------------------------------------------------------

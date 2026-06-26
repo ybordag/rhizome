@@ -679,6 +679,12 @@ read for display. Supported subject types are `plant`, `task`, `project`, `bed`,
 `batch`, and `incident`. Unset threads return nullable text fields as `null`,
 `focus_context: []`, `source: "unset"`, and `updated_at: null`.
 
+Verdant should update this endpoint before starting a chat stream when a user selects a concrete
+garden object. The intended sequence is: create or select the thread, PATCH `focus_text` and
+`focus_context` refs, then start the agent stream. If an object such as a batch is only mentioned
+as prose in the user message, Rhizome may not have the stable object id needed for reliable
+resolution.
+
 ### `PATCH /api/v1/threads/{id}/session-context`
 User override for text-first startup/session context.
 **Body:** one or more fields from `{ time_text, energy_text, focus_text, focus_context }`; empty bodies return `400`, and unknown fields return validation errors.

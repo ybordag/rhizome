@@ -357,6 +357,31 @@ def test_patch_thread_session_context_updates_user_values(
 
 
 @pytest.mark.integration
+def test_patch_thread_session_context_normalizes_blank_text_to_none(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(id="blank-text-context-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/blank-text-context-thread/session-context?user_id=1", json={
+        "time_text": "   ",
+        "energy_text": "",
+        "focus_text": "  fertilize tomatoes  ",
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["time_text"] is None
+    assert body["energy_text"] is None
+    assert body["focus_text"] == "fertilize tomatoes"
+
+    db_session.expire_all()
+    stored = db_session.get(Thread, "blank-text-context-thread").session_context
+    assert stored["time_text"] is None
+    assert stored["energy_text"] is None
+    assert stored["focus_text"] == "fertilize tomatoes"
+
+
+@pytest.mark.integration
 def test_patch_thread_session_context_accepts_multiple_focus_context_entries(
     patched_sessionlocal,
     db_session,

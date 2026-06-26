@@ -131,6 +131,8 @@ class UpdateSessionContextRequest(BaseModel):
     def _normalize_text(cls, value: Optional[str]) -> Optional[str]:
         if value is not None:
             value = value.strip()
+            if not value:
+                return None
         return value
 
     @field_validator("focus_context")
