@@ -10,7 +10,15 @@ from langchain.messages import AIMessage, HumanMessage
 from agent.api.app import app
 from agent.core import graph as graph_module
 from db.models import Task, Thread
-from tests.support.factories import make_plant, make_profile, make_project
+from tests.support.factories import (
+    make_batch,
+    make_bed,
+    make_container,
+    make_incident_report,
+    make_plant,
+    make_profile,
+    make_project,
+)
 
 client = TestClient(app)
 
@@ -324,6 +332,38 @@ def test_get_thread_session_context_resolves_focus_context_labels(
 
 
 @pytest.mark.integration
+def test_get_thread_session_context_does_not_leak_labels_for_foreign_or_stale_refs(
+    patched_sessionlocal,
+    db_session,
+):
+    now = _now()
+    other_profile = make_profile(db_session, user_id="2", location_label="Oakland, CA")
+    other_plant = make_plant(db_session, other_profile, user_id="2", name="Other Tomato", variety="Secret")
+    db_session.add(Thread(
+        id="foreign-ref-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "focus_context": [
+                {"subject_type": "plant", "subject_id": other_plant.id},
+                {"subject_type": "plant", "subject_id": "deleted-plant"},
+            ],
+            "source": "user",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    resp = client.get("/internal/data/threads/foreign-ref-context-thread/session-context?user_id=1")
+
+    assert resp.status_code == 200
+    assert resp.json()["focus_context"] == [
+        {"subject_type": "plant", "subject_id": other_plant.id, "label": None},
+        {"subject_type": "plant", "subject_id": "deleted-plant", "label": None},
+    ]
+
+
+@pytest.mark.integration
 def test_patch_thread_session_context_updates_user_values(
     patched_sessionlocal,
     db_session,
@@ -456,6 +496,32 @@ def test_patch_thread_session_context_allows_explicit_clear(patched_sessionlocal
 
 
 @pytest.mark.integration
+def test_patch_thread_session_context_empty_focus_context_list_clears_refs(patched_sessionlocal, db_session):
+    now = _now()
+    db_session.add(Thread(
+        id="empty-list-clear-context-thread",
+        user_id=1,
+        created_at=now,
+        session_context={
+            "focus_context": [{"subject_type": "plant", "subject_id": "plant-1"}],
+            "source": "user",
+            "updated_at": now.isoformat(),
+        },
+    ))
+    db_session.commit()
+
+    resp = client.patch("/internal/data/threads/empty-list-clear-context-thread/session-context?user_id=1", json={
+        "focus_context": [],
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["focus_context"] == []
+
+    db_session.expire_all()
+    assert db_session.get(Thread, "empty-list-clear-context-thread").session_context["focus_context"] == []
+
+
+@pytest.mark.integration
 def test_patch_thread_session_context_rejects_empty_patch(patched_sessionlocal, db_session):
     now = _now()
     db_session.add(Thread(id="empty-context-patch-thread", user_id=1, created_at=now))
@@ -485,6 +551,8 @@ def test_patch_thread_session_context_rejects_unknown_fields(patched_sessionloca
 @pytest.mark.parametrize("payload", [
     {"focus_context": [{"subject_type": "plant", "subject_id": str(i)} for i in range(11)]},
     {"focus_context": [{"subject_type": "trellis", "subject_id": "t1"}]},
+    {"focus_context": [{"subject_type": "plant"}]},
+    {"focus_context": [{"subject_type": "plant", "subject_id": "p1", "label": "client label"}]},
 ])
 def test_patch_thread_session_context_validates_fields(patched_sessionlocal, db_session, payload):
     now = _now()
@@ -494,6 +562,32 @@ def test_patch_thread_session_context_validates_fields(patched_sessionlocal, db_
     resp = client.patch(f"/internal/data/threads/invalid-context-{next(iter(payload))}/session-context?user_id=1", json=payload)
 
     assert resp.status_code in {400, 422}
+
+
+def _other_user_focus_refs_by_type(db_session):
+    other_profile = make_profile(db_session, user_id="2", location_label="Oakland, CA")
+    other_project = make_project(db_session, other_profile, user_id="2", name="Other Project")
+    task = Task(
+        id="other-user-task",
+        project_id=other_project.id,
+        source_type="generated",
+        generator_key="test.task",
+        title="Other user task",
+        type="maintenance",
+        status="pending",
+        estimated_minutes=20,
+    )
+    db_session.add(task)
+    db_session.flush()
+    return [
+        ("plant", make_plant(db_session, other_profile, user_id="2", name="Other Plant").id),
+        ("batch", make_batch(db_session, other_profile, user_id="2", name="Other Batch").id),
+        ("bed", make_bed(db_session, other_profile, user_id="2", name="Other Bed").id),
+        ("container", make_container(db_session, other_profile, user_id="2", name="Other Container").id),
+        ("project", other_project.id),
+        ("task", task.id),
+        ("incident", make_incident_report(db_session, user_id="2", project_id=other_project.id).id),
+    ]
 
 
 @pytest.mark.integration
@@ -527,6 +621,26 @@ def test_patch_thread_session_context_rejects_other_users_focus_object(
     })
 
     assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_patch_thread_session_context_rejects_other_users_focus_objects_for_all_supported_types(
+    patched_sessionlocal,
+    db_session,
+):
+    now = _now()
+    refs = _other_user_focus_refs_by_type(db_session)
+    for subject_type, _ in refs:
+        db_session.add(Thread(id=f"foreign-{subject_type}-context-thread", user_id=1, created_at=now))
+    db_session.commit()
+
+    for subject_type, subject_id in refs:
+        resp = client.patch(f"/internal/data/threads/foreign-{subject_type}-context-thread/session-context?user_id=1", json={
+            "focus_context": [{"subject_type": subject_type, "subject_id": subject_id}],
+        })
+
+        assert resp.status_code == 400, subject_type
+        assert "not accessible" in resp.json()["detail"]
 
 
 @pytest.mark.integration
