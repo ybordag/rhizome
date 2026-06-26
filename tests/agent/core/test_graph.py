@@ -7,6 +7,7 @@ from agent.tools.projects.planning import save_project_proposal, update_project_
 from db.models import GardeningProject, ProjectProposal, Task, Thread, TreatmentPlan, TriageSnapshot
 from tests.support.fakes import make_ai_message, make_tool_call_message
 from tests.support.factories import (
+    make_batch,
     make_project,
     make_project_brief,
     make_project_proposal,
@@ -111,6 +112,73 @@ def test_first_user_turn_preserves_patched_session_context_in_triage(
     assert snapshot.session_context == stored_context
     assert task.id in snapshot.recommended_task_ids
     assert state.values["session_context"] == stored_context
+
+
+@pytest.mark.graph
+def test_first_user_turn_injects_batch_focus_related_tasks_into_prompt(
+    fresh_test_graph,
+    fake_bound_model,
+    seed_garden_profile,
+    db_session,
+):
+    project = make_project(db_session, seed_garden_profile, name="Courtyard Tomatoes")
+    batch = make_batch(
+        db_session,
+        seed_garden_profile,
+        project=project,
+        name="Courtyard Tomatoes March 2026",
+        plant_name="Cherry Tomato",
+        variety="Sungold",
+    )
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare growbag_1",
+        priority="high",
+        estimated_minutes=45,
+        linked_subjects=[{"subject_type": "batch", "subject_id": batch.id, "role": "affected"}],
+    )
+    stored_context = {
+        "time_text": "35 minutes",
+        "energy_text": "low but focused",
+        "focus_text": "What should I do first for the tomatoes?",
+        "focus_context": [{"subject_type": "batch", "subject_id": batch.id}],
+        "source": "user",
+    }
+    db_session.add(
+        Thread(
+            id="thread-batch-session-context-graph",
+            user_id="1",
+            session_context=stored_context,
+        )
+    )
+    db_session.commit()
+    fake_bound_model.queue(make_ai_message("Start with the growbag task."))
+    config = {"configurable": {"thread_id": "thread-batch-session-context-graph", "user_id": "1"}}
+
+    result = fresh_test_graph.invoke({"messages": [HumanMessage(content="What should I do first?")]}, config=config)
+    state = fresh_test_graph.get_state(config)
+    snapshot = db_session.get(TriageSnapshot, state.values["triage_snapshot"]["id"])
+    system_prompt = fake_bound_model.invocations[0][0].content
+
+    assert result["messages"][-1].content == "Start with the growbag task."
+    assert snapshot.session_context == stored_context
+    assert task.id in snapshot.recommended_task_ids
+    assert state.values["session_context"] == stored_context
+    assert "Session context for this thread:" in system_prompt
+    assert "Thread focus: What should I do first for the tomatoes?" in system_prompt
+    assert "[Batch]" in system_prompt
+    assert "Courtyard Tomatoes March 2026" in system_prompt
+    assert f"id: {batch.id}" in system_prompt
+    assert "Related open tasks:" in system_prompt
+    assert "Prepare growbag_1" in system_prompt
+    assert f"id: {task.id}" in system_prompt
 
 
 @pytest.mark.graph
