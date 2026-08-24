@@ -1,6 +1,6 @@
 # Data Model
 
-All models live in `db/models.py`. The database is **Postgres** in staging and production (SQLite for in-memory test runs only). SQLAlchemy ORM throughout.
+All SQLAlchemy models live in `db/models.py`. Rhizome uses SQLite for quick local runs and isolated tests, and Postgres with Alembic migrations for shared development, staging, and production.
 
 ---
 
@@ -241,10 +241,32 @@ Thread
   last_message_preview string?      — first 150 chars of last AI response (updated each turn)
   last_active_at       datetime?    — updated by session_context_intake on every turn
   message_count        int          — human message count; updated each turn
+  pinned_context       JSON         — pinned entity refs resolved into compact prompt context
+  session_context      JSON?        — structured startup/session context for Verdant
   created_at           datetime
 ```
 
-**Key design decision:** `Thread` stores only metadata. Actual message content lives in the LangGraph PostgresSaver checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
+**Key design decision:** `Thread` stores metadata only, plus small app-facing context documents. Actual message content lives in the LangGraph checkpointer tables. `GET /internal/data/threads/{id}/messages` calls `agent.get_state()` to retrieve the full history — no duplication.
+
+**Pinned context:** `pinned_context` stores refs as `{ subject_type, subject_id }`. Adding or
+removing a pinned ref mutates only thread metadata, not the referenced garden object. During
+`session_context_intake`, Rhizome resolves accessible refs through the shared context-ref prompt
+formatter under `Pinned context for this thread:`. Prompt text includes exact object ids and can
+include a capped `Related open tasks:` shortlist for the focused object. Successful pin/unpin writes
+semantic `thread_context_pinned` / `thread_context_unpinned` activity events and is also covered by
+generic sanitized `database_change` telemetry.
+
+**Session context:** `session_context` stores text-first startup/focus values:
+`time_text`, `energy_text`, `focus_text`, `focus_context`, `source`, and `updated_at`.
+`focus_context` stores owned object refs as `{ subject_type, subject_id }`; labels are resolved
+on read by the dedicated session-context endpoint. Prompt summaries use the same context-ref
+formatter as pinned context, preserve exact object ids, and include related open tasks when Rhizome
+can derive them from project/object links. If a label cannot be resolved, the raw id is still shown
+so the context remains actionable. `source` is `inferred` when `session_context_intake` preserved
+opener text for a thread with no user override, `user` after `PATCH /threads/{id}/session-context`,
+and `unset` only in the API response for threads with no stored context. Triage snapshots preserve
+the already-loaded graph session context instead of re-inferring a different context from the
+visible user message.
 
 **Thread ID generation:** Cambium generates botanical three-word names (31 descriptors × 41 plants × 36 phenomena ≈ 45,700 combinations). Rhizome stores and uses them as opaque strings.
 
@@ -254,15 +276,17 @@ Thread
 
 ## Session state (LangGraph)
 
-Conversation state lives in the LangGraph PostgresSaver checkpoint store, keyed by `thread_id`. The `GardenState` TypedDict carries: `messages`, `monitor_alerts`, `temporal_context`, `session_context`, `skip_tool_node`, `user_id`.
+Conversation state lives in the LangGraph checkpointer, keyed by `thread_id`. The `GardenState` typed state carries: `messages`, `monitor_alerts`, `temporal_context`, `session_context`, `weather_context`, `triage_snapshot`, `pending_interaction`, `interaction_history`, `skip_tool_node`, `user_id`, and `pinned_context_text`.
 
-`user_id` flows through `graph.config["configurable"]["user_id"]` and is set into the `current_user_id` ContextVar by `session_context_intake` at the start of every turn. All tool queries use `current_user_id.get()` — never a hardcoded value.
+`user_id` flows through `graph.config["configurable"]["user_id"]` and graph state. Graph nodes that
+perform tenant-scoped reads reset the `current_user_id` ContextVar before querying, and all tool
+queries use `current_user_id.get()` — never a hardcoded value.
 
 ---
 
 ## Schema and migrations
 
-All domain tables live in the **`rhizome` schema** in Postgres. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome` so queries and `create_all()` target the correct schema.
+All domain tables live in the **`rhizome` schema** in Postgres. The SQLAlchemy engine and LangGraph checkpointer both set `search_path=rhizome` so queries and migrations target the correct schema.
 
 **Alembic** manages schema migrations in staging and production:
 
@@ -277,4 +301,4 @@ alembic upgrade head
 
 `alembic/versions/` contains the migration history. `alembic.ini` and `alembic/env.py` configure the connection (reads `DATABASE_URL` from environment) and target schema.
 
-Tests use `init_db()` with in-memory SQLite — they never run Alembic. `init_db()` remains as a safety net for fresh installs only.
+Tests use `init_db()` with isolated SQLite databases — they never run Alembic. `init_db()` remains a safety net for SQLite quickstarts and tests only; shared environments should use Alembic.

@@ -7,14 +7,42 @@
 ## Feature Specifications
 - [Feature Specs](features/README.md) — durable product-level behavior specs
 - [Garden Model](features/garden/README.md)
+  - [Garden Profile](features/garden/profile.md)
+  - [Beds and Containers](features/garden/beds-containers.md)
+  - [Plants and Batches](features/garden/plants-batches.md)
+  - [Care State](features/garden/care-state.md)
 - [Project Planning](features/projects/README.md)
+  - [Project Briefs](features/projects/project-briefs.md)
+  - [Planning Context](features/projects/planning-context.md)
+  - [Proposals and Revisions](features/projects/proposals-revisions.md)
+  - [Schedule Preview](features/projects/schedule-preview.md)
 - [Task Management](features/tasks/README.md)
+  - [Task Generation](features/tasks/task-generation.md)
+  - [Task Lifecycle](features/tasks/task-lifecycle.md)
+  - [Dependencies and Event Anchors](features/tasks/dependencies-anchors.md)
+  - [Recurring Tasks and Regeneration](features/tasks/recurrence-regeneration.md)
 - [Daily Triage](features/triage/README.md)
+  - [Triage Snapshots](features/triage/triage-snapshots.md)
+  - [Daily Priority Work List](features/triage/daily-priority-work-list.md)
 - [Weather](features/weather/README.md)
+  - [Weather Snapshots](features/weather/weather-snapshots.md)
+  - [Weather Task Impacts](features/weather/weather-task-impacts.md)
+  - [Weather Change Approvals](features/weather/weather-change-approvals.md)
 - [Incidents and Treatment](features/incidents/README.md)
+  - [Incident Reports](features/incidents/incident-reports.md)
+  - [Treatment Plans](features/incidents/treatment-plans.md)
 - [Human-in-the-Loop Interactions](features/interactions/README.md)
+  - [Structured Approvals](features/interactions/structured-approvals.md)
+  - [Destructive Confirmations](features/interactions/destructive-confirmations.md)
+  - [Interaction Records and Reuse](features/interactions/interaction-records-reuse.md)
 - [Action History](features/activity/README.md)
+  - [Activity Events](features/activity/activity-events.md)
+  - [Per-Entity History](features/activity/per-entity-history.md)
+  - [Project Timeline](features/activity/project-timeline.md)
 - [Search and Navigation](features/search/README.md)
+  - [Garden Search](features/search/garden-search.md)
+  - [Location Navigation](features/search/location-navigation.md)
+  - [Project Navigation](features/search/project-navigation.md)
 - [Vision Feature Surface](features/vision/README.md) — structured vision capability surface and shared contracts
 - [Plant Identification and Health Assessment](features/vision/plant-identification-health.md)
 - [Sightings: Pests, Diseases, Weeds, Beneficials, and Wildlife](features/vision/sightings.md)
@@ -27,9 +55,11 @@
 
 ## Getting Started
 - [Setup](getting-started/setup.md) — installation, configuration, first run
+- [Local Development](getting-started/local-development.md) — SQLite vs Postgres, API server, Cambium/Verdant handoff, troubleshooting
 - [Using the CLI](getting-started/using-the-cli.md) — how to have a session
 
 ## Architecture
+- [Architecture Guide](architecture/README.md) — reading order, invariants, and ownership boundaries
 - [System Overview](architecture/system-overview.md) — repos, runtime topology, Cambium/Rhizome/Verdant/Fairlead
 - [Agent Loop](architecture/agent-loop.md) — end-to-end session walkthrough
 - [Async Vision Compute](architecture/async-vision-compute.md) — Rhizome/Fairlead/k3s ownership for bounded vision jobs

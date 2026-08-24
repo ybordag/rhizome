@@ -10,6 +10,7 @@ from agent.domain.activity_log import DEFAULT_ACTOR_LABEL, DEFAULT_ACTOR_TYPE, r
 from agent.domain.notifications import push_event
 from db.database import current_user_id
 from db.models import (
+    GardenProfile,
     InteractionRecord,
     ProjectProposal,
     Task,
@@ -489,15 +490,32 @@ def get_interaction_record_for_user(session, interaction_id: str) -> Optional[In
 
 
 def get_pending_interaction_record(session) -> Optional[InteractionRecord]:
-    return (
+    records = (
         session.query(InteractionRecord)
         .filter(
             InteractionRecord.user_id == current_user_id.get(),
             InteractionRecord.status == INTERACTION_PENDING,
         )
         .order_by(InteractionRecord.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    uid = current_user_id.get()
+    latest_triage = (
+        session.query(TriageSnapshot)
+        .join(GardenProfile, TriageSnapshot.garden_profile_id == GardenProfile.id)
+        .filter(GardenProfile.user_id == uid)
+        .order_by(TriageSnapshot.created_at.desc())
         .first()
     )
+    for record in records:
+        if record.interaction_type != "triage_view":
+            return record
+        if not latest_triage or not latest_triage.recommended_task_ids:
+            continue
+        if record.source_type == "triage" and record.source_id == latest_triage.id:
+            return record
+    return None
 
 
 def list_recent_interaction_records(session, *, limit: int = 20, interaction_type: Optional[str] = None, project_id: Optional[str] = None):

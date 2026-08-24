@@ -6,7 +6,11 @@ Rhizome exposes two internal surfaces:
 - **`/internal/agent`** — LangGraph graph execution (AI operations: chat, triage, drafting)
 - **`/internal/data/...`** — direct SQLAlchemy queries (CRUD, no LLM overhead)
 
-Both surfaces are live. All ~115+ endpoints are wired across Rhizome and Cambium.
+Both surfaces are live. The route list below documents Rhizome's internal contract; Cambium owns the public `/api/v1` shape that Verdant calls.
+
+Use `/internal/agent` when the request needs the graph, model provider, tool calling, streaming, or resume semantics. Use `/internal/data/...` when the request is deterministic CRUD/query work that can be answered from SQLAlchemy/domain helpers without an LLM call.
+
+Cambium is the public contract owner. Verdant calls Cambium's `/api/v1` routes; Cambium maps them onto the Rhizome internal surfaces, injects `user_id`, and adds provider credentials/model overrides for agent calls.
 
 ---
 
@@ -42,12 +46,20 @@ All data endpoints return structured JSON (not `{"result": "...string..."}`). Re
 - `TaskSummaryView`, `TaskDetailView`
 - `ProjectSummaryView`, `ProjectDetailView`, `ProjectProgressView`
 - `ProjectBriefView`, `ProposalSummaryView`, `ProposalDetailView`
-- `ThreadView`
+- `ThreadView`, `SessionContextView`
 - `TaskSeriesView`, `CalendarAnnotationView`
 - `ProjectExpenseView`, `ExpenseSummaryView`, `ShoppingItemView`
 - `ActivityEventView`, `ActivitySubjectView`
 
 Tools continue to return strings for the LangGraph agent. The JSON layer is a parallel serialization path in the router only.
+
+This split is intentional:
+
+| Caller | Surface | Response Style |
+|---|---|---|
+| LLM inside LangGraph | tools in `agent/tools/` | human-readable strings |
+| Cambium/Verdant data UI | `/internal/data/...` routes | structured Pydantic views |
+| Cambium/Verdant chat UI | `/internal/agent` routes | agent response, stream, or interaction envelope |
 
 Mutation endpoints (`PATCH`/`POST` on a single entity) call the underlying tool for its
 validation + side effects, then re-query the entity and return its structured view — the
@@ -649,7 +661,43 @@ Thread metadata.
 **Response:** `ThreadView`
 
 `ThreadView` preserves the existing wire shape:
-`{ thread_id, title, project_id, last_message_preview, last_active_at, message_count, pinned_context, created_at }`
+`{ thread_id, title, project_id, last_message_preview, last_active_at, message_count, pinned_context, session_context, created_at }`
+
+`ThreadView.session_context` is the raw JSON stored on the thread row. Verdant
+should use the dedicated `GET /api/v1/threads/{id}/session-context` endpoint
+for display/edit flows because it returns the normalized `SessionContextView`
+shape, including `source: "unset"` for missing context and read-time
+display-label resolution for selected focus objects.
+
+### `GET /api/v1/threads/{id}/session-context`
+Structured startup/session context for a thread. Used by Verdant's SessionStrip.
+**Response:** `SessionContextView`:
+`{ time_text, energy_text, focus_text, focus_context, source, updated_at }`
+
+`focus_context` entries use `{ subject_type, subject_id, label }`, where `label` is resolved on
+read for display. Supported subject types are `plant`, `task`, `project`, `bed`, `container`,
+`batch`, and `incident`. Unset threads return nullable text fields as `null`,
+`focus_context: []`, `source: "unset"`, and `updated_at: null`.
+
+When the graph builds prompt context, focus objects are rendered with exact object ids and richer
+object summaries. If the label cannot be resolved, Rhizome keeps the raw id in the prompt summary
+so stale refs remain visible instead of silently becoming ambiguous. For supported object refs,
+Rhizome also includes a capped related open-task shortlist when it can derive one from project or
+object links.
+
+Verdant should update this endpoint before starting a chat stream when a user selects a concrete
+garden object. The intended sequence is: create or select the thread, PATCH `focus_text` and
+`focus_context` refs, then start the agent stream. If an object such as a batch is only mentioned
+as prose in the user message, Rhizome may not have the stable object id needed for reliable
+resolution. The graph's triage node uses this stored session context directly instead of
+re-inferring focus from the visible chat message.
+
+### `PATCH /api/v1/threads/{id}/session-context`
+User override for text-first startup/session context.
+**Body:** one or more fields from `{ time_text, energy_text, focus_text, focus_context }`; empty bodies return `400`, and unknown fields return validation errors.
+Explicit `null` clears nullable text fields. `focus_context` is capped at 10 entries; Rhizome
+validates each subject type and confirms object ownership before storing refs.
+**Response:** `SessionContextView` with `source: "user"`.
 
 ### `GET /api/v1/threads/{id}/messages`
 Full message history from the LangGraph checkpoint.

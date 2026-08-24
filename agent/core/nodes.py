@@ -26,6 +26,12 @@ from agent.core.telemetry import emit_state_snapshot, emit_tool_completed, emit_
 from db.database import current_user_id
 from agent.core.state import GardenState
 from agent.core.temporal import DEFAULT_TIMEZONE, build_temporal_context, infer_session_context
+from agent.domain.session_context import (
+    context_refs_prompt_text,
+    normalize_inferred_session_context,
+    session_context_for_graph,
+    session_context_summary_text,
+)
 from agent.domain.triage import build_triage_snapshot, format_triage_snapshot
 from agent.tools import tools, tools_by_name
 from agent.domain.weather import get_latest_weather_snapshot
@@ -45,6 +51,51 @@ INTERACTION_REVIEW_TOOLS = {
     "approve_weather_task_changes": "weather_change_review",
 }
 
+
+def _state_user_id(state: GardenState, default: str = "1") -> str:
+    return str(state.get("user_id") or current_user_id.get(default) or default)
+
+
+def _set_current_user_from_state(state: GardenState, default: str = "1") -> str:
+    uid = _state_user_id(state, default=default)
+    current_user_id.set(uid)
+    return uid
+
+
+def _set_current_user_from_state_or_config(state: GardenState, config: RunnableConfig, default: str = "1") -> str:
+    configurable = config.get("configurable") or {}
+    uid = str(state.get("user_id") or configurable.get("user_id") or current_user_id.get(default) or default)
+    current_user_id.set(uid)
+    return uid
+
+
+def _session_context_metadata(context: dict[str, Any] | None) -> dict[str, Any]:
+    context = context or {}
+    focus_context = context.get("focus_context") or []
+    subject_types = sorted(
+        {
+            item.get("subject_type")
+            for item in focus_context
+            if isinstance(item, dict) and item.get("subject_type")
+        }
+    )
+    return {
+        "session_context_source": context.get("source") or "unset",
+        "session_context_has_time_text": bool(context.get("time_text")),
+        "session_context_has_energy_text": bool(context.get("energy_text")),
+        "session_context_has_focus_text": bool(context.get("focus_text")),
+        "session_context_ref_count": len(focus_context),
+        "session_context_subject_types": subject_types,
+    }
+
+
+def _sanitize_error_message(exc: BaseException, *, limit: int = 160) -> str:
+    text = str(exc.__class__.__name__)
+    detail = str(exc).strip()
+    if detail:
+        text = f"{text}: {detail}"
+    return text[:limit]
+
 SYSTEM_PROMPT_TEMPLATE = """You are Rhizome, a knowledgeable and practical gardening assistant.
 
 You know this specific garden well:
@@ -54,7 +105,7 @@ You know this specific garden well:
 Session time context:
 {temporal_context}
 
-{pinned_context_section}{alert_section}Latest weather:
+{session_context_section}{pinned_context_section}{alert_section}Latest weather:
 {weather_context}
 
 Latest triage:
@@ -64,25 +115,43 @@ Recent structured interactions:
 {interaction_context}
 
 Guidelines:
-- Always ground your advice in the specific conditions of this garden
-- Never recommend plants that are toxic to dogs or children — flag this immediately if the user asks about one
-- Prefer organic solutions: manual pest removal, neem oil, companion planting before anything chemical
-- Be cost-conscious: suggest seeds over starter plants, propagation over buying, DIY over purchasing where sensible
-- Be honest about what won't work in zone 9b or in the specific conditions of each bed
-- Ask for photos or more description when you need them to give good advice
-- Before calling any delete tool (delete_project, delete_bed, delete_plant, delete_batch, remove_container, remove_plant, 
-  batch_remove_plants), always confirm with the user first by describing exactly what will be deleted and asking them to 
+
+Context priority:
+- Ground advice in this garden's profile, session context, pinned context, weather, triage, monitor alerts, interactions, and
+  fresh tool results.
+- Treat fresh tool/database results as the most current source of truth, then pinned/session summaries, then older triage and
+  interaction context.
+- Treat session context and pinned context as the current working set. Use included ids for tool calls. If the user's focus text
+  implies that more detail is needed, retrieve the relevant object with a detail/list tool before giving specific advice or
+  making changes.
+- Do not use tools when the compact prompt context is enough to answer accurately.
+
+Gardening advice:
+- Prefer organic solutions: manual pest removal, neem oil, companion planting before anything chemical.
+- Be cost-conscious: suggest seeds over starter plants, propagation over buying, DIY over purchasing where sensible.
+- Be honest about what will not work in this garden's climate zone, season, weather, space, soil, budget, and household
+  constraints.
+- Ask for photos or more description when you need them to give good advice.
+
+Safety and confirmation:
+- Respect hard constraints and household safety needs from the garden profile. If the user asks about a plant that may be toxic
+  to people or pets, warn once for that relevant recommendation or topic and suggest safer alternatives when relevant.
+- Before calling any delete tool (delete_project, delete_bed, delete_plant, delete_batch, remove_container, remove_plant,
+  batch_remove_plants), always confirm with the user first by describing exactly what will be deleted and asking them to
   confirm. Only call the delete tool after the user explicitly confirms.
-- Before creating a new batch or project, check whether a similar one already exists using list_batches or list_projects 
-  first.
-- If a plant problem is already being tracked, do not report a duplicate incident, draft a duplicate treatment plan, or
-  call approve_treatment_plan again for an already-approved plan. Reuse the existing plan or show the related tasks.
+
+Tool use:
 - If the user asks for their task list, pending work, or what to do next, use task tools like list_project_tasks,
   list_due_tasks, get_task, explain_task_blockers, or list_blocked_tasks. Do not report a new incident or open a
   treatment-plan approval flow unless the user is explicitly asking to create or approve treatment work.
 - When you use task tools like get_task, start_task, complete_task, skip_task, defer_task, or update_task, always use the
   exact task id returned by task-listing tools. Do not pass a task title as task_id unless the tool explicitly says that
   exact-title fallback is supported.
+
+Duplicate prevention:
+- Before creating a new batch or project, check whether a similar one already exists using list_batches or list_projects first.
+- If a plant problem is already being tracked, do not report a duplicate incident, draft a duplicate treatment plan, or call
+  approve_treatment_plan again for an already-approved plan. Reuse the existing plan or show the related tasks.
 """
 
 
@@ -121,55 +190,19 @@ def _message_text(message) -> str:
     return str(content)
 
 
+def _tool_arg_metadata(args: dict | None) -> dict:
+    if not isinstance(args, dict):
+        return {"arg_count": 0, "arg_keys": []}
+    return {"arg_count": len(args), "arg_keys": sorted(str(key) for key in args.keys())}
+
+
 def _pinned_context_text(session, user_id: str, pinned: list[dict]) -> str:
     if not pinned:
         return ""
-    from db.models import Bed, Container, GardeningProject, IncidentReport, Plant, Task
-    lines = []
-    for item in pinned:
-        stype = item.get("subject_type", "")
-        sid = item.get("subject_id", "")
-        try:
-            if stype == "plant":
-                obj = session.query(Plant).filter(Plant.id == sid, Plant.user_id == user_id).first()
-                if obj:
-                    name = obj.name + (f" ({obj.variety})" if obj.variety else "")
-                    lines.append(f"- plant: {name} · status: {obj.status or 'unknown'}")
-            elif stype == "bed":
-                obj = session.query(Bed).filter(Bed.id == sid, Bed.user_id == user_id).first()
-                if obj:
-                    loc = f" · {obj.location}" if obj.location else ""
-                    lines.append(f"- bed: {obj.name}{loc}")
-            elif stype == "container":
-                obj = session.query(Container).filter(Container.id == sid, Container.user_id == user_id).first()
-                if obj:
-                    typ = f" · {obj.container_type}" if obj.container_type else ""
-                    lines.append(f"- container: {obj.name}{typ}")
-            elif stype == "task":
-                obj = (
-                    session.query(Task)
-                    .join(GardeningProject, Task.project_id == GardeningProject.id)
-                    .filter(Task.id == sid, GardeningProject.user_id == user_id)
-                    .first()
-                )
-                if obj:
-                    lines.append(f"- task: {obj.title} · status: {obj.status or 'pending'}")
-            elif stype == "project":
-                obj = session.query(GardeningProject).filter(
-                    GardeningProject.id == sid, GardeningProject.user_id == user_id
-                ).first()
-                if obj:
-                    lines.append(f"- project: {obj.name} · status: {obj.status or 'active'}")
-            elif stype == "incident":
-                incident = session.query(IncidentReport).filter(
-                    IncidentReport.id == sid, IncidentReport.user_id == user_id
-                ).first()
-                if incident:
-                    summary = f" · {incident.summary[:60]}" if incident.summary else ""
-                    lines.append(f"- incident: {incident.incident_type}{summary}")
-        except Exception:
-            pass
-    return "\n".join(lines)
+    try:
+        return context_refs_prompt_text(session, user_id, pinned)
+    except Exception:
+        return ""
 
 
 def session_context_intake(state: GardenState, config: RunnableConfig):
@@ -191,12 +224,21 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
     session = SessionLocal()
     try:
         temporal_context = build_temporal_context(session, timezone=DEFAULT_TIMEZONE)
-        session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
+        inferred_session_context = infer_session_context(session, opener or "", timezone=DEFAULT_TIMEZONE)
         now = datetime.now(dt_timezone.utc).replace(tzinfo=None)
 
         # Upsert thread metadata — preview from last AI message in prior turns
+        stored_session_context = None
         if thread_id:
-            _upsert_thread(session, uid, thread_id, state, now)
+            stored_session_context = _upsert_thread(
+                session,
+                uid,
+                thread_id,
+                state,
+                now,
+                inferred_session_context=inferred_session_context,
+            )
+        session_context = session_context_for_graph(inferred_session_context, stored_session_context)
 
         alert_rows = (
             session.query(MonitorAlert)
@@ -223,14 +265,22 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         ]
 
         pinned_text = ""
+        session_context_text = ""
         if thread_id:
-            thread_row = session.query(Thread).filter(Thread.id == thread_id).first()
+            thread_row = (
+                session.query(Thread)
+                .filter(Thread.id == thread_id, Thread.user_id == uid)
+                .first()
+            )
             if thread_row and thread_row.pinned_context:
                 pinned_text = _pinned_context_text(session, uid, thread_row.pinned_context)
+            if thread_row:
+                session_context_text = session_context_summary_text(session, uid, session_context) or ""
 
         return {
             "temporal_context": temporal_context,
             "session_context": session_context,
+            "session_context_text": session_context_text or None,
             "skip_tool_node": False,
             "user_id": uid,
             "monitor_alerts": monitor_alerts,
@@ -240,7 +290,15 @@ def session_context_intake(state: GardenState, config: RunnableConfig):
         session.close()
 
 
-def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, now) -> None:
+def _upsert_thread(
+    session,
+    user_id: str,
+    thread_id: str,
+    state: GardenState,
+    now,
+    *,
+    inferred_session_context: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Create or update thread metadata at the start of each turn."""
     # Extract preview from the last AI message in prior turns
     preview = None
@@ -256,7 +314,17 @@ def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, no
                     c = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
                 preview = (c if isinstance(c, str) else str(c))[:150]
 
-    existing = session.query(Thread).filter(Thread.id == thread_id).first()
+    existing = (
+        session.query(Thread)
+        .filter(Thread.id == thread_id, Thread.user_id == user_id)
+        .first()
+    )
+    conflicting_thread = None
+    if existing is None:
+        conflicting_thread = session.query(Thread).filter(Thread.id == thread_id).first()
+    if conflicting_thread is not None:
+        return None
+
     if existing:
         existing.last_active_at = now
         existing.message_count = human_count
@@ -269,6 +337,14 @@ def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, no
                     text = msg.content if isinstance(msg.content, str) else str(msg.content)
                     existing.title = text[:60] + ("..." if len(text) > 60 else "")
                     break
+        if inferred_session_context is not None and (existing.session_context or {}).get("source") != "user":
+            existing.session_context = normalize_inferred_session_context(
+                session,
+                user_id,
+                inferred_session_context,
+                now=now,
+            )
+        stored_session_context = existing.session_context
     else:
         # First turn — create the thread record
         title = None
@@ -279,18 +355,26 @@ def _upsert_thread(session, user_id: str, thread_id: str, state: GardenState, no
         ):
             text = opener if isinstance(opener, str) else str(opener)
             title = text[:60] + ("..." if len(text) > 60 else "")
+        stored_session_context = (
+            normalize_inferred_session_context(session, user_id, inferred_session_context, now=now)
+            if inferred_session_context is not None
+            else None
+        )
         session.add(Thread(
             id=thread_id,
             user_id=user_id,
             title=title,
             last_active_at=now,
             message_count=human_count,
+            session_context=stored_session_context,
             created_at=now,
         ))
     session.commit()
+    return stored_session_context
 
 
 def weather_context_loader(state: GardenState):
+    _set_current_user_from_state(state)
     session = SessionLocal()
     try:
         snapshot = get_latest_weather_snapshot(session)
@@ -332,6 +416,7 @@ def weather_context_loader(state: GardenState):
 
 
 def triage_reasoner(state: GardenState):
+    uid = _set_current_user_from_state(state)
     if state.get("triage_snapshot"):
         return {}
 
@@ -345,13 +430,21 @@ def triage_reasoner(state: GardenState):
 
     session = SessionLocal()
     try:
-        snapshot = build_triage_snapshot(session, opener=opener or "hi", timezone=DEFAULT_TIMEZONE)
+        session_context = state.get("session_context") or None
+        snapshot = build_triage_snapshot(
+            session,
+            opener=opener or "hi",
+            session_context=session_context,
+            timezone=DEFAULT_TIMEZONE,
+        )
         emit_state_snapshot(
             "triage_snapshot",
             payload={
                 "snapshot_id": snapshot.id,
+                "user_id": uid,
                 "urgent_count": len(snapshot.urgent_task_ids or []),
                 "recommended_count": len(snapshot.recommended_task_ids or []),
+                **_session_context_metadata(snapshot.session_context),
             },
             tags=["triage"],
         )
@@ -379,8 +472,18 @@ def triage_reasoner(state: GardenState):
             },
             "pending_interaction": triage_interaction,
         }
-    except Exception:
+    except Exception as exc:
         session.rollback()
+        emit_state_snapshot(
+            "triage_snapshot_error",
+            payload={
+                "user_id": uid,
+                "triage_error_type": exc.__class__.__name__,
+                "triage_error_message_sanitized": _sanitize_error_message(exc),
+                **_session_context_metadata(state.get("session_context")),
+            },
+            tags=["triage", "error"],
+        )
         return {
             "triage_snapshot": {
                 "id": None,
@@ -405,6 +508,7 @@ def should_enter_llm_after_triage(state: GardenState):
 
 def llm_call(state: GardenState, config: RunnableConfig):
     """Always loads fresh profile from DB before building the system prompt."""
+    _set_current_user_from_state_or_config(state, config)
     profile_obj = None
     session = SessionLocal()
     try:
@@ -423,11 +527,33 @@ def llm_call(state: GardenState, config: RunnableConfig):
     interaction_text = _interaction_context_text(state)
     alerts_text = _monitor_alerts_text(state)
     alert_section = f"⚠ Active monitor alerts:\n{alerts_text}\n\n" if alerts_text else ""
+    session_context_text = state.get("session_context_text") or ""
+    session_context_section = f"Session context for this thread:\n{session_context_text}\n\n" if session_context_text else ""
     pinned_text = state.get("pinned_context_text") or ""
     pinned_context_section = f"Pinned context for this thread:\n{pinned_text}\n\n" if pinned_text else ""
+    emit_state_snapshot(
+        "llm_prompt_context",
+        payload={
+            "has_garden_profile": bool(profile_obj),
+            "has_session_context": bool(session_context_text),
+            "has_pinned_context": bool(pinned_text),
+            "has_monitor_alerts": bool(alerts_text),
+            "has_weather_context": bool(weather_text),
+            "has_triage_context": bool(triage_text),
+            "interaction_count": len(state.get("interaction_history") or []),
+            "triage_snapshot_id": (state.get("triage_snapshot") or {}).get("id"),
+            "triage_recommended_count": len((state.get("triage_snapshot") or {}).get("project_task_ids") or [])
+            + len((state.get("triage_snapshot") or {}).get("routine_task_ids") or [])
+            + len((state.get("triage_snapshot") or {}).get("urgent_task_ids") or []),
+            "prompt_has_related_focus_tasks": "Related open tasks:" in session_context_text,
+            **_session_context_metadata(state.get("session_context")),
+        },
+        tags=["llm", "prompt"],
+    )
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         garden_profile=profile_text,
         temporal_context=temporal_text,
+        session_context_section=session_context_section,
         pinned_context_section=pinned_context_section,
         alert_section=alert_section,
         weather_context=weather_text,
@@ -443,6 +569,7 @@ def llm_call(state: GardenState, config: RunnableConfig):
 
 def tool_node(state: GardenState):
     """Performs the tool call"""
+    _set_current_user_from_state(state)
 
     result = []
     for tool_call in state["messages"][-1].tool_calls:
@@ -456,7 +583,7 @@ def tool_node(state: GardenState):
             )
             emit_tool_completed(tool_name, success=False, error="unknown tool")
         else:
-            emit_tool_started(tool_name, payload={"args": tool_call["args"]})
+            emit_tool_started(tool_name, payload=_tool_arg_metadata(tool_call.get("args")))
             try:
                 observation = tool.invoke(tool_call["args"])
                 emit_tool_completed(tool_name, success=True)

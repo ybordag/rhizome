@@ -11,6 +11,7 @@ client = TestClient(app)
 USER = "1"
 from tests.support.factories import (
     make_bed,
+    make_batch,
     make_container,
     make_incident_report,
     make_incident_subject,
@@ -80,6 +81,18 @@ def test_plant_ilike_match_on_name(db_session):
 
 
 @pytest.mark.integration
+def test_category_query_lists_plants(db_session):
+    profile = make_profile(db_session)
+    plant = make_plant(db_session, profile, name="Cherry Tomato", variety="Sungold")
+
+    result = search_entities(db_session, "1", "plants", limit_per_type=5)
+
+    assert plant.id in _subject_ids(result, "plant")
+    assert result["by_type"]["plant"] == 1
+    assert result["by_type"]["task"] == 0
+
+
+@pytest.mark.integration
 def test_plant_ilike_match_on_variety(db_session):
     profile = make_profile(db_session)
     p = make_plant(db_session, profile, name="Pepper", variety="Padron")
@@ -141,6 +154,35 @@ def test_plant_uuid_exact_match(db_session):
 
     result = search_entities(db_session, "1", p.id, types=["plant"])
     assert p.id in _subject_ids(result, "plant")
+
+
+# ---------------------------------------------------------------------------
+# Batch
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_batch_ilike_match_on_name(db_session):
+    profile = make_profile(db_session)
+    batch = make_batch(db_session, profile, name="Courtyard Tomatoes March 2026")
+
+    result = search_entities(db_session, "1", "courtyard", types=["batch"])
+
+    assert batch.id in _subject_ids(result, "batch")
+    hit = next(r for r in result["results"] if r["subject_id"] == batch.id)
+    assert hit["subject_type"] == "batch"
+    assert hit["label"] == "Courtyard Tomatoes March 2026"
+
+
+@pytest.mark.integration
+def test_category_query_lists_batches(db_session):
+    profile = make_profile(db_session)
+    batch = make_batch(db_session, profile, name="Cosmos Spring 2026")
+
+    result = search_entities(db_session, "1", "batches", limit_per_type=5)
+
+    assert batch.id in _subject_ids(result, "batch")
+    assert result["by_type"]["batch"] == 1
+    assert result["by_type"]["plant"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +279,19 @@ def test_task_ilike_match_on_title(db_session):
 
     result = search_entities(db_session, "1", "aphids", types=["task"])
     assert t.id in _subject_ids(result, "task")
+
+
+@pytest.mark.integration
+def test_category_query_lists_tasks(db_session):
+    profile = make_profile(db_session)
+    project, revision, gen_run = _task_chain(db_session, profile)
+    task = make_task(db_session, project, revision, gen_run, title="Stake tomatoes")
+
+    result = search_entities(db_session, "1", "task", limit_per_type=5)
+
+    assert task.id in _subject_ids(result, "task")
+    assert result["by_type"]["task"] == 1
+    assert result["by_type"]["plant"] == 0
 
 
 @pytest.mark.integration
@@ -518,6 +573,19 @@ def test_api_search_types_filter(patched_sessionlocal, db_session):
 
 
 @pytest.mark.integration
+def test_api_search_category_query_lists_type(patched_sessionlocal, db_session):
+    profile = make_profile(db_session)
+    batch = make_batch(db_session, profile, name="Cosmos Spring 2026")
+
+    resp = client.get(f"/internal/data/search?user_id={USER}&q=batches")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(r["subject_type"] == "batch" and r["subject_id"] == batch.id for r in data["results"])
+    assert data["by_type"]["batch"] == 1
+
+
+@pytest.mark.integration
 def test_api_search_empty_q_returns_400(patched_sessionlocal, db_session):
     make_profile(db_session)
     resp = client.get(f"/internal/data/search?user_id={USER}&q=")
@@ -544,7 +612,7 @@ def test_api_search_by_type_counts_present_for_all_types(patched_sessionlocal, d
     resp = client.get(f"/internal/data/search?user_id={USER}&q=anything")
     assert resp.status_code == 200
     by_type = resp.json()["by_type"]
-    assert set(by_type.keys()) == {"plant", "bed", "container", "task", "project", "incident"}
+    assert set(by_type.keys()) == {"plant", "batch", "bed", "container", "task", "project", "incident"}
 
 
 @pytest.mark.integration

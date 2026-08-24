@@ -613,7 +613,9 @@ class Bed(Base):
             f"  Size: {self.dimensions_sqft if self.dimensions_sqft is not None else 'unknown'} sqft | "
             f"Soil: {self.soil_type or 'unknown'}\n"
             f"  Last watered: {_fmt_date(self.last_watered_at)} | "
-            f"Last amended: {_fmt_date(self.last_amended_at)}\n"
+            f"Last fertilized: {_fmt_date(self.last_fertilized_at)} | "
+            f"Last amended: {_fmt_date(self.last_amended_at)} | "
+            f"Last inspected: {_fmt_date(self.last_inspected_at)}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
 
@@ -693,7 +695,9 @@ class Container(Base):
             f"Location: {self.location or 'unknown'}"
             f"\n  Mobile: {self.is_mobile}\n"
             f"  Last watered: {_fmt_date(self.last_watered_at)} | "
-            f"Last amended: {_fmt_date(self.last_amended_at)}\n"
+            f"Last fertilized: {_fmt_date(self.last_fertilized_at)} | "
+            f"Last amended: {_fmt_date(self.last_amended_at)} | "
+            f"Last inspected: {_fmt_date(self.last_inspected_at)}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
         )
 
@@ -836,7 +840,8 @@ class Plant(Base):
     def to_summary(self, location_name: Optional[str] = None) -> str:
         return (
             f"[Plant] {self.name} {self.variety or ''} (id: {self.id})\n"
-            f"  Status: {self.status} | {self._state_text()}\n"
+            f"  Quantity: {self.quantity if self.quantity is not None else 1} | "
+            f"Status: {self.status} | {self._state_text()}\n"
             f"  Location: {self._location_text(location_name)} | "
             f"Source: {self.source or 'unknown'}\n"
             f"  Created at: {_fmt_date(self.created_at)}"
@@ -1267,6 +1272,7 @@ class Thread(Base):
     last_active_at = Column(DateTime, nullable=True)
     message_count = Column(Integer, nullable=False, default=0)
     pinned_context = Column(JSON, nullable=False, default=list)
+    session_context = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
@@ -1279,6 +1285,7 @@ class Thread(Base):
             "last_active_at": self.last_active_at,
             "message_count": self.message_count,
             "pinned_context": self.pinned_context or [],
+            "session_context": self.session_context,
             "created_at": self.created_at,
         }
 

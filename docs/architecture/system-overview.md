@@ -13,7 +13,7 @@ Rhizome is one of four repositories in this system:
 | **rhizome** | Agent and domain engine | Python | LangGraph graph, tools, DB schema, internal HTTP API |
 | **cambium** | API gateway and auth | Go | JWT issuance, bcrypt auth, `/api/v1` proxy to Rhizome |
 | **verdant** | Frontend | React | UI, app shell, media upload UX |
-| **fairlead** | Inference router | TBD | GPU resource accounting, provider failover |
+| **fairlead** | Inference router | Rust | GPU resource accounting, provider failover |
 
 Each repo is independently deployable. Rhizome does not import from any of the others.
 
@@ -35,12 +35,11 @@ Rhizome (Python — FastAPI + LangGraph, port 8001)
     │  in-process Python calls
     ├── agent/tools/*          — 94 tools across garden, projects, operations
     │
-    │  HTTP  OpenAI-compatible  /v1/chat/completions
+    │  provider seam in agent/core/model.py
     ▼
-Fairlead (resource router)
-    ├── loki  (Spark node)     — primary inference
-    ├── thor  (Spark node)     — secondary / failover
-    └── cloud APIs             — Gemini Flash, Claude Haiku (last-resort fallback)
+Model providers
+    ├── direct cloud providers — Google Gemini, OpenAI, Anthropic
+    └── Fairlead               — OpenAI-compatible local routing / failover track
 ```
 
 The browser never calls Rhizome directly — only Cambium. Rhizome is not publicly reachable. Cambium extracts `user_id` from the verified JWT and passes it in every internal request so Rhizome can scope all DB queries correctly.
@@ -69,6 +68,13 @@ The browser never calls Rhizome directly — only Cambium. Rhizome is not public
 
 ## Rhizome internal structure
 
+Rhizome has four main internal surfaces:
+
+- `agent/core/` runs the LangGraph workflow, model-provider seam, telemetry, and routing.
+- `agent/domain/` owns deterministic domain behavior and shared serialization helpers.
+- `agent/tools/` exposes LLM-callable wrappers that return strings.
+- `agent/api/` exposes FastAPI routes that return structured JSON for Cambium/Verdant.
+
 ### Agent layer (`agent/`)
 
 ```
@@ -82,7 +88,7 @@ agent/
     operations/ — triage, care, incidents, interactions, weather, activity
 ```
 
-The graph runtime in `core/` calls domain modules in `domain/` and routes tool calls through `tools/`. Domain modules never import from `core/`. Tool files are thin wrappers that open a DB session, call domain logic, and return a string to the LLM.
+The graph runtime in `core/` calls domain modules in `domain/` and routes tool calls through `tools/`. Domain modules never import from `core`. Tool files are thin wrappers that open a DB session, call domain logic, and return a string to the LLM. API routes call domain/view helpers and return Pydantic views rather than exposing tool strings.
 
 ### LangGraph workflow
 
@@ -108,7 +114,7 @@ should_continue ──── destructive/review tool call? ──→ interaction
 ### DB layer (`db/`)
 
 ```
-models.py    — all SQLAlchemy models (SQLite now, Postgres target)
+models.py    — all SQLAlchemy models
 database.py  — session factory (SessionLocal) and current_user_id ContextVar
 seed.py      — dev seed data
 ```
@@ -133,52 +139,55 @@ ActivitySubject  ←  links events to subject entities (plant, task, bed, etc.)
 
 All endpoints are proxied by Cambium under `/api/v1`. The `user_id` is injected by Cambium from the verified JWT — never from the request body.
 
-**Triage:** `POST /run`, `GET /latest`
-**Interactions:** `GET /pending`, `GET /`, `GET /{id}`, `POST /{id}/resolve`
-**Tasks:** `GET /`, `GET /due`, `GET /{id}`, `POST /{id}/start`, `POST /{id}/complete`, `POST /{id}/skip`, `POST /{id}/defer`, `PUT /{id}`, `GET /daily`
-**Projects:** `GET /`, `GET /{id}`, `GET /{id}/brief`, `GET /{id}/schedule/preview`, `GET /{id}/progress`, `GET /{id}/activity`
-**Proposals:** `GET /projects/{id}/proposals`, `GET /projects/{id}/proposals/{pid}`
-**Incidents:** `GET /`, `GET /{id}`, `POST /`, `GET /{id}/activity`
-**Treatment plans:** `GET /{id}`
-**Weather:** `GET /latest`, `GET /impacts`, `POST /refresh`
-**Activity:** `GET /activity`, `GET /plants/{id}/activity`, `GET /tasks/{id}/activity`, `GET /beds/{id}/activity`, `GET /incidents/{id}/activity`
-**Media:** `POST /media`, `GET /media/{id}` — not yet implemented (Epic 2)
+The API surface is split into `/internal/agent` for LangGraph execution and `/internal/data/...` for structured CRUD/query endpoints. Major data domains include garden profile/beds/containers/plants/batches, tasks and task series, projects/proposals/progress/expenses/shopping, triage, weather, incidents/treatment plans, interactions, alerts/notifications, threads/session context/pinned context, calendar annotations, activity, and search.
+
+See [API Reference](api-reference.md) for the complete route list and response shapes.
+
+### Request lifecycle
+
+**Chat/agent request:**
+
+```text
+Verdant -> Cambium /api/v1/chat...
+  -> Cambium verifies JWT, loads provider key, attaches user_id/thread_id
+  -> Rhizome /internal/agent...
+  -> LangGraph loads checkpoint, runs graph nodes, may call tools
+  -> tools mutate/read SQLAlchemy domain tables
+  -> graph checkpoint is persisted and response/stream returns through Cambium
+```
+
+**Data request:**
+
+```text
+Verdant -> Cambium /api/v1/...
+  -> Cambium verifies JWT and injects user_id
+  -> Rhizome /internal/data/...
+  -> FastAPI route calls domain/view helpers or a tool-backed mutation
+  -> SQLAlchemy query/mutation is scoped to user_id
+  -> structured Pydantic view returns through Cambium
+```
 
 ## Database
 
-| Layer | Current | Target |
+| Layer | Local quickstart | Shared dev / staging / production |
 |---|---|---|
-| Application DB | SQLite (SQLAlchemy) | Postgres |
-| LangGraph checkpoint | SqliteSaver | langgraph-checkpoint-postgres |
-| Vector search | Not yet active | pgvector (in requirements.txt) |
+| Application DB | SQLite file via SQLAlchemy | Postgres in the `rhizome` schema |
+| LangGraph checkpoint | SqliteSaver / AsyncSqliteSaver | PostgresSaver / AsyncPostgresSaver |
+| Migrations | `create_all()` safety net only | Alembic |
+| Vector search | Not active | pgvector planned |
 
-The Postgres migration is a prerequisite for:
-- Multi-instance deployment (agent instances are stateless only when checkpoint state is in shared external storage)
-- Proper FK enforcement (SQLite does not enforce FKs at runtime)
-- Multi-tenancy at scale
+`DATABASE_URL` selects the backend. If unset, Rhizome uses local SQLite files for quick CLI/dev runs. If it points at Postgres, both SQLAlchemy and the LangGraph checkpointer use the `rhizome` schema so any Rhizome instance can serve any user/thread.
 
-## Fairlead connection
+## Model Provider Connection
 
-Rhizome connects to Fairlead exclusively through `agent/core/model.py`. The factory constructs an LLM client pointed at Fairlead's OpenAI-compatible endpoint. If Fairlead is unavailable, the factory falls back to a direct cloud API connection.
+Rhizome connects to model providers exclusively through `agent/core/model.py`. The factory supports environment defaults and per-request provider overrides from Cambium, so graph nodes never instantiate provider clients directly.
 
 The factory supports two model tiers:
 - **Primary model** — planning, reasoning, proposal generation
 - **Triage model** — session-start triage summaries (faster, cheaper)
 
-Both tiers are configurable via environment variables. The graph never references a model provider directly.
+Both tiers are configurable via environment variables. Google Gemini is the default provider path today; OpenAI, Anthropic, and future Fairlead/OpenAI-compatible routing belong behind the same seam.
 
-## Epic dependency graph
+## Where Status Lives
 
-```
-E1 (Garden Profiling) ──► E2 (Visual Understanding)
-E1 ──────────────────────► E3 (Planning & Negotiation)
-E3 ──► E4 (Task Tracking) ──► E5 (Daily Triage)
-E4 ──────────────────────────► E6 (Reactive Monitoring)
-E3, E4, E6 ──────────────────► E7 (Iteration & Amendments)
-E8 (Knowledge & Retrieval) ──► E2, E3, E6
-E9 (App / Frontend) ─────────► E2, E3, E5
-E10 (Garden Ops Expansion) ──► E3, E5, E7
-E11 (Platform Hardening) ────► E6, E8, E9
-```
-
-Current status: E4 and E5 are mostly complete. E1, E3, E6 partial with strong foundations. E9 backend API surface is complete; Cambium gateway is in progress. E2, E7, E8, E10 not started. E11 not started in a focused way.
+This page describes the durable architecture. Implementation status and dependency sequencing live in [Roadmap Overview](../roadmap/overview.md). Completed build plans and superseded implementation notes live in [Archive](../archive/README.md).

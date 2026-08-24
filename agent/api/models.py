@@ -1,7 +1,7 @@
 """Pydantic request/response models for the internal API."""
 
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class AgentRequest(BaseModel):
@@ -109,6 +109,41 @@ class CreateThreadRequest(BaseModel):
     title: Optional[str] = None
     project_id: Optional[str] = None
     initial_context: Optional[list[dict]] = None
+
+
+class SessionContextObjectRefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_type: str
+    subject_id: str
+
+
+class UpdateSessionContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    time_text: Optional[str] = None
+    energy_text: Optional[str] = None
+    focus_text: Optional[str] = None
+    focus_context: Optional[list[SessionContextObjectRefRequest]] = None
+
+    @field_validator("time_text", "energy_text", "focus_text")
+    @classmethod
+    def _normalize_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                return None
+        return value
+
+    @field_validator("focus_context")
+    @classmethod
+    def _valid_focus_context_length(
+        cls,
+        value: Optional[list[SessionContextObjectRefRequest]],
+    ) -> Optional[list[SessionContextObjectRefRequest]]:
+        if value is not None and len(value) > 10:
+            raise ValueError("focus_context cannot exceed 10 items")
+        return value
 
 
 class CreateTaskRequest(BaseModel):

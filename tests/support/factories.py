@@ -474,7 +474,7 @@ def make_triage_snapshot(session, **overrides: Any) -> TriageSnapshot:
     data = {
         "garden_profile_id": _default_garden_profile_id(session),
         "timezone": "America/Los_Angeles",
-        "session_context": {"available_minutes": 30, "energy_level": "low"},
+        "session_context": {"time_text": "30 minutes", "energy_text": "low"},
         "temporal_context": {"today": "2026-04-12"},
         "weather_snapshot_id": None,
         "recommended_task_ids": [],

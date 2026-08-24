@@ -1,7 +1,7 @@
 # Calendula: Reactive Monitoring and Alerting
 
 **Branch:** `calendula`  
-**Epic:** [Epic 6: Reactive Monitoring and Alerting](../roadmap/epics/epic_06_reactive_monitoring_and_alerting.md)  
+**Track:** [Sensing / Reactive Monitoring](../roadmap/overview.md)
 **Status:** Complete — Phases 1–4 shipped; Phase 5 deferred to pest intelligence epic  
 **Last updated:** 2026-06-18
 
@@ -17,8 +17,8 @@ Calendula adds a background monitoring layer that:
 - auto-applies critical weather changes (storm, severe frost, high heat advisory)
 - queues moderate impacts for user review (as today)
 - surfaces safe/unsafe outdoor working windows as advisory context
-- writes `MonitorAlert` records that the future FastAPI layer will serve to
-  Verdant (front-page banner and chat-top alert)
+- writes `MonitorAlert` records served by the structured alert API for Verdant
+  (front-page banner and chat-top alert)
 - surfaces pending alerts at session start via the existing interaction context
 
 ---
@@ -40,8 +40,8 @@ Calendula adds a background monitoring layer that:
 ### `MonitorAlert`
 
 Single persistence point for all monitor-generated alerts. Queryable without a
-session — the future `GET /api/v1/alerts` endpoint will serve this directly.
-Also read at session start to inject critical context into the chat.
+session through `GET /api/v1/alerts` and related monitor-status routes. Also
+read at session start to inject critical context into the chat.
 
 ```
 id            str PK
@@ -195,6 +195,7 @@ epic after `iris` (image modality) and the RAG foundation are in place.
 | `agent/core/state.py` | Add `monitor_alerts: Optional[list[dict]]` |
 | `scripts/monitor.py` | New — standalone cron runner |
 | `agent/domain/pests.py` | New (Phase 5) — iNaturalist integration |
+| `agent/api/routers.py` | Alert and monitor-run routes for structured app consumption |
 | `tests/db/test_monitor_models.py` | New — `MonitorAlert`/`MonitorRun` model tests |
 | `tests/agent/domain/test_weather_monitor.py` | New — auto-apply policy tests |
 | `tests/agent/core/test_nodes.py` | Extend — alert injection into session context |

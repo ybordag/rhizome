@@ -1,20 +1,26 @@
 # Intelligence Initiative
 
 **Track:** Intelligence
-**Status:** Pending — starts after FastAPI internal layer is in place
+**Status:** In progress — unified domain search has landed; web search,
+iNaturalist, and RAG remain pending
 **Last updated:** 2026-06
 
 ---
 
 ## Summary
 
-Three complementary capabilities that make the agent's reasoning better grounded:
+Complementary capabilities that make the agent's reasoning better grounded:
 
 - **Google Search** — live, current information at planning time
 - **RAG** — deep, structured knowledge retrieved from a curated knowledge base
 - **Full-text search** — fast lookup across the user's own domain data
+- **Unified domain search** — structured app and agent lookup across Rhizome
+  records
 
-These are separate features but share an implementation phase since they all touch the agent's context-building pipeline.
+These features share the same context-building boundary but are not all at the
+same implementation stage. Unified domain search is implemented for the app and
+agent. The remaining external and knowledge-retrieval capabilities are still
+roadmap work.
 
 ---
 
@@ -128,6 +134,18 @@ def search_knowledge_base(query: str, source: str = None, limit: int = 5) -> str
 ### Why
 
 Users need to find things in their own data: "show me all tasks mentioning drip irrigation", "find any plants I've noted as struggling", "search my activity for anything about the south bed".
+
+### Current state
+
+The first implementation is available as unified structured search:
+
+- `GET /api/v1/search` for Cambium/Verdant structured search results
+- `search_domain()` for agent-side lookup across Rhizome domain records
+- user-scoped search over plants, beds, containers, tasks, projects, and
+  incidents
+
+Postgres `tsvector`/GIN search remains the planned ranking and performance
+upgrade for richer full-text behavior.
 
 ### Design
 
@@ -255,11 +273,12 @@ task urgency.
 - Register in `agent/tools/__init__.py`
 - Tests: tool returns structured results; agent calls it during planning
 
-### Phase 2 — Full-text search
-- Add `search_vector` generated columns + GIN indexes to relevant tables
-- `agent/tools/operations/search.py`: `search_domain()` tool
-- Cambium `GET /api/v1/search` endpoint (data proxy)
-- Tests: keyword search returns relevant results; empty query returns error
+### Phase 2 — Unified/full-text search
+- ✅ `agent/tools/operations/search.py`: `search_domain()` tool
+- ✅ `GET /api/v1/search` structured endpoint for Cambium/Verdant
+- ✅ Tests for structured results, user scoping, filters, and empty-query errors
+- Remaining: add `search_vector` generated columns + GIN indexes to relevant
+  Postgres tables for richer full-text ranking
 
 ### Phase 3 — iNaturalist
 

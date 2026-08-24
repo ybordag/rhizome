@@ -39,9 +39,9 @@ A single user (or a small household) managing a hobby garden. Think:
 - Planning spring planting in January, executing through summer, into fall harvest
 - Organic-first, budget-conscious, limited weekend time
 
-The current implementation is **single-tenant** (one user, `user_id == 1`). Multi-tenancy is on the roadmap and the schema is ready for it, but the tools don't yet thread user identity into every query.
+The current implementation is built for a single gardener or household as the primary product shape, but the backend now carries `user_id` through the API, graph config, thread metadata, and most domain queries. Multi-user shared gardens are not a product feature yet; ongoing hardening focuses on older tool paths and concurrency-sensitive cases.
 
-The **full product vision** includes a React frontend (Verdant), but the current UX is a CLI. The CLI is a simulation surface, not the final product — every feature is designed for eventual app consumption.
+The **full product vision** includes a React frontend (Verdant), now in active development. The CLI remains a useful simulation surface for the agent loop and domain tools.
 
 ---
 
@@ -69,7 +69,7 @@ Those responsibilities belong to other repos:
 
 **Verdant** (React) is the frontend app. It consumes only the Cambium API and has no knowledge of LangGraph, SQLAlchemy, or Rhizome internals.
 
-**Fairlead** is the inference router. It presents an OpenAI-compatible endpoint and handles GPU resource accounting, LLM failover (loki → thor → cloud), and concurrency management. Rhizome connects to it through a standard HTTP client in `agent/core/model.py`. If Fairlead is unavailable, the model factory falls back to direct cloud APIs.
+**Fairlead** is the inference-router track for local GPU routing and provider failover. Rhizome keeps provider selection behind `agent/core/model.py`; today that seam can use direct cloud providers, and Fairlead/OpenAI-compatible routing fits behind the same boundary as it matures.
 
 This design keeps each repo independently deployable and independently understandable.
 
@@ -77,9 +77,9 @@ This design keeps each repo independently deployable and independently understan
 
 ## What Rhizome does not do (yet)
 
-- **Multi-user / shared gardens** — user_id is hardcoded to 1 in ~15 files pending the multi-tenancy pass
+- **Multi-user / shared gardens** — core user scoping exists, but shared-household permissions and collaboration semantics are not implemented
 - **Image analysis** — plant identification, visual pest diagnosis (Epic 2, needs media upload API first)
 - **Automated purchasing** — no e-commerce integration
 - **IoT sensors** — no soil moisture or weather station integration
-- **Proactive background monitoring** — weather refresh is user-triggered; scheduled monitoring is Epic 6
+- **Deeper proactive monitoring** — scheduled weather/triage/series monitoring exists; richer pest, image, and external-signal monitoring remains future work
 - **External knowledge retrieval** — plant databases (Perenual), pest observations (iNaturalist) are Epic 8

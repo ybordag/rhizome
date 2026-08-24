@@ -13,10 +13,11 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from agent.api.app import app
-from db.models import GardeningProject, Thread
+from agent.core import telemetry
+from db.models import ActivityEvent, ActivitySubject, GardeningProject, Thread
 from tests.support.factories import (
-    make_bed, make_container, make_incident_report, make_plant, make_project,
-    make_project_brief, make_project_proposal, make_project_revision,
+    link_plant_to_project, make_batch, make_bed, make_container, make_incident_report, make_plant, make_project,
+    make_profile, make_project_brief, make_project_proposal, make_project_revision,
     make_task, make_task_generation_run,
 )
 
@@ -49,6 +50,23 @@ def _make_task_via_chain(db_session, profile, user_id=USER, **overrides):
     revision = make_project_revision(db_session, project, proposal)
     run = make_task_generation_run(db_session, project=project, revision=revision)
     return make_task(db_session, project=project, revision=revision, generation_run=run, **overrides)
+
+
+class RecordingObserver:
+    def __init__(self):
+        self.snapshots = []
+
+    def record_message(self, role, text, *, payload=None, metadata=None):
+        pass
+
+    def record_tool_call_started(self, tool_name, *, payload=None):
+        pass
+
+    def record_tool_call_completed(self, tool_name, *, success, payload=None, error=""):
+        pass
+
+    def record_state_snapshot(self, snapshot_name, *, payload=None, tags=None, metadata=None):
+        self.snapshots.append((snapshot_name, payload, tags, metadata))
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +106,52 @@ def test_add_plant_to_context(patched_sessionlocal, db_session, seed_garden_prof
     )
     assert resp.status_code == 200
     assert resp.json()["pinned_context"] == [{"subject_type": "plant", "subject_id": plant.id}]
+
+
+@pytest.mark.integration
+def test_add_context_records_activity_and_telemetry(patched_sessionlocal, db_session, seed_garden_profile):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    plant = make_plant(db_session, seed_garden_profile, name="Basil")
+    _make_thread(db_session)
+
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "plant", "subject_id": plant.id},
+    )
+
+    assert resp.status_code == 200
+    event = db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").one()
+    assert event.user_id == USER
+    assert event.thread_id == "thread-1"
+    assert event.category == "thread"
+    assert event.event_metadata["operation"] == "pin"
+    assert event.event_metadata["before_count"] == 0
+    assert event.event_metadata["after_count"] == 1
+    subjects = {
+        (subject.subject_type, subject.subject_id, subject.role)
+        for subject in db_session.query(ActivitySubject).filter_by(event_id=event.id).all()
+    }
+    assert ("thread", "thread-1", "context_owner") in subjects
+    assert ("plant", plant.id, "pinned_context") in subjects
+    assert (
+        "database_change",
+        {
+            "operation": "update",
+            "table": "thread",
+            "record_id": "thread-1",
+            "field": "pinned_context",
+            "action": "pin",
+            "subject_type": "plant",
+            "subject_id": plant.id,
+            "before_count": 0,
+            "after_count": 1,
+            "activity_event_id": event.id,
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in observer.snapshots
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -140,11 +204,18 @@ def test_add_entity_owned_by_other_user_returns_400(patched_sessionlocal, db_ses
 def test_add_duplicate_entity_returns_409(patched_sessionlocal, db_session, seed_garden_profile):
     plant = make_plant(db_session, seed_garden_profile)
     _make_thread(db_session, pinned=[{"subject_type": "plant", "subject_id": plant.id}])
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",
         json={"subject_type": "plant", "subject_id": plant.id},
     )
+
     assert resp.status_code == 409
+    assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").count() == 0
+    assert [snapshot for snapshot in observer.snapshots if snapshot[0] == "database_change"] == []
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -153,12 +224,19 @@ def test_add_context_at_limit_returns_400(patched_sessionlocal, db_session, seed
     pinned = [{"subject_type": "bed", "subject_id": b.id} for b in beds]
     _make_thread(db_session, pinned=pinned)
     extra = make_bed(db_session, seed_garden_profile, name="Extra Bed")
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",
         json={"subject_type": "bed", "subject_id": extra.id},
     )
+
     assert resp.status_code == 400
     assert "limit" in resp.json()["detail"].lower()
+    assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_pinned").count() == 0
+    assert [snapshot for snapshot in observer.snapshots if snapshot[0] == "database_change"] == []
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -186,6 +264,50 @@ def test_remove_context_entry(patched_sessionlocal, db_session, seed_garden_prof
 
 
 @pytest.mark.integration
+def test_remove_context_records_activity_and_telemetry(patched_sessionlocal, db_session, seed_garden_profile):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    plant = make_plant(db_session, seed_garden_profile)
+    _make_thread(db_session, pinned=[{"subject_type": "plant", "subject_id": plant.id}])
+
+    resp = client.delete(
+        f"/internal/data/threads/thread-1/context/plant/{plant.id}?user_id={USER}",
+    )
+
+    assert resp.status_code == 200
+    event = db_session.query(ActivityEvent).filter_by(event_type="thread_context_unpinned").one()
+    assert event.user_id == USER
+    assert event.thread_id == "thread-1"
+    assert event.event_metadata["operation"] == "unpin"
+    assert event.event_metadata["before_count"] == 1
+    assert event.event_metadata["after_count"] == 0
+    subjects = {
+        (subject.subject_type, subject.subject_id, subject.role)
+        for subject in db_session.query(ActivitySubject).filter_by(event_id=event.id).all()
+    }
+    assert ("thread", "thread-1", "context_owner") in subjects
+    assert ("plant", plant.id, "pinned_context") in subjects
+    assert (
+        "database_change",
+        {
+            "operation": "update",
+            "table": "thread",
+            "record_id": "thread-1",
+            "field": "pinned_context",
+            "action": "unpin",
+            "subject_type": "plant",
+            "subject_id": plant.id,
+            "before_count": 1,
+            "after_count": 0,
+            "activity_event_id": event.id,
+        },
+        ["database", "mutation", "thread"],
+        None,
+    ) in observer.snapshots
+    telemetry.set_observer(None)
+
+
+@pytest.mark.integration
 def test_remove_one_of_two_context_entries(patched_sessionlocal, db_session, seed_garden_profile):
     bed1 = make_bed(db_session, seed_garden_profile, name="Bed A")
     bed2 = make_bed(db_session, seed_garden_profile, name="Bed B")
@@ -205,10 +327,17 @@ def test_remove_one_of_two_context_entries(patched_sessionlocal, db_session, see
 @pytest.mark.integration
 def test_remove_context_not_found_returns_404(patched_sessionlocal, db_session, seed_garden_profile):
     _make_thread(db_session)
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
     resp = client.delete(
         f"/internal/data/threads/thread-1/context/plant/ghost-id?user_id={USER}",
     )
+
     assert resp.status_code == 404
+    assert db_session.query(ActivityEvent).filter_by(event_type="thread_context_unpinned").count() == 0
+    assert [snapshot for snapshot in observer.snapshots if snapshot[0] == "database_change"] == []
+    telemetry.set_observer(None)
 
 
 @pytest.mark.integration
@@ -304,8 +433,10 @@ def test_session_context_intake_injects_pinned_text(patched_sessionlocal, db_ses
         result = session_context_intake(state, config)
 
     assert result.get("pinned_context_text")
-    assert "plant" in result["pinned_context_text"]
+    assert "[Plant]" in result["pinned_context_text"]
     assert "Basil" in result["pinned_context_text"]
+    assert f"(id: {plant.id})" in result["pinned_context_text"]
+    assert "Quantity: 1 | Status:" in result["pinned_context_text"]
 
 
 @pytest.mark.integration
@@ -363,6 +494,29 @@ def test_add_container_owned_by_other_user_returns_400(patched_sessionlocal, db_
     resp = client.post(
         f"/internal/data/threads/thread-1/context?user_id={USER}",
         json={"subject_type": "container", "subject_id": other_container.id},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.integration
+def test_add_batch_to_context(patched_sessionlocal, db_session, seed_garden_profile):
+    batch = make_batch(db_session, seed_garden_profile, name="Cosmos Spring 2026")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "batch", "subject_id": batch.id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pinned_context"][0]["subject_type"] == "batch"
+
+
+@pytest.mark.integration
+def test_add_batch_owned_by_other_user_returns_400(patched_sessionlocal, db_session, seed_garden_profile):
+    batch = make_batch(db_session, seed_garden_profile, name="Other Batch", user_id="other-user")
+    _make_thread(db_session)
+    resp = client.post(
+        f"/internal/data/threads/thread-1/context?user_id={USER}",
+        json={"subject_type": "batch", "subject_id": batch.id},
     )
     assert resp.status_code == 400
 
@@ -538,8 +692,11 @@ def test_session_context_intake_injects_bed_text(patched_sessionlocal, db_sessio
         result = session_context_intake(state, config)
 
     text = result.get("pinned_context_text") or ""
-    assert "bed" in text
+    assert "[Bed]" in text
     assert "Sunny Bed" in text
+    assert "Location: back yard | Sunlight:" in text
+    assert "Last fertilized:" in text
+    assert "Last inspected:" in text
 
 
 @pytest.mark.integration
@@ -558,8 +715,78 @@ def test_session_context_intake_injects_container_text(patched_sessionlocal, db_
         result = session_context_intake(state, config)
 
     text = result.get("pinned_context_text") or ""
-    assert "container" in text
+    assert "[Container]" in text
     assert "Big Growbag" in text
+    assert "Type: growbag | Size:" in text
+    assert "Last fertilized:" in text
+    assert "Last inspected:" in text
+
+
+@pytest.mark.integration
+def test_session_context_intake_injects_batch_text(patched_sessionlocal, db_session, seed_garden_profile):
+    project = make_project(db_session, seed_garden_profile, name="Courtyard Tomatoes")
+    batch = make_batch(
+        db_session,
+        seed_garden_profile,
+        project=project,
+        name="Cosmos Spring 2026",
+        plant_name="Cosmos",
+    )
+    plant_a = make_plant(db_session, seed_garden_profile, batch=batch, name="Cosmos", status="seedling")
+    plant_b = make_plant(db_session, seed_garden_profile, batch=batch, name="Cosmos", status="established")
+    link_plant_to_project(db_session, project, plant_a)
+    link_plant_to_project(db_session, project, plant_b)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare growbag_1",
+        estimated_minutes=45,
+        priority="high",
+        linked_subjects=[{"subject_type": "batch", "subject_id": batch.id, "role": "affected"}],
+    )
+    other_profile = make_profile(db_session, user_id="2")
+    other_project = make_project(db_session, other_profile, user_id="2", name="Other Tenant Tomatoes")
+    other_brief = make_project_brief(db_session, other_project)
+    other_proposal = make_project_proposal(db_session, other_project, other_brief)
+    other_revision = make_project_revision(db_session, other_project, other_proposal)
+    other_run = make_task_generation_run(db_session, other_project, other_revision)
+    make_task(
+        db_session,
+        project=other_project,
+        revision=other_revision,
+        generation_run=other_run,
+        title="Other tenant growbag",
+        linked_subjects=[{"subject_type": "batch", "subject_id": batch.id, "role": "affected"}],
+    )
+    _make_thread(db_session, thread_id="thread-batch", pinned=[{"subject_type": "batch", "subject_id": batch.id}])
+
+    from agent.core.nodes import session_context_intake
+    from langchain.messages import HumanMessage
+
+    state = {"messages": [HumanMessage(content="hello")]}
+    config = {"configurable": {"user_id": USER, "thread_id": "thread-batch"}}
+
+    with patch("agent.core.nodes.build_temporal_context", return_value={}), \
+         patch("agent.core.nodes.infer_session_context", return_value={}):
+        result = session_context_intake(state, config)
+
+    text = result.get("pinned_context_text") or ""
+    assert "[Batch]" in text
+    assert "Cosmos Spring 2026" in text
+    assert "Quantity sown:" in text
+    assert "Project: Courtyard Tomatoes" in text
+    assert "Child plant status:" in text
+    assert "seedling: 1" in text
+    assert "established: 1" in text
+    assert "Related open tasks:" in text
+    assert "Prepare growbag_1" in text
+    assert "Other tenant growbag" not in text
 
 
 @pytest.mark.integration
@@ -578,13 +805,39 @@ def test_session_context_intake_injects_task_text(patched_sessionlocal, db_sessi
         result = session_context_intake(state, config)
 
     text = result.get("pinned_context_text") or ""
-    assert "task" in text
+    assert "[Task]" in text
     assert "Stake tomatoes" in text
+    assert "Blocked:" in text
+    assert "Additional timing:" in text
 
 
 @pytest.mark.integration
 def test_session_context_intake_injects_project_text(patched_sessionlocal, db_session, seed_garden_profile):
     proj = make_project(db_session, seed_garden_profile, name="Summer Harvest")
+    batch = make_batch(db_session, seed_garden_profile, project=proj, name="Summer Batch")
+    plant = make_plant(db_session, seed_garden_profile, batch=batch, name="Pepper")
+    link_plant_to_project(db_session, proj, plant)
+    brief = make_project_brief(db_session, proj)
+    proposal = make_project_proposal(db_session, proj, brief)
+    revision = make_project_revision(db_session, proj, proposal)
+    run = make_task_generation_run(db_session, proj, revision)
+    make_task(
+        db_session,
+        project=proj,
+        revision=revision,
+        generation_run=run,
+        title="Prepare pepper supports",
+        priority="high",
+        estimated_minutes=30,
+    )
+    make_task(
+        db_session,
+        project=proj,
+        revision=revision,
+        generation_run=run,
+        title="Completed old prep",
+        status="done",
+    )
     _make_thread(db_session, thread_id="thread-proj", pinned=[{"subject_type": "project", "subject_id": proj.id}])
 
     from agent.core.nodes import session_context_intake
@@ -598,8 +851,14 @@ def test_session_context_intake_injects_project_text(patched_sessionlocal, db_se
         result = session_context_intake(state, config)
 
     text = result.get("pinned_context_text") or ""
-    assert "project" in text
+    assert "[Project]" in text
     assert "Summer Harvest" in text
+    assert "Plants: 1" in text
+    assert "Batches: 1" in text
+    assert "Budget:" in text
+    assert "Related open tasks:" in text
+    assert "Prepare pepper supports" in text
+    assert "Completed old prep" not in text
 
 
 @pytest.mark.integration
@@ -619,8 +878,10 @@ def test_session_context_intake_injects_incident_text(patched_sessionlocal, db_s
         result = session_context_intake(state, config)
 
     text = result.get("pinned_context_text") or ""
-    assert "incident" in text
+    assert "[Incident]" in text
     assert "fungal_disease" in text
+    assert "Affected subjects:" in text
+    assert "Summary: Powdery mildew on squash" in text
 
 
 # ---------------------------------------------------------------------------

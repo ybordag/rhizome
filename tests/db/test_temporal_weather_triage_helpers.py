@@ -6,7 +6,7 @@ import pytest
 
 from agent.core.temporal import build_temporal_context, infer_session_context
 from agent.domain.weather import derive_weather_impacts, evaluate_weather_task_impacts, get_latest_weather_snapshot
-from agent.domain.triage import get_latest_triage_snapshot
+from agent.domain.triage import build_triage_snapshot, get_latest_triage_snapshot
 from db.database import current_user_id
 from tests.support.factories import (
     make_profile,
@@ -41,21 +41,21 @@ def test_build_temporal_context_uses_timezone_and_latest_snapshots(db_session):
 
 
 @pytest.mark.unit
-def test_infer_session_context_parses_time_energy_and_focus(db_session):
-    profile = make_profile(db_session)
-    from tests.support.factories import make_project
-
-    project = make_project(db_session, profile, name="Tomato Project")
-
+def test_infer_session_context_preserves_opener_as_text_first_focus(db_session):
     context = infer_session_context(
         db_session,
         "I only have 20 minutes, low energy, and want to work on the Tomato Project outside.",
     )
 
-    assert context["available_minutes"] == 20
-    assert context["energy_level"] == "low"
-    assert context["focus_project_id"] == project.id
-    assert context["open_to_outdoor_work"] is True
+    assert context == {
+        "time_text": None,
+        "energy_text": None,
+        "focus_text": "I only have 20 minutes, low energy, and want to work on the Tomato Project outside.",
+        "focus_context": [],
+    }
+    assert "available_minutes" not in context
+    assert "energy_level" not in context
+    assert "focus_project_id" not in context
 
 
 @pytest.mark.unit
@@ -137,6 +137,97 @@ def test_weather_task_impacts_use_task_intents_not_generic_planting_keywords(db_
     assert fertilize_task.id not in impacts_by_task
     transplant_impacts = {impact["impact_type"] for impact in impacts_by_task[transplant_task.id]}
     assert {"heavy_rain", "good_planting_window", "heat"} == transplant_impacts
+
+
+@pytest.mark.unit
+def test_build_triage_snapshot_does_not_filter_tasks_from_text_first_session_context(db_session):
+    profile = make_profile(db_session)
+    tomato_project = make_project(db_session, profile, name="Tomato Project")
+    pepper_project = make_project(db_session, profile, name="Pepper Project")
+
+    tomato_brief = make_project_brief(db_session, tomato_project)
+    tomato_proposal = make_project_proposal(db_session, tomato_project, tomato_brief)
+    tomato_revision = make_project_revision(db_session, tomato_project, tomato_proposal)
+    tomato_run = make_task_generation_run(db_session, tomato_project, tomato_revision)
+    tomato_task = make_task(
+        db_session,
+        project=tomato_project,
+        revision=tomato_revision,
+        generation_run=tomato_run,
+        title="Short tomato watering",
+        estimated_minutes=10,
+        scheduled_date=datetime(2026, 4, 14),
+    )
+
+    pepper_brief = make_project_brief(db_session, pepper_project)
+    pepper_proposal = make_project_proposal(db_session, pepper_project, pepper_brief)
+    pepper_revision = make_project_revision(db_session, pepper_project, pepper_proposal)
+    pepper_run = make_task_generation_run(db_session, pepper_project, pepper_revision)
+    pepper_task = make_task(
+        db_session,
+        project=pepper_project,
+        revision=pepper_revision,
+        generation_run=pepper_run,
+        title="Long pepper trellis repair",
+        estimated_minutes=90,
+        scheduled_date=datetime(2026, 4, 14),
+    )
+
+    current_user_id.set("1")
+    try:
+        snapshot = build_triage_snapshot(
+            db_session,
+            opener="I only have 5 minutes and low energy for the Tomato Project.",
+            now=datetime(2026, 4, 14),
+        )
+    finally:
+        current_user_id.set("1")
+
+    assert tomato_task.id in snapshot.recommended_task_ids
+    assert pepper_task.id in snapshot.recommended_task_ids
+    assert snapshot.session_context == {
+        "time_text": None,
+        "energy_text": None,
+        "focus_text": "I only have 5 minutes and low energy for the Tomato Project.",
+        "focus_context": [],
+    }
+
+
+@pytest.mark.unit
+def test_build_triage_snapshot_preserves_session_context_override(db_session):
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile, name="Tomato Project")
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare growbag",
+    )
+    context = {
+        "time_text": "35 minutes",
+        "energy_text": "low but focused",
+        "focus_text": "Courtyard Tomatoes March 2026",
+        "focus_context": [{"subject_type": "project", "subject_id": project.id}],
+        "source": "user",
+    }
+
+    current_user_id.set("1")
+    snapshot = build_triage_snapshot(
+        db_session,
+        opener="A different opener should not replace stored context.",
+        session_context=context,
+        now=datetime(2026, 4, 14),
+    )
+
+    assert task.id in snapshot.recommended_task_ids
+    assert snapshot.session_context == context
+    assert "time=35 minutes" in snapshot.user_focus_summary
+    assert "focus=Courtyard Tomatoes March 2026" in snapshot.user_focus_summary
 
 
 # ---------------------------------------------------------------------------

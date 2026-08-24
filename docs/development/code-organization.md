@@ -8,20 +8,25 @@ A guide to every directory and file in the Rhizome codebase. Use this when you n
 
 ```
 rhizome/
-├── agent/          Core agent code — graph, domain logic, tools
-├── db/             Database models, session factory, seed data
-├── tests/          Test suite (850+ non-live tests)
+├── agent/          Agent runtime, domain logic, tools, and internal API
+├── alembic/        Postgres schema migrations
+├── db/             SQLAlchemy models, session factory, seed data
 ├── docs/           Documentation
+├── k8s/            Kubernetes deployment manifests
+├── scripts/        Maintenance and validation scripts
+├── tests/          Unit, API, domain, tool, and e2e tests
 ├── main.py         CLI entrypoint
-├── CLAUDE.md       Claude Code session memory
+├── server.py       Internal FastAPI server entrypoint
 └── README.md
 ```
 
 ---
 
-## `agent/` — the agent
+## `agent/` — runtime, domain, tools, API
 
-The agent is split into three layers: `core/` (the LangGraph runtime), `domain/` (business logic), and `tools/` (LLM-callable wrappers).
+The agent code is split into four layers: `core/` (LangGraph runtime),
+`domain/` (business logic), `tools/` (LLM-callable wrappers), and `api/`
+(structured internal HTTP surface for Cambium).
 
 ### `agent/core/` — LangGraph runtime
 
@@ -30,11 +35,11 @@ These files run the graph. They should be changed when the conversation flow, ro
 | File | Responsibility |
 |---|---|
 | `graph.py` | Defines and compiles the `StateGraph`. Wires nodes and conditional edges. Exposes the compiled `agent` object imported by `main.py`. |
-| `nodes.py` | All node implementations: `session_context_intake`, `weather_context_loader`, `triage_reasoner`, `llm_call`, `interaction_node`, `tool_node`. Also defines `DESTRUCTIVE_TOOLS`, `INTERACTION_REVIEW_TOOLS`, and routing functions (`should_continue`, `should_continue_after_interaction`). |
+| `nodes.py` | All node implementations: `session_context_intake`, `weather_context_loader`, `triage_reasoner`, `llm_call`, `interaction_node`, `tool_node`. It also owns the system prompt template, prompt-section assembly, sanitized prompt/triage telemetry, `DESTRUCTIVE_TOOLS`, `INTERACTION_REVIEW_TOOLS`, and routing functions (`should_continue`, `should_continue_after_interaction`). |
 | `state.py` | `GardenState` TypedDict — the state flowing through the graph. |
-| `model.py` | **Single model seam.** All LLM access goes through `get_model()` and `get_triage_model()`. Never instantiate a model client anywhere else. Reads `RHIZOME_MODEL` and `RHIZOME_TRIAGE_MODEL` env vars. |
-| `telemetry.py` | OpenTelemetry setup and observer framework. `emit_state_snapshot`, `emit_tool_completed`, `emit_tool_started`, `start_span`. Wired into all node transitions. |
-| `temporal.py` | Timezone handling, `build_temporal_context` (day of week, season, frost proximity), `infer_session_context` (available time, energy level from user input). |
+| `model.py` | **Single model seam.** All LLM access goes through `get_model()` and `get_triage_model()`. Never instantiate a model client anywhere else. Reads provider/model env vars such as `RHIZOME_MODEL_PROVIDER`, `RHIZOME_MODEL`, `RHIZOME_TRIAGE_MODEL_PROVIDER`, and `RHIZOME_TRIAGE_MODEL`. |
+| `telemetry.py` | OpenTelemetry setup and observer framework. `emit_state_snapshot`, `emit_database_change`, `emit_tool_completed`, `emit_tool_started`, `start_span`. Tool telemetry records tool names and argument keys/counts, not raw argument values. Database-change telemetry is emitted from SQLAlchemy session hooks after committed ORM writes. |
+| `temporal.py` | Timezone handling, `build_temporal_context` (day of week, season, frost proximity), `infer_session_context` (available time, energy, focus, location, outdoor/quick-win preferences from user input). |
 
 ### `agent/domain/` — domain logic
 
@@ -45,10 +50,11 @@ These files contain the actual business logic. They're pure Python (no LangChain
 | `activity_log.py` | Event recording helpers: `record_create_event`, `record_update_event`, `record_delete_event`, `record_activity_event`. Query helpers: `get_activity_for_subject`, `list_recent_activity_entries` (with filtering + cursor pagination), `get_activity_for_subject_in_project`. Formatting: `format_activity_feed`. `SNAPSHOT_FIELDS` dict maps model classes to their snapshotted fields. |
 | `care.py` | `infer_care_action(task)` — keyword-based inference from task title/description. `_resolve_subjects(session, task)` — resolves linked subjects with name-matching fallback. `apply_task_completion_side_effects` — updates care timestamps and records care events. `CARE_ACTIONS` mapping: action → {subject_type → (event_type, field_name)}. |
 | `incidents.py` | `create_incident_report`, `draft_treatment_plan`, `approve_treatment_plan`, `resolve_incident`. `approve_treatment_plan` generates Task objects for each step and records a `treatment_plan_approved` event. |
-| `interactions.py` | Interaction envelope builders (`build_confirmation_interaction`, `build_proposal_review_interaction`, etc.), `record_interaction_summary`, `resolve_interaction_record` (now writes `interaction_resolved` activity event), `normalize_resolution` (maps text → InteractionResolution), `InteractionEnvelope`, `InteractionResolution` dataclasses. |
+| `interactions.py` | Interaction envelope builders (`build_confirmation_interaction`, `build_proposal_review_interaction`, etc.), `record_interaction_summary`, `resolve_interaction_record` (now writes `interaction_resolved` activity event), pending-interaction lookup with stale triage-view suppression, `normalize_resolution` (maps text → InteractionResolution), `InteractionEnvelope`, `InteractionResolution` dataclasses. |
 | `planner.py` | `estimate_plan_cost`, `estimate_plan_timeline`, `estimate_plan_effort` — deterministic arithmetic estimators. `check_plan_feasibility` — hard violations + soft warnings. `assemble_planning_context_data`, `get_or_create_brief`. `DEFAULT_PLANT_RULES` dict (tomato, pepper, basil + generic fallback). |
+| `session_context.py` | Text-first startup/session context helpers for Verdant: empty/unset response shape, inferred/user source normalization, partial PATCH application, graph-state merge, focus object label resolution, shared pinned/focus prompt-summary formatting, and capped related open-task context. Prompt summaries include object ids so the model can make exact tool calls. |
 | `tracker.py` | Task generation (`generate_tasks_for_revision`, `_task_blueprints`, `_create_task`, `_create_series`, `_link_dependency`). State machine: `compute_task_blocked_state`, `compute_task_urgency`, `_refresh_task_status_from_dependencies`. Daily priority: `get_daily_priority_tasks`, `format_daily_priority_tasks`. Cascade: `cascade_defer_to_dependents`. Series: `materialize_task_series`, `list_materializable_series`. Constants: `VALID_TASK_STATUSES`, `VALID_TASK_PRIORITIES`, `_URGENCY_SCORE`, `_TYPE_SCORE`, `_PRIORITY_SCORE`. |
-| `triage.py` | `build_triage_snapshot` — secondary LLM call that produces the triage snapshot. `format_triage_snapshot` — text formatter for the system prompt. |
+| `triage.py` | `build_triage_snapshot` — secondary LLM call that produces the triage snapshot and can preserve graph-loaded session context instead of re-inferring from opener text. `format_triage_snapshot` — text formatter for the system prompt. |
 | `weather.py` | `refresh_weather_snapshot` — fetches Open-Meteo and derives impacts. `get_latest_weather_snapshot`, `evaluate_weather_task_impacts`, `derive_weather_impacts`. |
 
 ### `agent/tools/` — LLM-callable wrappers
@@ -72,11 +78,28 @@ agent/tools/
     care.py
     incidents.py
     interactions.py
+    search.py
     triage.py
     weather.py
 ```
 
 **Important:** `agent/tools/__init__.py` is the single source of truth for which tools are registered. Adding a tool to a tool file but not to `__init__.py` means the LLM can't see it. Add both.
+
+### `agent/api/` — structured internal API
+
+These files expose Rhizome's structured HTTP contract. Cambium proxies these
+routes under `/api/v1` after authenticating the user and injecting trusted user
+context.
+
+| File | Responsibility |
+|---|---|
+| `app.py` | FastAPI app assembly, router mounting, health/docs surface. |
+| `routers.py` | Internal route handlers. They should call domain logic and return Pydantic views, not agent-tool prose. |
+| `models.py` | Request models for structured API calls. |
+| `views.py` | Response models such as `TaskSummaryView`, `PlantSummaryView`, `ActivityEventView`, and `SessionContextView`. |
+
+Use API routes when Cambium, Verdant, or tests need typed data. Use tools when
+the LLM needs a conversational action surface.
 
 ---
 
@@ -88,6 +111,12 @@ agent/tools/
 | `database.py` | `SessionLocal = sessionmaker(bind=engine)`. `current_user_id: ContextVar[int]` — set by `nodes.py` at session start, read by tools. `engine` created from `DATABASE_URL` env var (defaults to SQLite). |
 | `seed.py` | Dev seed data — creates a sample garden profile, beds, containers, plants. Run with `python db/seed.py`. |
 
+## `alembic/` — migrations
+
+Postgres-backed shared environments use Alembic migrations. Local SQLite
+quickstarts and tests may rely on `create_all`, but schema changes intended for
+shared environments need a migration in `alembic/versions/`.
+
 ---
 
 ## `tests/` — test suite
@@ -95,8 +124,12 @@ agent/tools/
 ```
 tests/
   agent/
+    api/     ← structured internal API regression tests
     core/    ← graph + node tests (test_graph, test_nodes, test_node_edge_cases, test_telemetry)
     domain/  ← domain logic unit tests (test_domain_logic)
+    tools/   ← agent/tool integration tests
+  e2e/
+    test_full_stack.py
   tools/
     garden/      ← test_plants, test_beds_containers, test_profile, test_search
     projects/    ← test_projects, test_planning, test_task_tracker_tools,
@@ -178,6 +211,9 @@ tools = [
 - `agent/tools/` may import from `agent/domain/` ✓
 - `agent/tools/` may import from `db/` ✓
 - `agent/tools/` must NOT import from `agent/core/` ✗
+- `agent/api/` may import from `agent/domain/` and `db/` ✓
+- `agent/api/` should return Pydantic request/response models, not tool prose ✓
+- `agent/api/` should not call LLM tools when equivalent domain logic exists ✗
 
 This keeps domain logic testable in isolation without needing the LangGraph runtime.
 

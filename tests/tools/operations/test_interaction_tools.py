@@ -107,7 +107,7 @@ def test_resolve_interaction_handles_triage_actions(db_session, patched_sessionl
     child_task = make_task(db_session, project, revision, generation_run, title="Inspect tomato foliage")
     snapshot = TriageSnapshot(
         timezone="America/Los_Angeles",
-        session_context={"available_minutes": 20},
+        session_context={"time_text": "20 minutes"},
         temporal_context={"today": "2026-04-12"},
         weather_snapshot_id=None,
         recommended_task_ids=[child_task.id],

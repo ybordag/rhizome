@@ -40,12 +40,14 @@ from agent.api.models import (
     UpdateIncidentRequest,
     UpdateProjectExpenseRequest,
     UpdateProjectRequest,
+    UpdateSessionContextRequest,
     UpdateShoppingItemRequest,
     UpdateTaskRequest,
     UpdateTaskSeriesRequest,
     UpdateTreatmentPlanRequest,
 )
 from agent.core.graph import agent
+from agent.core.telemetry import emit_database_change
 from db.database import SessionLocal, current_user_id
 from db.models import (
     Bed, CalendarAnnotation, Container, GardenProfile, GardeningProject,
@@ -104,14 +106,7 @@ def run_agent(req: AgentRequest):
         if hasattr(m, "type") and m.type == "ai"
     ]
     if ai_messages:
-        content = ai_messages[-1].content
-        if isinstance(content, list):
-            response_text = " ".join(
-                b.get("text", "") for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-        else:
-            response_text = content if isinstance(content, str) else str(content)
+        response_text = _message_content_to_text(ai_messages[-1].content)
     else:
         response_text = ""
 
@@ -141,6 +136,33 @@ def get_streaming_agent(request: Request):
     on a test-scoped async checkpointer (`app.dependency_overrides`) instead
     of the real one built in agent/api/app.py's lifespan — see #141."""
     return request.app.state.streaming_agent
+
+
+def _message_content_to_text(content) -> str:
+    """Normalize LangChain message content into user-visible text.
+
+    Some providers emit content blocks such as
+    [{"type": "text", "text": "Hello"}, " world"] rather than a single
+    string. The UI should see only the text, not provider metadata/signatures.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    if isinstance(content, dict):
+        text = content.get("text")
+        return text if isinstance(text, str) else ""
+    return str(content)
 
 
 def _is_user_visible_llm_stream_event(event: dict) -> bool:
@@ -187,8 +209,9 @@ async def stream_agent(req: AgentRequest, streaming_agent=Depends(get_streaming_
         ):
             if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
-                if chunk.content:
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+                text = _message_content_to_text(chunk.content)
+                if text:
+                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
 
         # After stream ends, check for a graph interrupt (interaction node).
         # Must use the async accessor — calling the sync .get_state() here
@@ -221,8 +244,9 @@ async def resume_agent_stream(req: ResumeRequest, streaming_agent=Depends(get_st
         ):
             if _is_user_visible_llm_stream_event(event):
                 chunk = event["data"]["chunk"]
-                if chunk.content:
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+                text = _message_content_to_text(chunk.content)
+                if text:
+                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
 
         state = await streaming_agent.aget_state(config)
         if state.next:
@@ -2745,7 +2769,7 @@ def resolve_interaction(interaction_id: str, user_id: str, body: ResolveInteract
 # Threads — conversation management
 # ---------------------------------------------------------------------------
 
-_VALID_SUBJECT_TYPES = {"plant", "bed", "container", "task", "project", "incident"}
+_VALID_SUBJECT_TYPES = {"plant", "batch", "bed", "container", "task", "project", "incident"}
 
 
 class AddThreadContextRequest(_BaseModel):
@@ -2756,6 +2780,8 @@ class AddThreadContextRequest(_BaseModel):
 def _verify_entity_owner(session, user_id: str, subject_type: str, subject_id: str) -> bool:
     if subject_type == "plant":
         return session.query(Plant).filter(Plant.id == subject_id, Plant.user_id == user_id).first() is not None
+    if subject_type == "batch":
+        return session.query(PlantBatch).filter(PlantBatch.id == subject_id, PlantBatch.user_id == user_id).first() is not None
     if subject_type == "bed":
         return session.query(Bed).filter(Bed.id == subject_id, Bed.user_id == user_id).first() is not None
     if subject_type == "container":
@@ -2852,6 +2878,87 @@ def get_thread(thread_id: str, user_id: str):
         session.close()
 
 
+def _request_fields_set(model) -> set[str]:
+    fields = getattr(model, "model_fields_set", None)
+    if fields is not None:
+        return set(fields)
+    return set(getattr(model, "__fields_set__", set()))
+
+
+def _model_to_dict(model) -> dict:
+    dump = getattr(model, "model_dump", None)
+    if dump is not None:
+        return dump()
+    return model.dict()
+
+
+@data_router.get("/threads/{thread_id}/session-context")
+def get_thread_session_context(thread_id: str, user_id: str):
+    """Get structured startup/session context for a thread."""
+    from agent.api.views import SessionContextView
+    from agent.domain.session_context import session_context_to_view_data
+
+    uid = _set_user(user_id)
+    session = SessionLocal()
+    try:
+        thread = (
+            session.query(Thread)
+            .filter(Thread.id == thread_id, Thread.user_id == uid)
+            .first()
+        )
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        return SessionContextView(**session_context_to_view_data(session, uid, thread.session_context))
+    finally:
+        session.close()
+
+
+@data_router.patch("/threads/{thread_id}/session-context")
+def update_thread_session_context(thread_id: str, user_id: str, body: UpdateSessionContextRequest):
+    """Update user-controlled startup/session context for a thread."""
+    from agent.api.views import SessionContextView
+    from agent.domain.session_context import apply_session_context_patch, session_context_to_view_data
+
+    uid = _set_user(user_id)
+    session = SessionLocal()
+    try:
+        thread = (
+            session.query(Thread)
+            .filter(Thread.id == thread_id, Thread.user_id == uid)
+            .first()
+        )
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+        fields = _request_fields_set(body)
+        if not fields:
+            raise HTTPException(status_code=400, detail="No session context fields provided")
+        updates = {field: getattr(body, field) for field in fields}
+        if "focus_context" in updates and updates["focus_context"] is not None:
+            focus_context = []
+            for item in updates["focus_context"]:
+                ref = _model_to_dict(item)
+                stype = ref.get("subject_type", "")
+                sid = ref.get("subject_id", "")
+                if stype not in _VALID_SUBJECT_TYPES:
+                    raise HTTPException(status_code=400, detail=f"Invalid subject_type: {stype!r}")
+                if not _verify_entity_owner(session, uid, stype, sid):
+                    raise HTTPException(status_code=400, detail=f"Entity not found or not accessible: {stype}/{sid}")
+                focus_context.append({"subject_type": stype, "subject_id": sid})
+            updates["focus_context"] = focus_context
+
+        thread.session_context = apply_session_context_patch(
+            session,
+            uid,
+            thread.session_context,
+            updates,
+        )
+        session.commit()
+        return SessionContextView(**session_context_to_view_data(session, uid, thread.session_context))
+    finally:
+        session.close()
+
+
 @data_router.get("/threads/{thread_id}/messages")
 def get_thread_messages(thread_id: str, user_id: str):
     """
@@ -2864,13 +2971,16 @@ def get_thread_messages(thread_id: str, user_id: str):
     state = agent.get_state(config)
     messages = []
     for msg in state.values.get("messages", []):
-        if not hasattr(msg, "type"):
+        msg_type = getattr(msg, "type", None)
+        if msg_type not in {"human", "ai"}:
             continue
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        content = _message_content_to_text(msg.content)
+        if not content.strip():
+            continue
         messages.append({
-            "role": "user" if msg.type == "human" else "assistant",
+            "role": "user" if msg_type == "human" else "assistant",
             "content": content,
-            "type": msg.type,
+            "type": msg_type,
         })
     return {"thread_id": thread_id, "messages": messages}
 
@@ -2898,6 +3008,8 @@ def delete_thread(thread_id: str, user_id: str):
 @data_router.post("/threads/{thread_id}/context")
 def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextRequest):
     """Pin an entity to a thread for persistent context injection."""
+    from agent.domain.activity_log import record_activity_event
+
     uid = _set_user(user_id)
     if body.subject_type not in _VALID_SUBJECT_TYPES:
         raise HTTPException(status_code=400, detail=f"subject_type must be one of {sorted(_VALID_SUBJECT_TYPES)}")
@@ -2907,6 +3019,7 @@ def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextReque
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
         pinned = list(thread.pinned_context or [])
+        before_count = len(pinned)
         if len(pinned) >= 10:
             raise HTTPException(status_code=400, detail="Thread context limit reached (max 10 items)")
         if any(p["subject_type"] == body.subject_type and p["subject_id"] == body.subject_id for p in pinned):
@@ -2915,7 +3028,41 @@ def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextReque
             raise HTTPException(status_code=400, detail="Entity not found or not accessible")
         pinned.append({"subject_type": body.subject_type, "subject_id": body.subject_id})
         thread.pinned_context = pinned
+        event = record_activity_event(
+            session,
+            actor_type="user",
+            actor_label="thread_context",
+            event_type="thread_context_pinned",
+            category="thread",
+            summary=f"Pinned {body.subject_type} to thread context.",
+            thread_id=thread_id,
+            metadata={
+                "operation": "pin",
+                "subject_type": body.subject_type,
+                "subject_id": body.subject_id,
+                "before_count": before_count,
+                "after_count": len(pinned),
+            },
+            subjects=[
+                {"subject_type": "thread", "subject_id": thread_id, "role": "context_owner"},
+                {"subject_type": body.subject_type, "subject_id": body.subject_id, "role": "pinned_context"},
+            ],
+        )
         session.commit()
+        emit_database_change(
+            "update",
+            table="thread",
+            record_id=thread_id,
+            payload={
+                "field": "pinned_context",
+                "action": "pin",
+                "subject_type": body.subject_type,
+                "subject_id": body.subject_id,
+                "before_count": before_count,
+                "after_count": len(pinned),
+                "activity_event_id": event.id,
+            },
+        )
         return {"thread_id": thread_id, "pinned_context": thread.pinned_context}
     finally:
         session.close()
@@ -2924,6 +3071,8 @@ def add_thread_context(thread_id: str, user_id: str, body: AddThreadContextReque
 @data_router.delete("/threads/{thread_id}/context/{subject_type}/{subject_id}")
 def remove_thread_context(thread_id: str, subject_type: str, subject_id: str, user_id: str):
     """Remove a pinned entity from a thread's context."""
+    from agent.domain.activity_log import record_activity_event
+
     uid = _set_user(user_id)
     session = SessionLocal()
     try:
@@ -2935,7 +3084,41 @@ def remove_thread_context(thread_id: str, subject_type: str, subject_id: str, us
         if len(updated) == len(pinned):
             raise HTTPException(status_code=404, detail="Context entry not found")
         thread.pinned_context = updated
+        event = record_activity_event(
+            session,
+            actor_type="user",
+            actor_label="thread_context",
+            event_type="thread_context_unpinned",
+            category="thread",
+            summary=f"Removed {subject_type} from thread context.",
+            thread_id=thread_id,
+            metadata={
+                "operation": "unpin",
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "before_count": len(pinned),
+                "after_count": len(updated),
+            },
+            subjects=[
+                {"subject_type": "thread", "subject_id": thread_id, "role": "context_owner"},
+                {"subject_type": subject_type, "subject_id": subject_id, "role": "pinned_context"},
+            ],
+        )
         session.commit()
+        emit_database_change(
+            "update",
+            table="thread",
+            record_id=thread_id,
+            payload={
+                "field": "pinned_context",
+                "action": "unpin",
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "before_count": len(pinned),
+                "after_count": len(updated),
+                "activity_event_id": event.id,
+            },
+        )
         return {"thread_id": thread_id, "pinned_context": thread.pinned_context}
     finally:
         session.close()

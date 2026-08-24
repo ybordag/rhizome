@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +396,23 @@ class ThreadView(BaseModel):
     last_active_at: Optional[datetime] = None
     message_count: int
     pinned_context: list[dict[str, Any]] = []
+    session_context: Optional[dict[str, Any]] = None
     created_at: datetime
+
+
+class SessionContextObjectRefView(BaseModel):
+    subject_type: str
+    subject_id: str
+    label: Optional[str] = None
+
+
+class SessionContextView(BaseModel):
+    time_text: Optional[str] = None
+    energy_text: Optional[str] = None
+    focus_text: Optional[str] = None
+    focus_context: list[SessionContextObjectRefView] = Field(default_factory=list)
+    source: str
+    updated_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

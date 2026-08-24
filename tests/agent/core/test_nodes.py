@@ -4,10 +4,45 @@ import pytest
 from langgraph.graph import END
 
 from agent.core import nodes
-from langchain.messages import ToolMessage
-from db.models import MonitorAlert
-from tests.support.fakes import FakeTool, make_ai_message, make_tool_call_message
-from tests.support.factories import make_incident_report, make_profile, make_project, make_treatment_plan
+from agent.core import telemetry
+from langchain.messages import HumanMessage, ToolMessage
+from db.models import MonitorAlert, TriageSnapshot
+from tests.support.fakes import FakeBoundModel, FakeTool, make_ai_message, make_tool_call_message
+from tests.support.factories import (
+    make_incident_report,
+    make_profile,
+    make_project,
+    make_project_brief,
+    make_project_proposal,
+    make_project_revision,
+    make_task,
+    make_task_generation_run,
+    make_treatment_plan,
+)
+
+
+class RecordingObserver:
+    def __init__(self):
+        self.calls = []
+
+    def record_message(self, role, text, *, payload=None, metadata=None):
+        self.calls.append(("message", role, text, payload, metadata))
+
+    def record_tool_call_started(self, tool_name, *, payload=None):
+        self.calls.append(("tool_started", tool_name, payload))
+
+    def record_tool_call_completed(self, tool_name, *, success, payload=None, error=""):
+        self.calls.append(("tool_completed", tool_name, success, payload, error))
+
+    def record_state_snapshot(self, snapshot_name, *, payload=None, tags=None, metadata=None):
+        self.calls.append(("snapshot", snapshot_name, payload, tags, metadata))
+
+
+def _snapshot_payload(observer: RecordingObserver, name: str) -> dict:
+    for kind, snapshot_name, payload, _tags, _metadata in observer.calls:
+        if kind == "snapshot" and snapshot_name == name:
+            return payload
+    raise AssertionError(f"snapshot {name!r} not recorded: {observer.calls}")
 
 
 @pytest.mark.graph
@@ -67,6 +102,8 @@ def test_should_continue_routes_to_interaction_node_for_review_tool():
 
 @pytest.mark.graph
 def test_tool_node_invokes_expected_tool(monkeypatch):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
     fake_tool = FakeTool("list_projects", "tool output")
     monkeypatch.setattr(nodes, "tools_by_name", {"list_projects": fake_tool})
     state = {
@@ -87,6 +124,45 @@ def test_tool_node_invokes_expected_tool(monkeypatch):
     assert isinstance(result["messages"][0], ToolMessage)
     assert result["messages"][0].tool_call_id == "call-1"
     assert result["messages"][0].content == "tool output"
+    assert ("tool_started", "list_projects", {"arg_count": 1, "arg_keys": ["status"]}) in observer.calls
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_tool_node_telemetry_omits_raw_argument_values(monkeypatch):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    fake_tool = FakeTool("update_task", "updated")
+    monkeypatch.setattr(nodes, "tools_by_name", {"update_task": fake_tool})
+    state = {
+        "messages": [
+            make_tool_call_message(
+                "Updating task",
+                name="update_task",
+                args={
+                    "task_id": "task-1",
+                    "notes": "Sensitive free text from the user",
+                    "status": "done",
+                },
+                call_id="call-1",
+            )
+        ]
+    }
+
+    nodes.tool_node(state)
+
+    assert fake_tool.calls == [{
+        "task_id": "task-1",
+        "notes": "Sensitive free text from the user",
+        "status": "done",
+    }]
+    assert (
+        "tool_started",
+        "update_task",
+        {"arg_count": 3, "arg_keys": ["notes", "status", "task_id"]},
+    ) in observer.calls
+    assert "Sensitive free text from the user" not in str(observer.calls)
+    telemetry.set_observer(None)
 
 
 @pytest.mark.graph
@@ -187,6 +263,199 @@ def test_monitor_alerts_text_formats_critical_and_high():
 def test_monitor_alerts_text_empty_when_no_alerts():
     assert nodes._monitor_alerts_text({"monitor_alerts": []}) == ""
     assert nodes._monitor_alerts_text({}) == ""
+
+
+@pytest.mark.graph
+def test_llm_call_injects_session_context_text_into_system_prompt(monkeypatch, patched_sessionlocal, db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    make_profile(db_session)
+    fake_model = FakeBoundModel([make_ai_message("ok")])
+    monkeypatch.setattr(nodes, "model_with_tools", fake_model)
+
+    state = {
+        "messages": [HumanMessage(content="What should I do next?")],
+        "temporal_context": {"current_date": "2026-06-25", "timezone": "America/Los_Angeles"},
+        "weather_context": {"alerts_summary": "No weather alerts."},
+        "triage_snapshot": {"formatted": "No triage snapshot available."},
+        "session_context_text": "\n".join([
+            "Time available: 45 minutes",
+            "Energy: low but focused",
+            "Thread focus: How do I fertilize the cherry tomatoes?",
+            "Focus objects:",
+            "- batch: Courtyard Tomatoes March 2026 [id: batch-1]",
+            "  Related open tasks:",
+            "  - Prepare growbag_1 [id: task-1] (pending, high, 45 min, due 2026-04-12)",
+        ]),
+        "session_context": {
+            "time_text": "45 minutes",
+            "energy_text": "low but focused",
+            "focus_text": "How do I fertilize the cherry tomatoes?",
+            "focus_context": [{"subject_type": "batch", "subject_id": "batch-1"}],
+            "source": "user",
+        },
+        "pinned_context_text": "- plant: Basil [id: plant-1]",
+    }
+
+    result = nodes.llm_call(state, {"configurable": {"user_id": "1"}})
+
+    assert result["messages"][0].content == "ok"
+    system_prompt = fake_model.invocations[0][0].content
+    assert "Session context for this thread:" in system_prompt
+    assert "Time available: 45 minutes" in system_prompt
+    assert "Thread focus: How do I fertilize the cherry tomatoes?" in system_prompt
+    assert "- batch: Courtyard Tomatoes March 2026 [id: batch-1]" in system_prompt
+    assert "Related open tasks:" in system_prompt
+    assert "Prepare growbag_1" in system_prompt
+    assert "Pinned context for this thread:\n- plant: Basil [id: plant-1]" in system_prompt
+    assert "Context priority:" in system_prompt
+    assert "Gardening advice:" in system_prompt
+    assert "Safety and confirmation:" in system_prompt
+    assert "Tool use:" in system_prompt
+    assert "Duplicate prevention:" in system_prompt
+    assert "Treat fresh tool/database results as the most current source of truth" in system_prompt
+    assert "Treat session context and pinned context as the current working set" in system_prompt
+    assert "Use included ids for tool calls" in system_prompt
+    assert "retrieve the relevant object with a detail/list tool" in system_prompt
+    assert "Do not use tools when the compact prompt context is enough" in system_prompt
+    assert "If the user asks about a plant that may be toxic" in system_prompt
+    assert "warn once for that relevant recommendation or topic" in system_prompt
+    assert "climate zone, season, weather, space, soil, budget, and household" in system_prompt
+    assert "zone 9b" not in system_prompt
+    assert fake_model.invocations[0][1].content == "What should I do next?"
+    payload = _snapshot_payload(observer, "llm_prompt_context")
+    assert payload["has_garden_profile"] is True
+    assert payload["has_session_context"] is True
+    assert payload["has_pinned_context"] is True
+    assert payload["has_monitor_alerts"] is False
+    assert payload["has_weather_context"] is True
+    assert payload["has_triage_context"] is True
+    assert payload["interaction_count"] == 0
+    assert payload["prompt_has_related_focus_tasks"] is True
+    assert payload["session_context_source"] == "user"
+    assert payload["session_context_subject_types"] == ["batch"]
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_llm_call_omits_optional_context_sections_when_empty(monkeypatch, patched_sessionlocal):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    fake_model = FakeBoundModel([make_ai_message("ok")])
+    monkeypatch.setattr(nodes, "model_with_tools", fake_model)
+
+    result = nodes.llm_call(
+        {
+            "messages": [HumanMessage(content="Hello")],
+            "temporal_context": {"current_date": "2026-06-25", "timezone": "America/Los_Angeles"},
+            "weather_context": None,
+            "triage_snapshot": None,
+            "interaction_history": [],
+        },
+        {"configurable": {"user_id": "missing-profile-user"}},
+    )
+
+    assert result["messages"][0].content == "ok"
+    system_prompt = fake_model.invocations[0][0].content
+    assert "No garden profile found." in system_prompt
+    assert "Session context for this thread:" not in system_prompt
+    assert "Pinned context for this thread:" not in system_prompt
+    assert "Active monitor alerts:" not in system_prompt
+    assert "No weather snapshot available." in system_prompt
+    assert "No triage snapshot available." in system_prompt
+    assert "Context priority:" in system_prompt
+    assert "zone 9b" not in system_prompt
+    payload = _snapshot_payload(observer, "llm_prompt_context")
+    assert payload["has_garden_profile"] is False
+    assert payload["has_session_context"] is False
+    assert payload["has_pinned_context"] is False
+    assert payload["has_monitor_alerts"] is False
+    assert payload["has_weather_context"] is True
+    assert payload["has_triage_context"] is True
+    assert payload["interaction_count"] == 0
+    assert payload["session_context_source"] == "unset"
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_triage_reasoner_uses_stored_session_context_from_state(patched_sessionlocal, db_session):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+    profile = make_profile(db_session)
+    project = make_project(db_session, profile)
+    brief = make_project_brief(db_session, project)
+    proposal = make_project_proposal(db_session, project, brief)
+    revision = make_project_revision(db_session, project, proposal)
+    run = make_task_generation_run(db_session, project, revision)
+    task = make_task(
+        db_session,
+        project=project,
+        revision=revision,
+        generation_run=run,
+        title="Prepare tomato growbag",
+        estimated_minutes=35,
+    )
+    stored_context = {
+        "time_text": "35 minutes",
+        "energy_text": "low but focused",
+        "focus_text": "Courtyard Tomatoes March 2026",
+        "focus_context": [{"subject_type": "project", "subject_id": project.id}],
+        "source": "user",
+    }
+
+    result = nodes.triage_reasoner(
+        {
+            "messages": [HumanMessage(content="Ignore this opener text")],
+            "session_context": stored_context,
+            "user_id": "1",
+        }
+    )
+
+    assert result["triage_snapshot"]["id"]
+    assert task.id in result["triage_snapshot"]["project_task_ids"]
+    snapshot = db_session.query(TriageSnapshot).filter_by(id=result["triage_snapshot"]["id"]).first()
+    assert snapshot.session_context == stored_context
+    assert "time=35 minutes" in snapshot.user_focus_summary
+    assert "focus=Courtyard Tomatoes March 2026" in snapshot.user_focus_summary
+    payload = _snapshot_payload(observer, "triage_snapshot")
+    assert payload["session_context_source"] == "user"
+    assert payload["session_context_has_time_text"] is True
+    assert payload["session_context_has_energy_text"] is True
+    assert payload["session_context_has_focus_text"] is True
+    assert payload["session_context_ref_count"] == 1
+    assert payload["session_context_subject_types"] == ["project"]
+    telemetry.set_observer(None)
+
+
+@pytest.mark.graph
+def test_triage_reasoner_emits_sanitized_error_telemetry(monkeypatch, patched_sessionlocal):
+    observer = RecordingObserver()
+    telemetry.set_observer(observer)
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(nodes, "build_triage_snapshot", fail)
+    result = nodes.triage_reasoner(
+        {
+            "messages": [HumanMessage(content="What should I do?")],
+            "session_context": {
+                "focus_text": "tomatoes",
+                "focus_context": [{"subject_type": "batch", "subject_id": "batch-1"}],
+                "source": "user",
+            },
+            "user_id": "tenant-a",
+        }
+    )
+
+    assert result["triage_snapshot"]["id"] is None
+    payload = _snapshot_payload(observer, "triage_snapshot_error")
+    assert payload["user_id"] == "tenant-a"
+    assert payload["triage_error_type"] == "RuntimeError"
+    assert payload["triage_error_message_sanitized"] == "RuntimeError: database unavailable"
+    assert payload["session_context_source"] == "user"
+    assert payload["session_context_subject_types"] == ["batch"]
+    telemetry.set_observer(None)
 
 
 # ---------------------------------------------------------------------------

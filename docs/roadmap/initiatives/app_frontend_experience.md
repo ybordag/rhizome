@@ -1,7 +1,8 @@
 # Epic 9 Plan: App-Facing Interaction and Frontend Experience
 
-**Epic status:** Ready to start  
-**Last updated:** April 29th, 2026
+**Epic status:** In progress — backend contract and Cambium proxy are active;
+Verdant frontend work is underway
+**Last updated:** 2026-06
 
 ---
 
@@ -26,18 +27,17 @@ app.
 
 ## Why this epic matters now
 
-Rhizome already has:
+Rhizome now has:
 
 - structured interaction envelopes
 - persisted interaction records
 - app-facing interaction query/resolve APIs
+- a structured FastAPI internal API for Cambium
 - CLI simulation of the core user flows
 
-That means the backend contract exists in rough form. The missing pieces are:
+That means the backend contract exists beyond rough form. Remaining work is
+mostly product/frontend delivery plus media and later visual surfaces:
 
-- a formal API boundary
-- stable structured payloads for app consumption
-- authentication/session handling
 - media/image upload support
 - a real frontend app that can replace the CLI as the main manual testing
   surface
@@ -57,7 +57,7 @@ This epic is also a major enabler for:
 
 - a usable frontend app shell in a separate repository
 - a formal HTTP/JSON backend API in Rhizome
-- single-account token-based authentication
+- Cambium-owned authentication and session handling
 - stable app-facing structured payloads for:
   - pending interactions
   - recent interactions
@@ -96,18 +96,23 @@ Rhizome remains the **backend and domain engine**. It owns:
   activity-log logic
 - the database schema and persistence layer
 - the LangGraph runtime and CLI simulation
-- the new HTTP API/service layer
-- authentication and session handling
-- media upload handling and asset metadata
+- the internal HTTP API/service layer consumed by Cambium
+- trusted `user_id` handling after Cambium authentication
+- Rhizome-owned media metadata and domain processing once media upload plumbing
+  exists
 - transformation of internal domain objects into structured API payloads
 
-Rhizome should add:
+Rhizome has added:
 
-- a small API layer, preferably **FastAPI + Pydantic**
-- `/api/v1` versioned endpoints
-- bearer-token auth
-- typed serializers / DTOs for app use
+- a FastAPI + Pydantic internal API layer
+- typed serializers / DTOs for app use through Cambium
 - API tests and contract tests
+
+Cambium owns:
+
+- public `/api/v1` endpoints
+- JWT authentication, refresh tokens, and user/session validation
+- authenticated proxying into Rhizome internal routes
 
 Rhizome should not add:
 
@@ -148,17 +153,20 @@ The frontend should not:
 
 ### Contract decisions locked for this epic
 
-- Rhizome will expose a **versioned HTTP/JSON API**
-- the frontend will consume the API over HTTP
-- auth will be **single-account, token-based**
+- Cambium exposes the public **versioned HTTP/JSON API**
+- Rhizome exposes structured internal HTTP routes that Cambium proxies
+- the frontend consumes Cambium over HTTP
+- auth is token-based and owned by Cambium
 - media/image upload will be part of the first contract
-- the first sync model will be **polling**, not websockets/SSE
+- polling covers most data refreshes; SSE is available for chat, monitor, and
+  live activity surfaces where needed
 - the first frontend delivery target is **web-first React**, with future
   portability toward desktop/mobile
 
 ### API shape
 
-Expose a formal API under `/api/v1`.
+Cambium exposes the formal API under `/api/v1` and proxies structured requests
+to Rhizome's internal routes.
 
 Auth/session endpoints:
 
@@ -166,9 +174,10 @@ Auth/session endpoints:
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/auth/session`
 
-### Structured payloads that must exist
+### Structured payloads
 
-Define stable JSON DTOs for:
+Stable JSON DTOs now exist for the core backend/app surface. Media DTOs remain
+part of the visual/media follow-up work.
 
 - `InteractionEnvelopeView`
   - `id`, `type`, `status`, `title`, `summary`, `body`
@@ -181,8 +190,7 @@ Define stable JSON DTOs for:
 - `TriageSnapshotView`
   - `id`, `createdAt`, `timezone`
   - `summary`
-  - `sections` for `urgent`, `routine`, `projectWork`
-  - `recommendedTaskIds`
+  - grouped task objects for urgent, routine, and project work
   - `weatherSummary`
   - `sessionContext`
 - `TaskSummaryView`
@@ -220,7 +228,11 @@ Define stable JSON DTOs for:
   - `url`
   - optional linked subject references
 
-### Endpoints that should exist
+### Endpoint surface
+
+Cambium exposes public `/api/v1` routes. Rhizome implements the corresponding
+internal agent/data routes. The core app surface exists; media routes remain a
+follow-up dependency for visual workflows.
 
 #### Triage
 
@@ -284,18 +296,19 @@ Define stable JSON DTOs for:
 
 ### Phase 1: Rhizome backend contract
 
-In the Rhizome repo:
+Status: substantially complete for core operations. Remaining media-specific
+work belongs with the media/vision follow-up.
 
-- add the API framework and `/api/v1`
-- add token-based single-account auth
-- add typed DTO/serializer layer for current domain objects
-- add media asset model and local upload handling
-- add API tests for auth, triage, interactions, tasks, incidents, weather, and
-  media
+- ✅ FastAPI internal API framework
+- ✅ typed DTO/serializer layer for current domain objects
+- ✅ API tests for triage, interactions, tasks, incidents, weather, activity,
+  projects, search, and structured session context
+- ✅ Cambium token-based auth and public proxy layer
+- Remaining: media asset model and local upload handling
 
 ### Phase 2: Frontend core operations app
 
-In the frontend repo:
+Status: in progress in Verdant.
 
 - login screen
 - startup triage flow
@@ -308,8 +321,9 @@ In the frontend repo:
 
 Backend:
 
-- finalize proposal/detail/review API shapes
-- expose recent interaction history and related app-facing history payloads
+- proposal/detail/review API shapes exist for backend use and should be refined
+  against Verdant screens as needed
+- recent interaction and activity-history payloads are exposed
 
 Frontend:
 
@@ -351,10 +365,11 @@ This epic should be considered complete when:
 
 ### Rhizome repo
 
-- API contract tests for every `/api/v1` resource listed above
-- auth tests for login/session/logout and unauthorized access
-- serializer tests to ensure DTOs are stable and structured-first
-- media upload tests for valid/invalid files and metadata persistence
+- internal API contract tests for every core resource listed above
+- Cambium proxy/auth tests for login/session/logout and unauthorized access
+- serializer/view tests to ensure DTOs are stable and structured-first
+- media upload tests for valid/invalid files and metadata persistence once media
+  routes land
 - interaction resolution tests through the HTTP layer
 - regression tests ensuring the backend remains usable without the CLI
 
@@ -402,10 +417,8 @@ This epic should be considered complete when:
 
 ---
 
-## Open questions to resolve during implementation
+## Open questions to resolve during remaining implementation
 
-- whether the API layer should wrap existing tool functions or introduce a
-  cleaner app-facing service layer internally
 - where uploaded media should live on disk and how stable access URLs should be
 - what app history surface should expose from interaction records vs activity
   log
